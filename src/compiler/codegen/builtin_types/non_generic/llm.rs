@@ -2,7 +2,7 @@ use crate::compiler::codegen::type_manager::{CodeGenType, TypeManager};
 use crate::compiler::codegen::CodeGenerator;
 use crate::compiler::ast::Type;
 use crate::compiler::builtin_loader::{BuiltinLoader, BuiltinTypeData};
-use inkwell::values::BasicValueEnum;
+use inkwell::values::{BasicValueEnum, ValueKind};
 
 
 
@@ -101,6 +101,22 @@ pub fn register_llm_types(manager: &mut TypeManager) {
         "clear", 
         compile_kv_cache_clear,
         vec![],
+        Type::Void
+    );
+
+    // KVCache.len() -> i64
+    kv_cache.register_evaluated_instance_method(
+        "len",
+        compile_kv_cache_len,
+        vec![],
+        Type::I64
+    );
+
+    // KVCache.resize(max_len: i64) -> Void
+    kv_cache.register_evaluated_instance_method(
+        "resize",
+        compile_kv_cache_resize,
+        vec![Type::I64],
         Type::Void
     );
 
@@ -406,5 +422,41 @@ fn compile_kv_cache_clear<'ctx>(
     }
     let fn_val = codegen.module.get_function("tl_kvcache_clear").ok_or("tl_kvcache_clear not found")?;
     codegen.builder.build_call(fn_val, &[instance_val.into()], "").map_err(|e| e.to_string())?;
+    Ok((codegen.context.i64_type().const_int(0, false).into(), Type::Void))
+}
+
+fn compile_kv_cache_len<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    instance_val: BasicValueEnum<'ctx>,
+    _instance_ty: Type,
+    _args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if !instance_val.is_pointer_value() {
+         return Err("Instance not pointer in len".into());
+    }
+    let fn_val = codegen.module.get_function("tl_kvcache_len").ok_or("tl_kvcache_len not found")?;
+    let call = codegen.builder.build_call(fn_val, &[instance_val.into()], "kv_len").map_err(|e| e.to_string())?;
+    
+    let res = match call.try_as_basic_value() {
+        ValueKind::Basic(v) => v,
+        _ => return Err("Invalid return from kv_len".into()),
+    };
+    Ok((res, Type::I64))
+}
+
+fn compile_kv_cache_resize<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    instance_val: BasicValueEnum<'ctx>,
+    _instance_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if !instance_val.is_pointer_value() {
+         return Err("Instance not pointer in resize".into());
+    }
+    if args.len() != 1 { return Err("KVCache::resize requires 1 argument (max_len)".into()); }
+    let (max_len_val, _) = args[0];
+
+    let fn_val = codegen.module.get_function("tl_kvcache_resize").ok_or("tl_kvcache_resize not found")?;
+    codegen.builder.build_call(fn_val, &[instance_val.into(), max_len_val.into()], "").map_err(|e| e.to_string())?;
     Ok((codegen.context.i64_type().const_int(0, false).into(), Type::Void))
 }

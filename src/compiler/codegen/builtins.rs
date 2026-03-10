@@ -3047,6 +3047,21 @@ pub fn declare_runtime_functions<'ctx>(
         execution_engine.add_global_mapping(&f, runtime::llm::tl_kvcache_clear as *const () as usize);
     }
 
+    // tl_kvcache_len(ptr: ptr) -> i64
+    let kv_len_type = i64_type.fn_type(&[ptr_type.into()], false);
+    add_fn("tl_kvcache_len", kv_len_type);
+    if let Some(f) = module.get_function("tl_kvcache_len") {
+        execution_engine.add_global_mapping(&f, runtime::llm::tl_kvcache_len as *const () as usize);
+    }
+
+    // tl_kvcache_resize(ptr: ptr, max_len: i64) -> void
+    let kv_resize_type = void_type.fn_type(&[ptr_type.into(), i64_type.into()], false);
+    add_fn("tl_kvcache_resize", kv_resize_type);
+    if let Some(f) = module.get_function("tl_kvcache_resize") {
+        execution_engine.add_global_mapping(&f, runtime::llm::tl_kvcache_resize as *const () as usize);
+    }
+
+
     // tl_kvcache_get_k(ptr: ptr, layer: i64) -> Tensor
     let kv_get_type = ptr_type.fn_type(&[ptr_type.into(), i64_type.into()], false);
     add_fn("tl_kvcache_get_k", kv_get_type);

@@ -6,6 +6,13 @@ fn main() {
     // 1. Test new
     let cache = KVCache::new(layers);
     println("KVCache created.");
+    println("Initial len: " + cache.len().to_string());
+    
+    // Test resize
+    cache.resize(5);
+    println("After resize(5), len: " + cache.len().to_string());
+    cache.resize(1);
+    println("After resize(1), len: " + cache.len().to_string());
 
     // 2. Test get_k / get_v (should be empty/null initially? Or assert behavior)
     // The current implementation returns null ptr if empty, which might crash if we try to use it as tensor?

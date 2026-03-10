@@ -360,10 +360,13 @@ DOMAIN_FEATURES_ANALYSIS.md の分析結果に基づく実装計画。
 - [x] `repetition_penalty(logits, tokens, penalty)` — 繰り返しペナルティ
   - [x] CPU/Metal: 正の値は/p、負の値は*p
 
-- [ ] `KVCache::len()` — キャッシュ長取得
-  - [ ] ランタイム実装
+- [x] `KVCache::len()` — キャッシュ長取得
+  - [x] ランタイム実装 (`tl_kv_cache_len`)
+  - [x] コンパイラ組み込み
 
-- [ ] `KVCache::resize(max_len)` — 最大長変更（低優先度）
+- [x] `KVCache::resize(max_len)` — 最大長変更
+  - [x] ランタイム実装 (`tl_kv_cache_resize`)
+  - [x] コンパイラ組み込み
 
 ---
 

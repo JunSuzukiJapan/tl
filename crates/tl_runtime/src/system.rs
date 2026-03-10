@@ -413,6 +413,44 @@ pub extern "C" fn tl_kv_cache_new(num_layers: i64) -> i64 {
 }
 
 #[unsafe(no_mangle)]
+/// @ffi_sig (i64) -> i64
+pub extern "C" fn tl_kv_cache_len(cache_ptr: i64) -> i64 {
+    if cache_ptr == 0 {
+        return 0;
+    }
+    let cache = unsafe { &*(cache_ptr as *mut OpaqueKVCache) };
+    cache.layers.len() as i64
+}
+
+#[unsafe(no_mangle)]
+/// @ffi_sig (i64, i64) -> void
+pub extern "C" fn tl_kv_cache_resize(cache_ptr: i64, max_len: i64) {
+    if cache_ptr == 0 || max_len < 0 {
+        return;
+    }
+    let cache = unsafe { &mut *(cache_ptr as *mut OpaqueKVCache) };
+    let new_len = max_len as usize;
+    
+    // 縮小される場合、切り捨てられる要素を明示的に解放する
+    if new_len < cache.layers.len() {
+        for (k_opt, v_opt) in cache.layers.drain(new_len..) {
+            if let Some(k) = k_opt {
+                if !k.is_null() {
+                    crate::memory_ffi::tl_tensor_release_safe(k);
+                }
+            }
+            if let Some(v) = v_opt {
+                if !v.is_null() {
+                    crate::memory_ffi::tl_tensor_release_safe(v);
+                }
+            }
+        }
+    } else if new_len > cache.layers.len() {
+        cache.layers.resize(new_len, (None, None));
+    }
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn tl_kv_cache_free(cache_ptr: i64) {
     if cache_ptr == 0 {
         return;

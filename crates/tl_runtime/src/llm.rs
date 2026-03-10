@@ -153,3 +153,21 @@ pub extern "C" fn tl_kvcache_clear(ptr: *const i64) {
     let handle = unsafe { *ptr };
     tl_kv_cache_clear(handle);
 }
+
+/// @ffi_sig (KVCache*) -> i64
+/// KVCache の現在のキャッシュ長（レイヤー数）を取得
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_kvcache_len(ptr: *const i64) -> i64 {
+    if ptr.is_null() { return 0; }
+    let handle = unsafe { *ptr };
+    crate::system::tl_kv_cache_len(handle)
+}
+
+/// @ffi_sig (KVCache*, i64) -> void
+/// KVCache のキャッシュ長（レイヤー数）を変更（縮小・拡張）
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_kvcache_resize(ptr: *const i64, max_len: i64) {
+    if ptr.is_null() { return; }
+    let handle = unsafe { *ptr };
+    crate::system::tl_kv_cache_resize(handle, max_len);
+}
