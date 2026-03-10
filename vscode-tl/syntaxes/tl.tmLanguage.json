@@ -9,6 +9,9 @@
             "include": "#strings"
         },
         {
+            "include": "#chars"
+        },
+        {
             "include": "#keywords"
         },
         {
@@ -30,6 +33,11 @@
                 {
                     "name": "comment.line.double-slash.tl",
                     "match": "//.*$"
+                },
+                {
+                    "name": "comment.block.tl",
+                    "begin": "/\\*",
+                    "end": "\\*/"
                 }
             ]
         },
@@ -44,15 +52,24 @@
                 }
             ]
         },
+        "chars": {
+            "name": "string.quoted.single.tl",
+            "match": "'([^'\\\\]|\\\\.)'",
+            "captures": {
+                "0": {
+                    "name": "string.quoted.single.tl"
+                }
+            }
+        },
         "keywords": {
             "patterns": [
                 {
                     "name": "keyword.control.tl",
-                    "match": "\\b(if|else|for|while|in|return|break|continue|match)\\b"
+                    "match": "\\b(if|else|for|while|loop|in|return|break|continue|match)\\b"
                 },
                 {
                     "name": "keyword.other.tl",
-                    "match": "\\b(fn|let|struct|enum|impl|mod|use|as|where|tensor|relation)\\b"
+                    "match": "\\b(fn|let|mut|struct|enum|impl|mod|use|as|where|pub|extern|self|trait|type)\\b"
                 },
                 {
                     "name": "constant.language.tl",
@@ -60,11 +77,11 @@
                 },
                 {
                     "name": "keyword.operator.arrow.tl",
-                    "match": "(<-|=>)"
+                    "match": "(->|<-|=>|:-)"
                 },
                 {
-                    "name": "support.function.aggregate.tl",
-                    "match": "\\b(sum|max|min|avg|count)\\b(?=\\s*\\()"
+                    "name": "keyword.operator.logical.tl",
+                    "match": "\\bnot\\b"
                 }
             ]
         },
@@ -72,21 +89,61 @@
             "patterns": [
                 {
                     "name": "storage.type.primitive.tl",
-                    "match": "\\b(f32|f64|i32|i64|bool|usize|void|entity)\\b"
+                    "match": "\\b(f32|f64|i8|i16|i32|i64|u8|u16|u32|u64|bool|usize|void|String|Char)\\b"
                 },
                 {
                     "name": "storage.type.container.tl",
-                    "match": "\\b(Tensor)\\b"
+                    "match": "\\b(Tensor|Vec|HashMap|Option|Result)\\b"
                 }
             ]
         },
         "numbers": {
-            "name": "constant.numeric.tl",
-            "match": "\\b\\d+(\\.\\d+)?\\b"
+            "patterns": [
+                {
+                    "name": "constant.numeric.float.tl",
+                    "match": "\\b[0-9]+\\.[0-9]+([eE][+-]?[0-9]+)?\\b"
+                },
+                {
+                    "name": "constant.numeric.float.scientific.tl",
+                    "match": "\\b[0-9]+[eE][+-]?[0-9]+\\b"
+                },
+                {
+                    "name": "constant.numeric.integer.tl",
+                    "match": "\\b[0-9]+\\b"
+                }
+            ]
         },
         "operators": {
-            "name": "keyword.operator.tl",
-            "match": "(\\=|\\+|\\-|\\*|\\/|\\<|\\>|!|\\.|\\,|\\;|\\:|\\.\\.|\\:\\:)"
+            "patterns": [
+                {
+                    "name": "keyword.operator.comparison.tl",
+                    "match": "(==|!=|<=|>=)"
+                },
+                {
+                    "name": "keyword.operator.assignment.compound.tl",
+                    "match": "(\\+=|-=|\\*=|/=|%=)"
+                },
+                {
+                    "name": "keyword.operator.logical.tl",
+                    "match": "(&&|\\|\\|)"
+                },
+                {
+                    "name": "keyword.operator.range.tl",
+                    "match": "\\.\\."
+                },
+                {
+                    "name": "keyword.operator.scope.tl",
+                    "match": "::"
+                },
+                {
+                    "name": "keyword.operator.tl",
+                    "match": "(\\+|-|\\*|/|%|<|>|!|&|\\||\\^|=|\\.)"
+                },
+                {
+                    "name": "punctuation.separator.tl",
+                    "match": "(,|;|:)"
+                }
+            ]
         },
         "functions": {
             "name": "entity.name.function.tl",
