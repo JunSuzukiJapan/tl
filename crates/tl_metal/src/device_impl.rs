@@ -152,6 +152,20 @@ impl IDevice for MetalDeviceImpl {
         Ok(())
     }
 
+    fn tensor_broadcast_to(&self, tensor: *mut c_void, shape: &[usize]) -> BackendResult<*mut c_void> {
+        let tt = unsafe { &*t(tensor) };
+        let result = tt.broadcast_to(shape)?;
+        Ok(ffi_ops::make_tensor(result) as *mut c_void)
+    }
+
+    fn tensor_stack(&self, a: *mut c_void, b: *mut c_void, dim: i64) -> BackendResult<*mut c_void> {
+        let (ta, tb) = unsafe { (&*t(a), &*t(b)) };
+        let ua = ta.unsqueeze(dim as usize)?;
+        let ub = tb.unsqueeze(dim as usize)?;
+        let result = MetalTensor::cat(&[&ua, &ub], dim as usize)?;
+        Ok(ffi_ops::make_tensor(result) as *mut c_void)
+    }
+
     // ========== メモリ管理 ==========
     #[inline] fn tensor_clone(&self, a: *mut c_void) -> BackendResult<*mut c_void> { v(ffi::tl_metal_clone(t(a))) }
     #[inline] fn tensor_shallow_clone(&self, a: *mut c_void) -> BackendResult<*mut c_void> { v(ffi::tl_metal_shallow_clone(t(a))) }

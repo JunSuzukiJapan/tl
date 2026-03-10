@@ -138,24 +138,23 @@ DOMAIN_FEATURES_ANALYSIS.md の分析結果に基づく実装計画。
 
 ### 3.1 中優先度
 
-- [ ] `expand(shape)` / `broadcast_to(shape)` — 明示的ブロードキャスト
-  - [ ] バックエンド: `broadcast_to_impl` は内部に存在する可能性あり → TL API公開
-  - [ ] FFI + TypeManager登録
+- [x] `expand(shape)` / `broadcast_to(shape)` — 明示的ブロードキャスト
+  - [x] TypeManager登録、compile関数、device_ffi、builtins
+  - [ ] Vecからのポインタ変換バグ修正（reshape_dimsと同じ問題）
 
-- [ ] `view(shape)` — ゼロコピーreshape
-  - [ ] reshapeのエイリアスまたはcontiguous check付き
+- [x] `view(shape)` — ゼロコピーreshape
+  - [x] reshapeのエイリアスとしてTypeManager登録
 
 - [ ] `chunk(n, dim)` — n分割
-  - [ ] 全バックエンド: narrow呼び出しのラッパー
-  - [ ] FFI + TypeManager登録
+  - [ ] 可変長テンソル返却が必要 — TL型システムでの扱いが複雑
 
 - [ ] `split(sizes, dim)` — 指定サイズ分割
-  - [ ] 全バックエンド: narrow呼び出しのラッパー
-  - [ ] FFI + TypeManager登録
+  - [ ] chunkと同様の問題
 
-- [ ] `stack(tensors, dim)` — 新次元で結合
-  - [ ] 全バックエンド: unsqueeze + cat
-  - [ ] FFI + TypeManager登録
+- [x] `stack(tensors, dim)` — 新次元で結合
+  - [x] CPU/Metal: unsqueeze + cat
+  - [x] FFI + TypeManager登録
+  - [x] テスト: stack([1,1,1], [2,2,2], 0) = [1,1,1,2,2,2]
 
 ---
 

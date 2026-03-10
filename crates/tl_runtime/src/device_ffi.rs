@@ -320,6 +320,20 @@ pub extern "C" fn tl_device_tensor_logical_or(a: *mut c_void, b: *mut c_void) ->
 pub extern "C" fn tl_device_tensor_logical_not(t: *mut c_void) -> *mut c_void {
     dispatch(|d| d.tensor_logical_not(t))
 }
+/// @ffi_sig (Tensor*, *const i64, i64) -> Tensor*
+/// expand / broadcast_to: shape は dims 配列
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_device_tensor_expand(t: *mut c_void, dims: *const i64, rank: i64) -> *mut c_void {
+    let shape: Vec<usize> = unsafe { std::slice::from_raw_parts(dims, rank as usize) }
+        .iter().map(|&d| d as usize).collect();
+    dispatch(|d| d.tensor_broadcast_to(t, &shape))
+}
+/// @ffi_sig (Tensor*, Tensor*, i64) -> Tensor*
+/// stack: 2つのテンソルを新しい次元で結合
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_device_tensor_stack(a: *mut c_void, b: *mut c_void, dim: i64) -> *mut c_void {
+    dispatch(|d| d.tensor_stack(a, b, dim))
+}
 /// @ffi_sig (Tensor*) -> Tensor*
 /// 入力テンソルと同じ形状のゼロテンソルを生成
 #[unsafe(no_mangle)]

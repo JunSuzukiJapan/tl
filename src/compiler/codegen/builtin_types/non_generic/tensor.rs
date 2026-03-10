@@ -161,6 +161,13 @@ pub fn register_tensor_types(manager: &mut TypeManager) {
     // IO and transformation
     tensor.register_evaluated_instance_method("save", compile_tensor_save, vec![Type::String("String".to_string())], Type::Void);
     tensor.register_evaluated_instance_method("reshape", compile_tensor_reshape, vec![Type::Struct("Vec".into(), vec![Type::I64])], any_tensor.clone());
+    // view = reshape alias
+    tensor.register_evaluated_instance_method("view", compile_tensor_reshape, vec![Type::Struct("Vec".into(), vec![Type::I64])], any_tensor.clone());
+    // expand/broadcast_to
+    tensor.register_evaluated_instance_method("expand", compile_tensor_expand, vec![Type::Struct("Vec".into(), vec![Type::I64])], any_tensor.clone());
+    tensor.register_evaluated_instance_method("broadcast_to", compile_tensor_expand, vec![Type::Struct("Vec".into(), vec![Type::I64])], any_tensor.clone());
+    // stack(tensors, dim) — static method
+    tensor.register_evaluated_static_method("stack", compile_tensor_stack, vec![any_tensor.clone(), any_tensor.clone(), Type::I64], any_tensor.clone());
     tensor.register_evaluated_instance_method("to", compile_tensor_to_device, vec![Type::String("String".to_string())], any_tensor.clone());
     tensor.register_evaluated_instance_method("transpose", compile_tensor_transpose, vec![Type::I64, Type::I64], any_tensor.clone());
     
@@ -883,7 +890,7 @@ fn compile_tensor_reshape<'ctx>(
           let fn_val = codegen.module.get_function("tl_tensor_reshape_dims")
                .ok_or("tl_tensor_reshape_dims not found")?;
 
-          let (data_ptr, rank_val) = if matches!(shape_ty, Type::Struct(n, _) if n == "Vec") {
+          let (data_ptr, rank_val) = if matches!(shape_ty, Type::Struct(n, _) if n.starts_with("Vec")) {
                // Vec
                let vec_ptr = if shape_val.is_pointer_value() {
                     shape_val.into_pointer_value()
@@ -1701,5 +1708,58 @@ fn compile_tensor_logical_not<'ctx>(
     let f = codegen.module.get_function("tl_tensor_logical_not").ok_or("tl_tensor_logical_not not found")?;
     let call = codegen.builder.build_call(f, &[obj.into()], "lnot_res").map_err(|e| e.to_string())?;
     let v = codegen.check_tensor_result(call, "lnot_error")?;
+    Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
+}
+
+fn compile_tensor_expand<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj: BasicValueEnum<'ctx>,
+    _obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    // Same pattern as compile_tensor_reshape for Vec<i64> shape
+    if args.len() != 1 { return Err("expand requires 1 arg (shape)".into()); }
+    let (shape_val, shape_ty) = &args[0];
+    if !matches!(shape_ty, Type::Struct(n, _) if n.starts_with("Vec")) {
+        return Err(format!("expand argument must be Vec<i64>. Got: {:?}", shape_ty));
+    }
+    let vec_ptr = if shape_val.is_pointer_value() {
+        shape_val.into_pointer_value()
+    } else {
+        return Err("Vec shape must be pointer".into());
+    };
+    let i64_ty = codegen.context.i64_type();
+    let vec_struct_ty = codegen.context.struct_type(&[i64_ty.into(), i64_ty.into(), i64_ty.into()], false);
+    let data_ptr_ptr = codegen.builder.build_struct_gep(vec_struct_ty, vec_ptr, 0, "data_ptr_ptr")
+        .map_err(|e| e.to_string())?;
+    let data_ptr_int = codegen.builder.build_load(i64_ty, data_ptr_ptr, "data_ptr_int")
+        .map_err(|e| e.to_string())?.into_int_value();
+    let data_ptr = codegen.builder.build_int_to_ptr(
+        data_ptr_int,
+        codegen.context.ptr_type(inkwell::AddressSpace::default()),
+        "data_ptr"
+    ).map_err(|e| e.to_string())?;
+    let len_ptr = codegen.builder.build_struct_gep(vec_struct_ty, vec_ptr, 2, "len_ptr")
+        .map_err(|e| e.to_string())?;
+    let len_val = codegen.builder.build_load(i64_ty, len_ptr, "rank_val")
+        .map_err(|e| e.to_string())?.into_int_value();
+
+    let f = codegen.module.get_function("tl_tensor_expand").ok_or("tl_tensor_expand not found")?;
+    let call = codegen.builder.build_call(f, &[obj.into(), data_ptr.into(), len_val.into()], "expand_res")
+        .map_err(|e| e.to_string())?;
+    let v = codegen.check_tensor_result(call, "expand_error")?;
+    Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
+}
+
+fn compile_tensor_stack<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() < 3 { return Err("stack requires (a, b, dim) arguments".into()); }
+    let f = codegen.module.get_function("tl_tensor_stack").ok_or("tl_tensor_stack not found")?;
+    let call = codegen.builder.build_call(f, &[args[0].0.into(), args[1].0.into(), args[2].0.into()], "stack_res")
+        .map_err(|e| e.to_string())?;
+    let v = codegen.check_tensor_result(call, "stack_error")?;
     Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
 }

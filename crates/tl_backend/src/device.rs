@@ -56,6 +56,10 @@ pub trait IDevice {
     // ========== インプレース操作 ==========
     fn tensor_fill_(&self, t: *mut c_void, value: f32) -> BackendResult<()>;
 
+    // ========== 形状操作（追加） ==========
+    fn tensor_broadcast_to(&self, t: *mut c_void, shape: &[usize]) -> BackendResult<*mut c_void>;
+    fn tensor_stack(&self, a: *mut c_void, b: *mut c_void, dim: i64) -> BackendResult<*mut c_void>;
+
     // ========== メモリ管理 ==========
     fn tensor_clone(&self, t: *mut c_void) -> BackendResult<*mut c_void>;
     fn tensor_shallow_clone(&self, t: *mut c_void) -> BackendResult<*mut c_void>;

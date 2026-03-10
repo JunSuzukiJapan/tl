@@ -922,6 +922,13 @@ pub fn declare_runtime_functions<'ctx>(
     add_fn("tl_tensor_logical_or", logical_binary_type);
     add_fn("tl_tensor_logical_not", unary_type);
 
+    // expand / stack
+    // expand uses same sig as reshape_dims: (void*, ptr, i64) -> void*
+    let expand_type = void_ptr.fn_type(&[void_ptr.into(), context.ptr_type(inkwell::AddressSpace::default()).into(), i64_type.into()], false);
+    add_fn("tl_tensor_expand", expand_type);
+    let stack_type = void_ptr.fn_type(&[void_ptr.into(), void_ptr.into(), i64_type.into()], false);
+    add_fn("tl_tensor_stack", stack_type);
+
     // VarBuilder
     // tl_varbuilder_get(name: *const c_char, rank: usize, shape: *const usize) -> *mut OpaqueTensor
     let varbuilder_get_type =
@@ -1674,6 +1681,9 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_tensor_logical_and") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_logical_and as *const () as usize); }
     if let Some(f) = module.get_function("tl_tensor_logical_or") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_logical_or as *const () as usize); }
     if let Some(f) = module.get_function("tl_tensor_logical_not") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_logical_not as *const () as usize); }
+    // [IDevice] expand / stack → device_ffi
+    if let Some(f) = module.get_function("tl_tensor_expand") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_expand as *const () as usize); }
+    if let Some(f) = module.get_function("tl_tensor_stack") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_stack as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
     if let Some(f) = module.get_function("tl_tensor_sub_assign") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_sub_assign as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi

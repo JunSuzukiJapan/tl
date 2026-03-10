@@ -180,6 +180,23 @@ impl IDevice for CpuDevice {
         Ok(())
     }
 
+    fn tensor_broadcast_to(&self, tensor: *mut c_void, shape: &[usize]) -> BackendResult<*mut c_void> {
+        let tt = unsafe { &*t(tensor) };
+        let result = tt.broadcast_to(shape)?;
+        let arc = std::sync::Arc::new(std::cell::UnsafeCell::new(result));
+        Ok(std::sync::Arc::into_raw(arc) as *mut c_void)
+    }
+
+    fn tensor_stack(&self, a: *mut c_void, b: *mut c_void, dim: i64) -> BackendResult<*mut c_void> {
+        use crate::tensor::CpuTensor as CT;
+        let (ta, tb) = unsafe { (&*t(a), &*t(b)) };
+        let ua = ta.unsqueeze(dim as usize)?;
+        let ub = tb.unsqueeze(dim as usize)?;
+        let result = CT::cat(&[&ua, &ub], dim as usize)?;
+        let arc = std::sync::Arc::new(std::cell::UnsafeCell::new(result));
+        Ok(std::sync::Arc::into_raw(arc) as *mut c_void)
+    }
+
     // ========== メモリ管理 ==========
     #[inline] fn tensor_clone(&self, a: *mut c_void) -> BackendResult<*mut c_void> { check(ffi::tl_cpu_tensor_clone(t(a))) }
     #[inline] fn tensor_shallow_clone(&self, a: *mut c_void) -> BackendResult<*mut c_void> { check(ffi::tl_cpu_tensor_shallow_clone(t(a))) }
