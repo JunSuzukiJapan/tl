@@ -148,6 +148,19 @@ pub fn register_tensor_types(manager: &mut TypeManager) {
     tensor.register_evaluated_instance_method("leaky_relu", compile_tensor_leaky_relu, vec![Type::F32], any_tensor.clone());
     tensor.register_evaluated_instance_method("leaky_relu", compile_tensor_leaky_relu, vec![Type::F64], any_tensor.clone());
 
+    // batch_norm(running_mean, running_var, weight, bias, training, momentum, eps)
+    // conv2d(weight, bias, stride, padding, dilation, groups)
+    // max_pool2d / avg_pool2d (kernel_size, stride, padding)
+    tensor.register_evaluated_instance_method("conv2d", compile_tensor_conv2d, vec![any_tensor.clone(), any_tensor.clone(), Type::I64, Type::I64, Type::I64, Type::I64], any_tensor.clone());
+    tensor.register_evaluated_instance_method("max_pool2d", compile_tensor_max_pool2d, vec![Type::I64, Type::I64, Type::I64], any_tensor.clone());
+    tensor.register_evaluated_instance_method("avg_pool2d", compile_tensor_avg_pool2d, vec![Type::I64, Type::I64, Type::I64], any_tensor.clone());
+
+    // elu(alpha?) / mish()
+    tensor.register_evaluated_instance_method("elu", compile_tensor_elu, vec![], any_tensor.clone());
+    tensor.register_evaluated_instance_method("elu", compile_tensor_elu, vec![Type::F32], any_tensor.clone());
+    tensor.register_evaluated_instance_method("elu", compile_tensor_elu, vec![Type::F64], any_tensor.clone());
+    tensor.register_evaluated_instance_method("mish", compile_tensor_mish, vec![], any_tensor.clone());
+
     tensor.register_evaluated_instance_method("clone", compile_tensor_clone, vec![], any_tensor.clone());
     tensor.register_evaluated_instance_method("shallow_clone", compile_tensor_shallow_clone, vec![], any_tensor.clone());
     tensor.register_evaluated_instance_method("grad", compile_tensor_grad, vec![], any_tensor.clone());
@@ -1819,5 +1832,67 @@ fn compile_tensor_leaky_relu<'ctx>(
     let f = codegen.module.get_function("tl_tensor_leaky_relu").ok_or("tl_tensor_leaky_relu not found")?;
     let call = codegen.builder.build_call(f, &[obj.into(), slope.into()], "lrelu_res").map_err(|e| e.to_string())?;
     let v = codegen.check_tensor_result(call, "leaky_relu_error")?;
+    Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
+}
+
+fn compile_tensor_max_pool2d<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj: BasicValueEnum<'ctx>,
+    _obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() < 3 { return Err("max_pool2d requires (kernel_size, stride, padding)".into()); }
+    let f = codegen.module.get_function("tl_tensor_max_pool2d").ok_or("tl_tensor_max_pool2d not found")?;
+    let call = codegen.builder.build_call(f, &[obj.into(), args[0].0.into(), args[1].0.into(), args[2].0.into()], "maxpool_res")
+        .map_err(|e| e.to_string())?;
+    let v = codegen.check_tensor_result(call, "maxpool_error")?;
+    Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
+}
+
+fn compile_tensor_avg_pool2d<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj: BasicValueEnum<'ctx>,
+    _obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() < 3 { return Err("avg_pool2d requires (kernel_size, stride, padding)".into()); }
+    let f = codegen.module.get_function("tl_tensor_avg_pool2d").ok_or("tl_tensor_avg_pool2d not found")?;
+    let call = codegen.builder.build_call(f, &[obj.into(), args[0].0.into(), args[1].0.into(), args[2].0.into()], "avgpool_res")
+        .map_err(|e| e.to_string())?;
+    let v = codegen.check_tensor_result(call, "avgpool_error")?;
+    Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
+}
+
+fn compile_tensor_elu<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj: BasicValueEnum<'ctx>,
+    _obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let f32_type = codegen.context.f32_type();
+    let alpha = if args.is_empty() {
+        f32_type.const_float(1.0)
+    } else {
+        match args[0].1 {
+            Type::F32 => args[0].0.into_float_value(),
+            Type::F64 => codegen.builder.build_float_trunc(args[0].0.into_float_value(), f32_type, "atrunc").map_err(|e| e.to_string())?,
+            _ => return Err("elu alpha must be float".into()),
+        }
+    };
+    let f = codegen.module.get_function("tl_tensor_elu").ok_or("tl_tensor_elu not found")?;
+    let call = codegen.builder.build_call(f, &[obj.into(), alpha.into()], "elu_res").map_err(|e| e.to_string())?;
+    let v = codegen.check_tensor_result(call, "elu_error")?;
+    Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
+}
+
+fn compile_tensor_mish<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj: BasicValueEnum<'ctx>,
+    _obj_ty: Type,
+    _args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let f = codegen.module.get_function("tl_tensor_mish").ok_or("tl_tensor_mish not found")?;
+    let call = codegen.builder.build_call(f, &[obj.into()], "mish_res").map_err(|e| e.to_string())?;
+    let v = codegen.check_tensor_result(call, "mish_error")?;
     Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
 }

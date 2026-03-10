@@ -177,19 +177,13 @@ DOMAIN_FEATURES_ANALYSIS.md の分析結果に基づく実装計画。
 
 ### 4.2 プーリング（高優先度）
 
-- [ ] `max_pool2d(kernel_size, stride, padding)` — 最大プーリング
-  - [ ] tl_cpu: 実装
-  - [ ] tl_metal: ディスパッチパターンあり → TL API公開
-  - [ ] tl_cuda: 実装
-  - [ ] FFI + TypeManager登録
-  - [ ] テスト
+- [x] `max_pool2d(kernel_size, stride, padding)` — 最大プーリング
+  - [x] 既存パイプライン活用、TypeManager登録 + compile関数
+  - [x] FFI + builtins 既存
 
-- [ ] `avg_pool2d(kernel_size, stride, padding)` — 平均プーリング
-  - [ ] tl_cpu: 実装
-  - [ ] tl_metal: 実装
-  - [ ] tl_cuda: 実装
-  - [ ] FFI + TypeManager登録
-  - [ ] テスト
+- [x] `avg_pool2d(kernel_size, stride, padding)` — 平均プーリング
+  - [x] 既存パイプライン活用、TypeManager登録 + compile関数
+  - [x] FFI + builtins 既存
 
 ### 4.3 その他NN（高〜中優先度）
 
@@ -223,8 +217,10 @@ DOMAIN_FEATURES_ANALYSIS.md の分析結果に基づく実装計画。
 
 ### 4.4 低優先度（活性化関数）
 
-- [ ] `elu(alpha?)` — ELU活性化
-- [ ] `mish()` — Mish活性化
+- [x] `elu(alpha?)` — ELU活性化
+  - [x] CPU/Metal 実装、CUDA stub
+- [x] `mish()` — Mish活性化
+  - [x] CPU/Metal 実装、CUDA stub
 - [ ] `hardswish()` / `hardsigmoid()` — モバイル向け活性化
 - [ ] `dropout2d(p, training)` — チャネル単位ドロップアウト
 - [ ] `instance_norm(...)` — InstanceNorm

@@ -933,6 +933,11 @@ pub fn declare_runtime_functions<'ctx>(
     let leaky_relu_type = void_ptr.fn_type(&[void_ptr.into(), f32_type.into()], false);
     add_fn("tl_tensor_leaky_relu", leaky_relu_type);
 
+    // elu(t, alpha) -> Tensor (same sig as leaky_relu)
+    add_fn("tl_tensor_elu", leaky_relu_type);
+    // mish(t) -> Tensor (same sig as unary)
+    add_fn("tl_tensor_mish", unary_type);
+
     // VarBuilder
     // tl_varbuilder_get(name: *const c_char, rank: usize, shape: *const usize) -> *mut OpaqueTensor
     let varbuilder_get_type =
@@ -1689,6 +1694,8 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_tensor_expand") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_expand as *const () as usize); }
     if let Some(f) = module.get_function("tl_tensor_stack") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_stack as *const () as usize); }
     if let Some(f) = module.get_function("tl_tensor_leaky_relu") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_leaky_relu as *const () as usize); }
+    if let Some(f) = module.get_function("tl_tensor_elu") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_elu as *const () as usize); }
+    if let Some(f) = module.get_function("tl_tensor_mish") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_mish as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
     if let Some(f) = module.get_function("tl_tensor_sub_assign") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_sub_assign as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi

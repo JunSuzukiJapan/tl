@@ -339,6 +339,16 @@ pub extern "C" fn tl_device_tensor_stack(a: *mut c_void, b: *mut c_void, dim: i6
 pub extern "C" fn tl_device_tensor_leaky_relu(t: *mut c_void, slope: f32) -> *mut c_void {
     dispatch(|d| d.tensor_leaky_relu(t, slope))
 }
+/// @ffi_sig (Tensor*, f32) -> Tensor*
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_device_tensor_elu(t: *mut c_void, alpha: f32) -> *mut c_void {
+    dispatch(|d| d.tensor_elu(t, alpha))
+}
+/// @ffi_sig (Tensor*) -> Tensor*
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_device_tensor_mish(t: *mut c_void) -> *mut c_void {
+    dispatch(|d| d.tensor_mish(t))
+}
 /// @ffi_sig (Tensor*) -> Tensor*
 /// 入力テンソルと同じ形状のゼロテンソルを生成
 #[unsafe(no_mangle)]
