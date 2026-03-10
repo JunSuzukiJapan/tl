@@ -193,6 +193,13 @@ pub fn register_tensor_types(manager: &mut TypeManager) {
     tensor.register_evaluated_instance_method("interpolate", compile_tensor_interpolate, vec![Type::I64, Type::I64, Type::I64], any_tensor.clone());
     tensor.register_evaluated_instance_method("interpolate", compile_tensor_interpolate, vec![Type::I64, Type::I64], any_tensor.clone());
 
+    // Transformer inference
+    tensor.register_evaluated_static_method("sdpa", compile_tensor_sdpa, vec![any_tensor.clone(), any_tensor.clone(), any_tensor.clone(), any_tensor.clone()], any_tensor.clone());
+    tensor.register_evaluated_static_method("sdpa", compile_tensor_sdpa, vec![any_tensor.clone(), any_tensor.clone(), any_tensor.clone()], any_tensor.clone());
+    tensor.register_evaluated_instance_method("top_k_sample", compile_tensor_top_k_sample, vec![Type::I64], any_tensor.clone());
+    tensor.register_evaluated_instance_method("top_p_sample", compile_tensor_top_p_sample, vec![Type::F64], any_tensor.clone());
+    tensor.register_evaluated_instance_method("top_p_sample", compile_tensor_top_p_sample, vec![Type::F32], any_tensor.clone());
+
     tensor.register_evaluated_instance_method("clone", compile_tensor_clone, vec![], any_tensor.clone());
     tensor.register_evaluated_instance_method("shallow_clone", compile_tensor_shallow_clone, vec![], any_tensor.clone());
     tensor.register_evaluated_instance_method("grad", compile_tensor_grad, vec![], any_tensor.clone());
@@ -2120,5 +2127,54 @@ fn compile_tensor_interpolate<'ctx>(
     let call = codegen.builder.build_call(f, &[obj.into(), args[0].0.into(), args[1].0.into(), mode.into()], "interp_res")
         .map_err(|e| e.to_string())?;
     let v = codegen.check_tensor_result(call, "interpolate_error")?;
+    Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
+}
+
+fn compile_tensor_sdpa<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() < 3 { return Err("sdpa requires (q, k, v[, mask])".into()); }
+    let void_ptr_type = codegen.context.ptr_type(inkwell::AddressSpace::default());
+    let mask = if args.len() >= 4 { args[3].0 } else { void_ptr_type.const_null().into() };
+    let f = codegen.module.get_function("tl_tensor_sdpa").ok_or("tl_tensor_sdpa not found")?;
+    let call = codegen.builder.build_call(f, &[args[0].0.into(), args[1].0.into(), args[2].0.into(), mask.into()], "sdpa_res")
+        .map_err(|e| e.to_string())?;
+    let v = codegen.check_tensor_result(call, "sdpa_error")?;
+    Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
+}
+
+fn compile_tensor_top_k_sample<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj: BasicValueEnum<'ctx>,
+    _obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() < 1 { return Err("top_k_sample requires (k)".into()); }
+    let f = codegen.module.get_function("tl_tensor_top_k_sample").ok_or("tl_tensor_top_k_sample not found")?;
+    let call = codegen.builder.build_call(f, &[obj.into(), args[0].0.into()], "topk_res")
+        .map_err(|e| e.to_string())?;
+    let v = codegen.check_tensor_result(call, "topk_error")?;
+    Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
+}
+
+fn compile_tensor_top_p_sample<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj: BasicValueEnum<'ctx>,
+    _obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() < 1 { return Err("top_p_sample requires (p)".into()); }
+    let f64_type = codegen.context.f64_type();
+    let p_val = match args[0].1 {
+        Type::F64 => args[0].0.into_float_value(),
+        Type::F32 => codegen.builder.build_float_ext(args[0].0.into_float_value(), f64_type, "p_ext").map_err(|e| e.to_string())?,
+        _ => return Err("top_p_sample: p must be float".into()),
+    };
+    let f = codegen.module.get_function("tl_tensor_top_p_sample").ok_or("tl_tensor_top_p_sample not found")?;
+    let call = codegen.builder.build_call(f, &[obj.into(), p_val.into()], "topp_res")
+        .map_err(|e| e.to_string())?;
+    let v = codegen.check_tensor_result(call, "topp_error")?;
     Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
 }

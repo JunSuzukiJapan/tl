@@ -424,6 +424,21 @@ pub extern "C" fn tl_device_tensor_conv_transpose2d(input: *mut c_void, weight: 
 pub extern "C" fn tl_device_tensor_interpolate(input: *mut c_void, output_h: i64, output_w: i64, mode: i64) -> *mut c_void {
     dispatch(|d| d.tensor_interpolate(input, output_h, output_w, mode))
 }
+/// @ffi_sig (Tensor*, Tensor*, Tensor*, Tensor*) -> Tensor*
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_device_tensor_sdpa(q: *mut c_void, k: *mut c_void, v: *mut c_void, mask: *mut c_void) -> *mut c_void {
+    dispatch(|d| d.tensor_scaled_dot_product_attention(q, k, v, mask))
+}
+/// @ffi_sig (Tensor*, i64) -> Tensor*
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_device_tensor_top_k_sample(logits: *mut c_void, k: i64) -> *mut c_void {
+    dispatch(|d| d.tensor_top_k_sample(logits, k))
+}
+/// @ffi_sig (Tensor*, f64) -> Tensor*
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_device_tensor_top_p_sample(logits: *mut c_void, p: f64) -> *mut c_void {
+    dispatch(|d| d.tensor_top_p_sample(logits, p))
+}
 /// @ffi_sig (Tensor*) -> Tensor*
 /// 入力テンソルと同じ形状のゼロテンソルを生成
 #[unsafe(no_mangle)]

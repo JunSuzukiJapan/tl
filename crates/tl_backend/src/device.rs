@@ -73,6 +73,9 @@ pub trait IDevice {
     fn tensor_kl_div_loss(&self, pred: *mut c_void, target: *mut c_void) -> BackendResult<*mut c_void>;
     fn tensor_conv_transpose2d(&self, input: *mut c_void, weight: *mut c_void, bias: *mut c_void, stride: i64, padding: i64, output_padding: i64) -> BackendResult<*mut c_void>;
     fn tensor_interpolate(&self, input: *mut c_void, output_h: i64, output_w: i64, mode: i64) -> BackendResult<*mut c_void>;
+    fn tensor_scaled_dot_product_attention(&self, q: *mut c_void, k: *mut c_void, v: *mut c_void, mask: *mut c_void) -> BackendResult<*mut c_void>;
+    fn tensor_top_k_sample(&self, logits: *mut c_void, k: i64) -> BackendResult<*mut c_void>;
+    fn tensor_top_p_sample(&self, logits: *mut c_void, p: f64) -> BackendResult<*mut c_void>;
 
     // ========== インプレース操作 ==========
     fn tensor_fill_(&self, t: *mut c_void, value: f32) -> BackendResult<()>;

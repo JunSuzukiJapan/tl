@@ -482,6 +482,112 @@ impl IDevice for CpuDevice {
         Ok(std::sync::Arc::into_raw(arc) as *mut c_void)
     }
 
+    fn tensor_scaled_dot_product_attention(&self, q: *mut c_void, k: *mut c_void, v: *mut c_void, mask: *mut c_void) -> BackendResult<*mut c_void> {
+        let (tq, tk, tv) = unsafe { (&*t(q), &*t(k), &*t(v)) };
+        // Q: [batch, heads, seq_q, d_k], K: [batch, heads, seq_k, d_k], V: [batch, heads, seq_k, d_v]
+        let qd = tq.to_vec::<f32>(); let kd = tk.to_vec::<f32>(); let vd = tv.to_vec::<f32>();
+        let qs = tq.shape().to_vec(); let ks = tk.shape().to_vec(); let vs = tv.shape().to_vec();
+        let (batch, heads) = if qs.len() == 4 { (qs[0], qs[1]) } else if qs.len() == 3 { (1, qs[0]) } else { (1, 1) };
+        let (seq_q, d_k) = (qs[qs.len()-2], qs[qs.len()-1]);
+        let seq_k = ks[ks.len()-2];
+        let d_v = vs[vs.len()-1];
+        let scale = 1.0 / (d_k as f32).sqrt();
+        let has_mask = !mask.is_null();
+        let mask_data = if has_mask { unsafe { &*t(mask) }.to_vec::<f32>() } else { vec![] };
+
+        let mut result = vec![0.0f32; batch * heads * seq_q * d_v];
+        for b in 0..batch { for h in 0..heads {
+            // scores = Q @ K^T * scale
+            let q_off = b*heads*seq_q*d_k + h*seq_q*d_k;
+            let k_off = b*heads*seq_k*d_k + h*seq_k*d_k;
+            let v_off = b*heads*seq_k*d_v + h*seq_k*d_v;
+            let mut scores = vec![0.0f32; seq_q * seq_k];
+            for i in 0..seq_q { for j in 0..seq_k {
+                let mut s = 0.0f32;
+                for d in 0..d_k { s += qd[q_off+i*d_k+d] * kd[k_off+j*d_k+d]; }
+                scores[i*seq_k+j] = s * scale;
+            }}
+            // apply mask
+            if has_mask {
+                for i in 0..seq_q { for j in 0..seq_k {
+                    if mask_data.len() > i*seq_k+j && mask_data[i*seq_k+j] == 0.0 {
+                        scores[i*seq_k+j] = -1e9;
+                    }
+                }}
+            }
+            // softmax per row
+            for i in 0..seq_q {
+                let max_v: f32 = scores[i*seq_k..(i+1)*seq_k].iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+                let mut sum = 0.0f32;
+                for j in 0..seq_k { scores[i*seq_k+j] = (scores[i*seq_k+j] - max_v).exp(); sum += scores[i*seq_k+j]; }
+                for j in 0..seq_k { scores[i*seq_k+j] /= sum; }
+            }
+            // attn @ V
+            let r_off = b*heads*seq_q*d_v + h*seq_q*d_v;
+            for i in 0..seq_q { for j in 0..d_v {
+                let mut s = 0.0f32;
+                for l in 0..seq_k { s += scores[i*seq_k+l] * vd[v_off+l*d_v+j]; }
+                result[r_off+i*d_v+j] = s;
+            }}
+        }}
+        let out_shape = if qs.len() == 4 { vec![batch, heads, seq_q, d_v] }
+            else if qs.len() == 3 { vec![heads, seq_q, d_v] } else { vec![seq_q, d_v] };
+        let out = crate::tensor::CpuTensor::from_slice(&result, &out_shape, crate::DType::F32);
+        let arc = std::sync::Arc::new(std::cell::UnsafeCell::new(out));
+        Ok(std::sync::Arc::into_raw(arc) as *mut c_void)
+    }
+
+    fn tensor_top_k_sample(&self, logits: *mut c_void, k: i64) -> BackendResult<*mut c_void> {
+        let tl = unsafe { &*t(logits) };
+        let data = tl.to_vec::<f32>();
+        let k = k as usize;
+        // find k-th largest value
+        let mut sorted = data.clone();
+        sorted.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+        let threshold = if k < sorted.len() { sorted[k-1] } else { sorted[sorted.len()-1] };
+        // mask and softmax
+        let masked: Vec<f32> = data.iter().map(|&v| if v >= threshold { v } else { f32::NEG_INFINITY }).collect();
+        let max_v: f32 = masked.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        let exps: Vec<f32> = masked.iter().map(|&v| (v - max_v).exp()).collect();
+        let sum: f32 = exps.iter().sum();
+        let probs: Vec<f32> = exps.iter().map(|v| v / sum).collect();
+        // argmax
+        let idx = probs.iter().enumerate().max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal)).map(|(i, _)| i).unwrap_or(0);
+        let out = crate::tensor::CpuTensor::from_slice(&[idx as f32], &[1], crate::DType::F32);
+        let arc = std::sync::Arc::new(std::cell::UnsafeCell::new(out));
+        Ok(std::sync::Arc::into_raw(arc) as *mut c_void)
+    }
+
+    fn tensor_top_p_sample(&self, logits: *mut c_void, p: f64) -> BackendResult<*mut c_void> {
+        let tl = unsafe { &*t(logits) };
+        let data = tl.to_vec::<f32>();
+        // softmax
+        let max_v: f32 = data.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        let exps: Vec<f32> = data.iter().map(|&v| (v - max_v).exp()).collect();
+        let sum: f32 = exps.iter().sum();
+        let probs: Vec<f32> = exps.iter().map(|v| v / sum).collect();
+        // sort indices by probability descending
+        let mut indices: Vec<usize> = (0..probs.len()).collect();
+        indices.sort_by(|&a, &b| probs[b].partial_cmp(&probs[a]).unwrap_or(std::cmp::Ordering::Equal));
+        // cumulative sum, mask below p
+        let mut cum = 0.0f32;
+        let mut mask = vec![false; probs.len()];
+        for &i in &indices {
+            cum += probs[i];
+            mask[i] = true;
+            if cum >= p as f32 { break; }
+        }
+        // mask and re-normalize
+        let masked: Vec<f32> = probs.iter().enumerate().map(|(i, &v)| if mask[i] { v } else { 0.0 }).collect();
+        let sum2: f32 = masked.iter().sum();
+        let final_probs: Vec<f32> = masked.iter().map(|v| v / sum2).collect();
+        // argmax
+        let idx = final_probs.iter().enumerate().max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal)).map(|(i, _)| i).unwrap_or(0);
+        let out = crate::tensor::CpuTensor::from_slice(&[idx as f32], &[1], crate::DType::F32);
+        let arc = std::sync::Arc::new(std::cell::UnsafeCell::new(out));
+        Ok(std::sync::Arc::into_raw(arc) as *mut c_void)
+    }
+
     fn tensor_fill_(&self, tensor: *mut c_void, value: f32) -> BackendResult<()> {
         let tt = unsafe { &*t(tensor) };
         let numel: usize = tt.shape().iter().product();

@@ -978,6 +978,16 @@ pub fn declare_runtime_functions<'ctx>(
     let interpolate_type = void_ptr.fn_type(&[void_ptr.into(), i64_type.into(), i64_type.into(), i64_type.into()], false);
     add_fn("tl_tensor_interpolate", interpolate_type);
 
+    // scaled_dot_product_attention(q, k, v, mask) -> Tensor
+    let sdpa_type = void_ptr.fn_type(&[void_ptr.into(), void_ptr.into(), void_ptr.into(), void_ptr.into()], false);
+    add_fn("tl_tensor_sdpa", sdpa_type);
+    // top_k_sample(logits, k) -> Tensor
+    let topk_type = void_ptr.fn_type(&[void_ptr.into(), i64_type.into()], false);
+    add_fn("tl_tensor_top_k_sample", topk_type);
+    // top_p_sample(logits, p) -> Tensor
+    let topp_type = void_ptr.fn_type(&[void_ptr.into(), f64_type.into()], false);
+    add_fn("tl_tensor_top_p_sample", topp_type);
+
     // VarBuilder
     // tl_varbuilder_get(name: *const c_char, rank: usize, shape: *const usize) -> *mut OpaqueTensor
     let varbuilder_get_type =
@@ -1752,6 +1762,9 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_tensor_kl_div_loss") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_kl_div_loss as *const () as usize); }
     if let Some(f) = module.get_function("tl_tensor_conv_transpose2d") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_conv_transpose2d as *const () as usize); }
     if let Some(f) = module.get_function("tl_tensor_interpolate") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_interpolate as *const () as usize); }
+    if let Some(f) = module.get_function("tl_tensor_sdpa") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_sdpa as *const () as usize); }
+    if let Some(f) = module.get_function("tl_tensor_top_k_sample") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_top_k_sample as *const () as usize); }
+    if let Some(f) = module.get_function("tl_tensor_top_p_sample") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_top_p_sample as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
     if let Some(f) = module.get_function("tl_tensor_sub_assign") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_sub_assign as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi

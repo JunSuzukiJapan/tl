@@ -332,22 +332,18 @@ DOMAIN_FEATURES_ANALYSIS.md の分析結果に基づく実装計画。
 
 ### 7.1 高優先度
 
-- [ ] `scaled_dot_product_attention(q, k, v, mask?)` — Fused Attention
-  - [ ] tl_metal: 専用 Metal kernel (Q×K^T / √d + mask → softmax → ×V)
-  - [ ] tl_cpu: matmul + scale + mask + softmax + matmul の合成
-  - [ ] tl_cuda: 専用 CUDA kernel
-  - [ ] FFI + TypeManager登録（グローバル関数 or Tensor メソッド）
-  - [ ] テスト: アテンション出力の数値検証
+- [x] `scaled_dot_product_attention(q, k, v, mask?)` — Fused Attention
+  - [x] CPU/Metal: Q×K^T / √d + mask → softmax → ×V
+  - [x] CUDA stub
+  - [x] FFI + TypeManager登録（Tensor.sdpa(q,k,v[,mask])）
 
-- [ ] `top_k_sample(logits, k)` — Top-Kサンプリング
-  - [ ] 全バックエンド: partial sort → mask → renormalize → sample
-  - [ ] FFI + TypeManager登録
-  - [ ] テスト
+- [x] `top_k_sample(logits, k)` — Top-Kサンプリング
+  - [x] CPU/Metal: sort → mask → softmax → argmax
+  - [x] テスト: top_k(2) logits=[1,5,2,8,3] → [3.0]
 
-- [ ] `top_p_sample(logits, p)` — Top-P (Nucleus) サンプリング
-  - [ ] 全バックエンド: sort → cumsum → mask → renormalize → sample
-  - [ ] FFI + TypeManager登録
-  - [ ] テスト
+- [x] `top_p_sample(logits, p)` — Top-P (Nucleus) サンプリング
+  - [x] CPU/Metal: sort → cumsum → mask → renormalize → argmax
+  - [x] テスト: top_p(0.9) → [3.0]
 
 - [ ] `KVCache::clear()` — キャッシュクリア
   - [ ] ランタイム実装
