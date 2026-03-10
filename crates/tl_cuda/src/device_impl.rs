@@ -99,6 +99,12 @@ impl IDevice for CudaDeviceImpl {
     fn tensor_var(&self, _t: *mut c_void, _dim: i32) -> BackendResult<*mut c_void> { unimplemented!("CUDA var") }
     fn tensor_std(&self, _t: *mut c_void, _dim: i32) -> BackendResult<*mut c_void> { unimplemented!("CUDA std") }
     fn tensor_prod(&self, _t: *mut c_void, _dim: i32) -> BackendResult<*mut c_void> { unimplemented!("CUDA prod") }
+    fn tensor_cumsum(&self, _t: *mut c_void, _dim: i32) -> BackendResult<*mut c_void> { unimplemented!("CUDA cumsum") }
+    fn tensor_norm(&self, _t: *mut c_void, _p: f32, _dim: i32) -> BackendResult<*mut c_void> { unimplemented!("CUDA norm") }
+    fn tensor_topk(&self, _t: *mut c_void, _k: usize, _dim: i32) -> BackendResult<*mut c_void> { unimplemented!("CUDA topk") }
+    fn tensor_logical_and(&self, _a: *mut c_void, _b: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!("CUDA logical_and") }
+    fn tensor_logical_or(&self, _a: *mut c_void, _b: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!("CUDA logical_or") }
+    fn tensor_logical_not(&self, _t: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!("CUDA logical_not") }
     fn tensor_fill_(&self, _t: *mut c_void, _value: f32) -> BackendResult<()> { unimplemented!("CUDA fill_") }
     // ========== メモリ管理 ==========
     fn tensor_clone(&self, t: *mut c_void) -> BackendResult<*mut c_void> {

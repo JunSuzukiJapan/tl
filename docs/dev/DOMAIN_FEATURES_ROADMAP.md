@@ -110,9 +110,9 @@ DOMAIN_FEATURES_ANALYSIS.md の分析結果に基づく実装計画。
 
 ### 2.2 中優先度
 
-- [ ] `logical_and` / `logical_or` / `logical_not` — 論理演算
-  - [ ] 全バックエンド: element-wise kernel
-  - [ ] FFI + TypeManager登録
+- [x] `logical_and` / `logical_or` / `logical_not` — 論理演算
+  - [x] CPU/Metal: element-wise kernel, CUDA unimplemented!()
+  - [x] FFI + TypeManager登録
 
 - [x] `fill_(value)` — インプレース埋め込み
   - [x] CPU/Metal 実装、CUDA unimplemented!()
@@ -121,16 +121,16 @@ DOMAIN_FEATURES_ANALYSIS.md の分析結果に基づく実装計画。
   - [x] CPU/Metal: reduction kernel (exp(sum(log)))
   - [x] FFI + TypeManager登録
 
-- [ ] `cumsum(dim)` — 累積和
-  - [ ] 全バックエンド: parallel prefix sum
-  - [ ] FFI + TypeManager登録
+- [x] `cumsum(dim)` — 累積和
+  - [x] CPU/Metal: sequential scan, CUDA unimplemented!()
+  - [x] FFI + TypeManager登録
 
-- [ ] `norm(p, dim?)` — Lpノルム
-  - [ ] 全バックエンド実装
+- [x] `norm(p, dim?)` — Lpノルム
+  - [x] CPU/Metal 実装, CUDA unimplemented!()
 
-- [ ] `topk(k, dim)` — 上位k個
-  - [ ] 全バックエンド: partial sort kernel
-  - [ ] FFI + TypeManager登録
+- [x] `topk(k, dim)` — 上位k個
+  - [x] CPU/Metal: partial sort, CUDA unimplemented!()
+  - [x] FFI + TypeManager登録
 
 ---
 

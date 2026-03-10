@@ -92,6 +92,54 @@ impl IDevice for MetalDeviceImpl {
         Ok(ffi_ops::make_tensor(result) as *mut c_void)
     }
 
+    fn tensor_cumsum(&self, tensor: *mut c_void, _dim: i32) -> BackendResult<*mut c_void> {
+        let tt = unsafe { &*t(tensor) };
+        let data = tt.to_vec::<f32>();
+        let mut result = Vec::with_capacity(data.len());
+        let mut acc = 0.0f32;
+        for &x in &data { acc += x; result.push(acc); }
+        let out = MetalTensor::from_slice(&result, tt.shape(), crate::DType::F32);
+        Ok(ffi_ops::make_tensor(out) as *mut c_void)
+    }
+
+    fn tensor_norm(&self, tensor: *mut c_void, p: f32, _dim: i32) -> BackendResult<*mut c_void> {
+        let tt = unsafe { &*t(tensor) };
+        let data = tt.to_vec::<f32>();
+        let norm_val = if p == 2.0 { data.iter().map(|x| x * x).sum::<f32>().sqrt() }
+                       else { data.iter().map(|x| x.abs().powf(p)).sum::<f32>().powf(1.0 / p) };
+        let out = MetalTensor::from_slice(&[norm_val], &[1], crate::DType::F32);
+        Ok(ffi_ops::make_tensor(out) as *mut c_void)
+    }
+
+    fn tensor_topk(&self, tensor: *mut c_void, k: usize, _dim: i32) -> BackendResult<*mut c_void> {
+        let tt = unsafe { &*t(tensor) };
+        let mut data = tt.to_vec::<f32>();
+        data.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+        data.truncate(k);
+        let out = MetalTensor::from_slice(&data, &[k], crate::DType::F32);
+        Ok(ffi_ops::make_tensor(out) as *mut c_void)
+    }
+
+    fn tensor_logical_and(&self, a: *mut c_void, b: *mut c_void) -> BackendResult<*mut c_void> {
+        let (ta, tb) = unsafe { (&*t(a), &*t(b)) };
+        let r: Vec<f32> = ta.to_vec::<f32>().iter().zip(tb.to_vec::<f32>().iter())
+            .map(|(&x, &y)| if x != 0.0 && y != 0.0 { 1.0 } else { 0.0 }).collect();
+        Ok(ffi_ops::make_tensor(MetalTensor::from_slice(&r, ta.shape(), crate::DType::F32)) as *mut c_void)
+    }
+
+    fn tensor_logical_or(&self, a: *mut c_void, b: *mut c_void) -> BackendResult<*mut c_void> {
+        let (ta, tb) = unsafe { (&*t(a), &*t(b)) };
+        let r: Vec<f32> = ta.to_vec::<f32>().iter().zip(tb.to_vec::<f32>().iter())
+            .map(|(&x, &y)| if x != 0.0 || y != 0.0 { 1.0 } else { 0.0 }).collect();
+        Ok(ffi_ops::make_tensor(MetalTensor::from_slice(&r, ta.shape(), crate::DType::F32)) as *mut c_void)
+    }
+
+    fn tensor_logical_not(&self, tensor: *mut c_void) -> BackendResult<*mut c_void> {
+        let tt = unsafe { &*t(tensor) };
+        let r: Vec<f32> = tt.to_vec::<f32>().iter().map(|&x| if x == 0.0 { 1.0 } else { 0.0 }).collect();
+        Ok(ffi_ops::make_tensor(MetalTensor::from_slice(&r, tt.shape(), crate::DType::F32)) as *mut c_void)
+    }
+
     fn tensor_fill_(&self, tensor: *mut c_void, value: f32) -> BackendResult<()> {
         let tt = unsafe { &*t(tensor) };
         let numel: usize = tt.shape().iter().product();

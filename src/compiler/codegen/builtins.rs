@@ -910,6 +910,18 @@ pub fn declare_runtime_functions<'ctx>(
     let fill_type = context.void_type().fn_type(&[void_ptr.into(), f32_type.into()], false);
     add_fn("tl_tensor_fill_", fill_type);
 
+    // cumsum / norm / topk / logical_*
+    let cumsum_type = void_ptr.fn_type(&[void_ptr.into(), i64_type.into()], false);
+    add_fn("tl_tensor_cumsum", cumsum_type);
+    let norm_type = void_ptr.fn_type(&[void_ptr.into(), f32_type.into(), i64_type.into()], false);
+    add_fn("tl_tensor_norm", norm_type);
+    let topk_type = void_ptr.fn_type(&[void_ptr.into(), i64_type.into(), i64_type.into()], false);
+    add_fn("tl_tensor_topk", topk_type);
+    let logical_binary_type = void_ptr.fn_type(&[void_ptr.into(), void_ptr.into()], false);
+    add_fn("tl_tensor_logical_and", logical_binary_type);
+    add_fn("tl_tensor_logical_or", logical_binary_type);
+    add_fn("tl_tensor_logical_not", unary_type);
+
     // VarBuilder
     // tl_varbuilder_get(name: *const c_char, rank: usize, shape: *const usize) -> *mut OpaqueTensor
     let varbuilder_get_type =
@@ -1655,6 +1667,13 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_tensor_prod_dim") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_prod_dim as *const () as usize); }
     if let Some(f) = module.get_function("tl_tensor_prod") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_prod as *const () as usize); }
     if let Some(f) = module.get_function("tl_tensor_fill_") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_fill_ as *const () as usize); }
+    // [IDevice] cumsum / norm / topk / logical_* → device_ffi
+    if let Some(f) = module.get_function("tl_tensor_cumsum") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_cumsum as *const () as usize); }
+    if let Some(f) = module.get_function("tl_tensor_norm") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_norm as *const () as usize); }
+    if let Some(f) = module.get_function("tl_tensor_topk") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_topk as *const () as usize); }
+    if let Some(f) = module.get_function("tl_tensor_logical_and") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_logical_and as *const () as usize); }
+    if let Some(f) = module.get_function("tl_tensor_logical_or") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_logical_or as *const () as usize); }
+    if let Some(f) = module.get_function("tl_tensor_logical_not") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_logical_not as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
     if let Some(f) = module.get_function("tl_tensor_sub_assign") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_sub_assign as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi

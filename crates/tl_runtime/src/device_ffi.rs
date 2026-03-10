@@ -290,6 +290,36 @@ pub extern "C" fn tl_device_tensor_prod(t: *mut c_void) -> *mut c_void {
 pub extern "C" fn tl_device_tensor_fill_(t: *mut c_void, value: f32) {
     dispatch(|d| d.tensor_fill_(t, value))
 }
+/// @ffi_sig (Tensor*, i32) -> Tensor*
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_device_tensor_cumsum(t: *mut c_void, dim: i32) -> *mut c_void {
+    dispatch(|d| d.tensor_cumsum(t, dim))
+}
+/// @ffi_sig (Tensor*, f32, i32) -> Tensor*
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_device_tensor_norm(t: *mut c_void, p: f32, dim: i32) -> *mut c_void {
+    dispatch(|d| d.tensor_norm(t, p, dim))
+}
+/// @ffi_sig (Tensor*, i64, i32) -> Tensor*
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_device_tensor_topk(t: *mut c_void, k: i64, dim: i32) -> *mut c_void {
+    dispatch(|d| d.tensor_topk(t, k as usize, dim))
+}
+/// @ffi_sig (Tensor*, Tensor*) -> Tensor*
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_device_tensor_logical_and(a: *mut c_void, b: *mut c_void) -> *mut c_void {
+    dispatch(|d| d.tensor_logical_and(a, b))
+}
+/// @ffi_sig (Tensor*, Tensor*) -> Tensor*
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_device_tensor_logical_or(a: *mut c_void, b: *mut c_void) -> *mut c_void {
+    dispatch(|d| d.tensor_logical_or(a, b))
+}
+/// @ffi_sig (Tensor*) -> Tensor*
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_device_tensor_logical_not(t: *mut c_void) -> *mut c_void {
+    dispatch(|d| d.tensor_logical_not(t))
+}
 /// @ffi_sig (Tensor*) -> Tensor*
 /// 入力テンソルと同じ形状のゼロテンソルを生成
 #[unsafe(no_mangle)]

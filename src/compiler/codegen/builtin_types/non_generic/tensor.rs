@@ -119,6 +119,25 @@ pub fn register_tensor_types(manager: &mut TypeManager) {
     tensor.register_evaluated_instance_method("fill_", compile_tensor_fill_, vec![Type::F32], Type::Void);
     tensor.register_evaluated_instance_method("fill_", compile_tensor_fill_, vec![Type::F64], Type::Void);
 
+    // cumsum(dim) -> Tensor
+    tensor.register_evaluated_instance_method("cumsum", compile_tensor_cumsum, vec![Type::I64], any_tensor.clone());
+
+    // norm(p) or norm(p, dim) -> Tensor
+    tensor.register_evaluated_instance_method("norm", compile_tensor_norm, vec![Type::F32], any_tensor.clone());
+    tensor.register_evaluated_instance_method("norm", compile_tensor_norm, vec![Type::F64], any_tensor.clone());
+    tensor.register_evaluated_instance_method("norm", compile_tensor_norm, vec![Type::F32, Type::I64], any_tensor.clone());
+
+    // topk(k) or topk(k, dim) -> Tensor
+    tensor.register_evaluated_instance_method("topk", compile_tensor_topk, vec![Type::I64], any_tensor.clone());
+    tensor.register_evaluated_instance_method("topk", compile_tensor_topk, vec![Type::I64, Type::I64], any_tensor.clone());
+
+    // logical_and / logical_or (static binary)
+    tensor.register_evaluated_static_method("logical_and", compile_tensor_logical_and, vec![any_tensor.clone(), any_tensor.clone()], any_tensor.clone());
+    tensor.register_evaluated_static_method("logical_or", compile_tensor_logical_or, vec![any_tensor.clone(), any_tensor.clone()], any_tensor.clone());
+
+    // logical_not (instance unary)
+    tensor.register_evaluated_instance_method("logical_not", compile_tensor_logical_not, vec![], any_tensor.clone());
+
     tensor.register_evaluated_instance_method("clone", compile_tensor_clone, vec![], any_tensor.clone());
     tensor.register_evaluated_instance_method("shallow_clone", compile_tensor_shallow_clone, vec![], any_tensor.clone());
     tensor.register_evaluated_instance_method("grad", compile_tensor_grad, vec![], any_tensor.clone());
@@ -1601,4 +1620,86 @@ fn compile_tensor_fill_<'ctx>(
     let f = codegen.module.get_function("tl_tensor_fill_").ok_or("tl_tensor_fill_ not found")?;
     codegen.builder.build_call(f, &[obj.into(), f32_val.into()], "").map_err(|e| e.to_string())?;
     Ok((codegen.context.i64_type().const_int(0, false).into(), Type::Void))
+}
+
+fn compile_tensor_cumsum<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj: BasicValueEnum<'ctx>,
+    obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let dim_val = args[0].0;
+    let f = codegen.module.get_function("tl_tensor_cumsum").ok_or("tl_tensor_cumsum not found")?;
+    let call = codegen.builder.build_call(f, &[obj.into(), dim_val.into()], "cumsum_res").map_err(|e| e.to_string())?;
+    let v = codegen.check_tensor_result(call, "cumsum_error")?;
+    Ok((v, obj_ty))
+}
+
+fn compile_tensor_norm<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj: BasicValueEnum<'ctx>,
+    obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let f32_type = codegen.context.f32_type();
+    let p_val = match args[0].1 {
+        Type::F32 => args[0].0.into_float_value(),
+        Type::F64 => codegen.builder.build_float_trunc(args[0].0.into_float_value(), f32_type, "ptrunc").map_err(|e| e.to_string())?,
+        _ => return Err("norm p must be float".into()),
+    };
+    let dim_val = if args.len() > 1 { args[1].0 } else { codegen.context.i64_type().const_int(u64::MAX, false).into() };
+    let f = codegen.module.get_function("tl_tensor_norm").ok_or("tl_tensor_norm not found")?;
+    let call = codegen.builder.build_call(f, &[obj.into(), p_val.into(), dim_val.into()], "norm_res").map_err(|e| e.to_string())?;
+    let v = codegen.check_tensor_result(call, "norm_error")?;
+    Ok((v, obj_ty))
+}
+
+fn compile_tensor_topk<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj: BasicValueEnum<'ctx>,
+    obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let k_val = args[0].0;
+    let dim_val = if args.len() > 1 { args[1].0 } else { codegen.context.i64_type().const_int(u64::MAX, false).into() };
+    let f = codegen.module.get_function("tl_tensor_topk").ok_or("tl_tensor_topk not found")?;
+    let call = codegen.builder.build_call(f, &[obj.into(), k_val.into(), dim_val.into()], "topk_res").map_err(|e| e.to_string())?;
+    let v = codegen.check_tensor_result(call, "topk_error")?;
+    Ok((v, obj_ty))
+}
+
+fn compile_tensor_logical_and<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() < 2 { return Err("logical_and requires 2 args".into()); }
+    let f = codegen.module.get_function("tl_tensor_logical_and").ok_or("tl_tensor_logical_and not found")?;
+    let call = codegen.builder.build_call(f, &[args[0].0.into(), args[1].0.into()], "land_res").map_err(|e| e.to_string())?;
+    let v = codegen.check_tensor_result(call, "land_error")?;
+    Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
+}
+
+fn compile_tensor_logical_or<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() < 2 { return Err("logical_or requires 2 args".into()); }
+    let f = codegen.module.get_function("tl_tensor_logical_or").ok_or("tl_tensor_logical_or not found")?;
+    let call = codegen.builder.build_call(f, &[args[0].0.into(), args[1].0.into()], "lor_res").map_err(|e| e.to_string())?;
+    let v = codegen.check_tensor_result(call, "lor_error")?;
+    Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
+}
+
+fn compile_tensor_logical_not<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj: BasicValueEnum<'ctx>,
+    _obj_ty: Type,
+    _args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let f = codegen.module.get_function("tl_tensor_logical_not").ok_or("tl_tensor_logical_not not found")?;
+    let call = codegen.builder.build_call(f, &[obj.into()], "lnot_res").map_err(|e| e.to_string())?;
+    let v = codegen.check_tensor_result(call, "lnot_error")?;
+    Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
 }
