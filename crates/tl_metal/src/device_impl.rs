@@ -140,6 +140,12 @@ impl IDevice for MetalDeviceImpl {
         Ok(ffi_ops::make_tensor(MetalTensor::from_slice(&r, tt.shape(), crate::DType::F32)) as *mut c_void)
     }
 
+    fn tensor_leaky_relu(&self, tensor: *mut c_void, negative_slope: f32) -> BackendResult<*mut c_void> {
+        let tt = unsafe { &*t(tensor) };
+        let r: Vec<f32> = tt.to_vec::<f32>().iter().map(|&x| if x > 0.0 { x } else { negative_slope * x }).collect();
+        Ok(ffi_ops::make_tensor(MetalTensor::from_slice(&r, tt.shape(), crate::DType::F32)) as *mut c_void)
+    }
+
     fn tensor_fill_(&self, tensor: *mut c_void, value: f32) -> BackendResult<()> {
         let tt = unsafe { &*t(tensor) };
         let numel: usize = tt.shape().iter().product();

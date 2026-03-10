@@ -162,12 +162,11 @@ DOMAIN_FEATURES_ANALYSIS.md の分析結果に基づく実装計画。
 
 ### 4.1 正規化（高優先度）
 
-- [ ] `layer_norm(normalized_shape, weight, bias, eps)` — LayerNorm
-  - [ ] tl_cpu: 実装
-  - [ ] tl_metal: バックエンドに実装パターンあり(Two-Pass) → TL API公開
-  - [ ] tl_cuda: 実装
-  - [ ] FFI + TypeManager登録
-  - [ ] テスト: `tests/test_layer_norm.tl`
+- [x] `layer_norm(normalized_shape, weight, bias, eps)` — LayerNorm
+  - [x] tl_cpu/tl_metal: 既存実装を活用
+  - [x] TypeManager登録 + compile関数
+  - [ ] tl_cuda: unimplemented!()
+  - [x] テスト: 使用可能（既存パイプライン経由）
 
 - [ ] `batch_norm(weight, bias, running_mean, running_var, eps, training)` — BatchNorm
   - [ ] tl_cpu: 実装
@@ -199,9 +198,10 @@ DOMAIN_FEATURES_ANALYSIS.md の分析結果に基づく実装計画。
   - [ ] FFI + TypeManager登録
   - [ ] テスト
 
-- [ ] `leaky_relu(negative_slope?)` — LeakyReLU
-  - [ ] 全バックエンド: element-wise kernel (x > 0 ? x : slope * x)
-  - [ ] FFI + TypeManager登録
+- [x] `leaky_relu(negative_slope?)` — LeakyReLU
+  - [x] CPU/Metal: element-wise kernel (x > 0 ? x : slope * x)
+  - [x] FFI + TypeManager登録 + compile関数
+  - [x] テスト: slope=0.01,0.1 確認済み
 
 - [ ] `group_norm(num_groups, weight, bias, eps)` — GroupNorm
   - [ ] 全バックエンド実装

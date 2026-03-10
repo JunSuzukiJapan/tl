@@ -105,6 +105,7 @@ impl IDevice for CudaDeviceImpl {
     fn tensor_logical_and(&self, _a: *mut c_void, _b: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!("CUDA logical_and") }
     fn tensor_logical_or(&self, _a: *mut c_void, _b: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!("CUDA logical_or") }
     fn tensor_logical_not(&self, _t: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!("CUDA logical_not") }
+    fn tensor_leaky_relu(&self, _t: *mut c_void, _slope: f32) -> BackendResult<*mut c_void> { unimplemented!("CUDA leaky_relu") }
     fn tensor_fill_(&self, _t: *mut c_void, _value: f32) -> BackendResult<()> { unimplemented!("CUDA fill_") }
     fn tensor_broadcast_to(&self, _t: *mut c_void, _shape: &[usize]) -> BackendResult<*mut c_void> { unimplemented!("CUDA broadcast_to") }
     fn tensor_stack(&self, _a: *mut c_void, _b: *mut c_void, _dim: i64) -> BackendResult<*mut c_void> { unimplemented!("CUDA stack") }

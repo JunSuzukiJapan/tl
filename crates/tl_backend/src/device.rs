@@ -52,6 +52,7 @@ pub trait IDevice {
     fn tensor_logical_and(&self, a: *mut c_void, b: *mut c_void) -> BackendResult<*mut c_void>;
     fn tensor_logical_or(&self, a: *mut c_void, b: *mut c_void) -> BackendResult<*mut c_void>;
     fn tensor_logical_not(&self, t: *mut c_void) -> BackendResult<*mut c_void>;
+    fn tensor_leaky_relu(&self, t: *mut c_void, negative_slope: f32) -> BackendResult<*mut c_void>;
 
     // ========== インプレース操作 ==========
     fn tensor_fill_(&self, t: *mut c_void, value: f32) -> BackendResult<()>;

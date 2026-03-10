@@ -169,6 +169,15 @@ impl IDevice for CpuDevice {
         Ok(std::sync::Arc::into_raw(arc) as *mut c_void)
     }
 
+    fn tensor_leaky_relu(&self, tensor: *mut c_void, negative_slope: f32) -> BackendResult<*mut c_void> {
+        let tt = unsafe { &*t(tensor) };
+        let data = tt.to_vec::<f32>();
+        let result: Vec<f32> = data.iter().map(|&x| if x > 0.0 { x } else { negative_slope * x }).collect();
+        let out = crate::tensor::CpuTensor::from_slice(&result, tt.shape(), crate::DType::F32);
+        let arc = std::sync::Arc::new(std::cell::UnsafeCell::new(out));
+        Ok(std::sync::Arc::into_raw(arc) as *mut c_void)
+    }
+
     fn tensor_fill_(&self, tensor: *mut c_void, value: f32) -> BackendResult<()> {
         let tt = unsafe { &*t(tensor) };
         let numel: usize = tt.shape().iter().product();
