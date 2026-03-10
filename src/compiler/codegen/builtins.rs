@@ -825,6 +825,48 @@ pub fn declare_runtime_functions<'ctx>(
     add_fn("tl_tensor_zeros", zeros_type);
     add_fn("tl_tensor_ones", zeros_type); // Reusing zeros_type (signature matches)
 
+    // tl_tensor_full(rank, shape_ptr, value: f32, req_grad: bool) -> *mut OpaqueTensor
+    let full_type = void_ptr.fn_type(
+        &[
+            i64_type.into(),            // rank
+            usize_ptr.into(),           // shape pointer
+            f32_type.into(),            // value
+            context.bool_type().into(), // req_grad
+        ],
+        false,
+    );
+    add_fn("tl_tensor_full", full_type);
+
+    // tl_tensor_eye(n: i64, req_grad: bool) -> *mut OpaqueTensor
+    let eye_type = void_ptr.fn_type(
+        &[
+            i64_type.into(),            // n
+            context.bool_type().into(), // req_grad
+        ],
+        false,
+    );
+    add_fn("tl_tensor_eye", eye_type);
+
+    // tl_tensor_arange(start: f64, end: f64, step: f64) -> *mut OpaqueTensor
+    let arange_type = void_ptr.fn_type(
+        &[
+            f64_type.into(), // start
+            f64_type.into(), // end
+            f64_type.into(), // step
+        ],
+        false,
+    );
+    add_fn("tl_tensor_arange", arange_type);
+
+    // tl_tensor_zeros_like(t) -> *mut OpaqueTensor
+    // tl_tensor_ones_like(t) -> *mut OpaqueTensor
+    add_fn("tl_tensor_zeros_like", unary_type);
+    add_fn("tl_tensor_ones_like", unary_type);
+
+    // tl_tensor_from_vec_f32(data_vec: void*, shape_vec: void*) -> Tensor*
+    let from_vec_f32_type = void_ptr.fn_type(&[void_ptr.into(), void_ptr.into()], false);
+    add_fn("tl_tensor_from_vec_f32", from_vec_f32_type);
+
     // VarBuilder
     // tl_varbuilder_get(name: *const c_char, rank: usize, shape: *const usize) -> *mut OpaqueTensor
     let varbuilder_get_type =
@@ -1542,6 +1584,17 @@ pub fn declare_runtime_functions<'ctx>(
     // ========== テンソル演算: CPU/GPU 切替 (map_tensor_fn! マクロ使用) ==========
     // [IDevice] map_tensor_fn! → device_ffi
     if let Some(f) = module.get_function("tl_tensor_ones") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_ones as *const () as usize); }
+    // [IDevice] tensor_full → device_ffi
+    if let Some(f) = module.get_function("tl_tensor_full") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_full as *const () as usize); }
+    // [IDevice] tensor_eye → device_ffi
+    if let Some(f) = module.get_function("tl_tensor_eye") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_eye as *const () as usize); }
+    // [IDevice] tensor_arange → device_ffi
+    if let Some(f) = module.get_function("tl_tensor_arange") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_arange as *const () as usize); }
+    // [IDevice] zeros_like / ones_like → device_ffi
+    if let Some(f) = module.get_function("tl_tensor_zeros_like") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_zeros_like as *const () as usize); }
+    if let Some(f) = module.get_function("tl_tensor_ones_like") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_ones_like as *const () as usize); }
+    // [IDevice] from_vec_f32 → device_ffi
+    if let Some(f) = module.get_function("tl_tensor_from_vec_f32") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_from_vec_f32 as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
     if let Some(f) = module.get_function("tl_tensor_sub_assign") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_sub_assign as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi

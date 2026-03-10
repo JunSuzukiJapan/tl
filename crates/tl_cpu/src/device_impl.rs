@@ -40,6 +40,9 @@ impl IDevice for CpuDevice {
     #[inline] fn tensor_new_causal_mask(&self, size: usize) -> BackendResult<*mut c_void> { check(ffi::tl_cpu_tensor_new_causal_mask(size)) }
     #[inline] fn tensor_from_vec_u8(&self, data: *mut c_void, len: i64) -> BackendResult<*mut c_void> { check(ffi::tl_cpu_tensor_from_vec_u8(data, len)) }
     #[inline] fn tensor_from_u8_labels(&self, data: *const u8, len: i64) -> BackendResult<*mut c_void> { check(ffi::tl_cpu_tensor_from_u8_labels(data, len)) }
+    #[inline] fn tensor_full(&self, rank: usize, shape: *const usize, value: f32, req_grad: bool) -> BackendResult<*mut c_void> { check(ffi::tl_cpu_tensor_full(rank, shape, value, req_grad)) }
+    #[inline] fn tensor_eye(&self, n: usize, req_grad: bool) -> BackendResult<*mut c_void> { check(ffi::tl_cpu_tensor_eye(n, req_grad)) }
+    #[inline] fn tensor_arange(&self, start: f64, end: f64, step: f64) -> BackendResult<*mut c_void> { check(ffi::tl_cpu_tensor_arange(start, end, step)) }
 
     // ========== メモリ管理 ==========
     #[inline] fn tensor_clone(&self, a: *mut c_void) -> BackendResult<*mut c_void> { check(ffi::tl_cpu_tensor_clone(t(a))) }

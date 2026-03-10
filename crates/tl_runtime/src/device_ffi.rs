@@ -181,7 +181,87 @@ pub extern "C" fn tl_device_tensor_from_vec_u8(data: *mut c_void, len: i64) -> *
 pub extern "C" fn tl_device_tensor_from_u8_labels(data: *const u8, len: i64) -> *mut c_void {
     dispatch(|d| d.tensor_from_u8_labels(data, len))
 }
+/// @ffi_sig (usize, usize*, f32, bool) -> Tensor*
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_device_tensor_full(
+    rank: usize,
+    shape: *const usize,
+    value: f32,
+    req_grad: bool,
+) -> *mut c_void {
+    dispatch(|d| d.tensor_full(rank, shape, value, req_grad))
+}
+/// @ffi_sig (usize, bool) -> Tensor*
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_device_tensor_eye(n: usize, req_grad: bool) -> *mut c_void {
+    dispatch(|d| d.tensor_eye(n, req_grad))
+}
+/// @ffi_sig (f64, f64, f64) -> Tensor*
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_device_tensor_arange(start: f64, end: f64, step: f64) -> *mut c_void {
+    dispatch(|d| d.tensor_arange(start, end, step))
+}
+/// @ffi_sig (Tensor*) -> Tensor*
+/// 入力テンソルと同じ形状のゼロテンソルを生成
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_device_tensor_zeros_like(t: *mut c_void) -> *mut c_void {
+    // get shape tensor, extract dims, call zeros
+    let shape_t = tl_device_tensor_get_shape(t);
+    if shape_t.is_null() { return std::ptr::null_mut(); }
+    let rank = dispatch(|d| d.tensor_numel(shape_t)) as usize;
+    let data_ptr = dispatch(|d| d.tensor_data(shape_t));
+    if data_ptr.is_null() || rank == 0 { return std::ptr::null_mut(); }
+    // shape tensor contains f32 dims → convert to usize
+    let dims_f32 = unsafe { std::slice::from_raw_parts(data_ptr, rank) };
+    let dims_usize: Vec<usize> = dims_f32.iter().map(|&x| x as usize).collect();
+    let result = dispatch(|d| d.tensor_zeros(rank, dims_usize.as_ptr(), false));
+    dispatch(|d| d.tensor_free(shape_t));
+    result
+}
+/// @ffi_sig (Tensor*) -> Tensor*
+/// 入力テンソルと同じ形状の全1テンソルを生成
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_device_tensor_ones_like(t: *mut c_void) -> *mut c_void {
+    let shape_t = tl_device_tensor_get_shape(t);
+    if shape_t.is_null() { return std::ptr::null_mut(); }
+    let rank = dispatch(|d| d.tensor_numel(shape_t)) as usize;
+    let data_ptr = dispatch(|d| d.tensor_data(shape_t));
+    if data_ptr.is_null() || rank == 0 { return std::ptr::null_mut(); }
+    let dims_f32 = unsafe { std::slice::from_raw_parts(data_ptr, rank) };
+    let dims_usize: Vec<usize> = dims_f32.iter().map(|&x| x as usize).collect();
+    let result = dispatch(|d| d.tensor_ones(rank, dims_usize.as_ptr(), false));
+    dispatch(|d| d.tensor_free(shape_t));
+    result
+}
+/// @ffi_sig (void*, void*) -> Tensor*
+/// Vec<f32> と Vec<i64>(shape) からテンソルを生成
+/// data_vec, shape_vec はそれぞれ TL の Vec<f32>, Vec<i64> 構造体ポインタ
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_device_tensor_from_vec_f32(data_vec: *mut c_void, shape_vec: *mut c_void) -> *mut c_void {
+    if data_vec.is_null() || shape_vec.is_null() {
+        return std::ptr::null_mut();
+    }
+    // JitVec layout: { ptr: *mut T, cap: i64, len: i64 }
+    // Read shape vec
+    #[repr(C)]
+    struct JitVecI64 { ptr: *const i64, cap: i64, len: i64 }
+    #[repr(C)]
+    struct JitVecF32 { ptr: *const f32, cap: i64, len: i64 }
 
+    let shape_jv = unsafe { &*(shape_vec as *const JitVecI64) };
+    let data_jv = unsafe { &*(data_vec as *const JitVecF32) };
+
+    let rank = shape_jv.len as usize;
+    if rank == 0 || shape_jv.ptr.is_null() || data_jv.ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    // Convert shape i64 -> usize
+    let shape_slice = unsafe { std::slice::from_raw_parts(shape_jv.ptr, rank) };
+    let shape_usize: Vec<usize> = shape_slice.iter().map(|&x| x as usize).collect();
+
+    dispatch(|d| d.tensor_new(data_jv.ptr, rank, shape_usize.as_ptr()))
+}
 // ========== メモリ管理 ==========
 /// @ffi_sig (Tensor*) -> Tensor*
 #[unsafe(no_mangle)]

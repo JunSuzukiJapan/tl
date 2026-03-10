@@ -27,6 +27,9 @@ pub trait IDevice {
     fn tensor_new_causal_mask(&self, size: usize) -> BackendResult<*mut c_void>;
     fn tensor_from_vec_u8(&self, data: *mut c_void, len: i64) -> BackendResult<*mut c_void>;
     fn tensor_from_u8_labels(&self, data: *const u8, len: i64) -> BackendResult<*mut c_void>;
+    fn tensor_full(&self, rank: usize, shape: *const usize, value: f32, req_grad: bool) -> BackendResult<*mut c_void>;
+    fn tensor_eye(&self, n: usize, req_grad: bool) -> BackendResult<*mut c_void>;
+    fn tensor_arange(&self, start: f64, end: f64, step: f64) -> BackendResult<*mut c_void>;
 
     // ========== メモリ管理 ==========
     fn tensor_clone(&self, t: *mut c_void) -> BackendResult<*mut c_void>;

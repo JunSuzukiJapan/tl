@@ -24,8 +24,29 @@ pub fn register_tensor_types(manager: &mut TypeManager) {
     // randn(shape, requires_grad) and randn(shape)
     tensor.register_unevaluated_static_method("randn", compile_randn, vec![shape_type.clone(), Type::Bool], Type::Tensor(Box::new(Type::F32), 0));
     tensor.register_unevaluated_static_method("randn", compile_randn, vec![shape_type.clone()], Type::Tensor(Box::new(Type::F32), 0));
-    
+
+    // full(shape, value, requires_grad) and full(shape, value)
+    tensor.register_unevaluated_static_method("full", compile_tensor_full, vec![shape_type.clone(), Type::F32, Type::Bool], Type::Tensor(Box::new(Type::F32), 0));
+    tensor.register_unevaluated_static_method("full", compile_tensor_full, vec![shape_type.clone(), Type::F32], Type::Tensor(Box::new(Type::F32), 0));
+
+    // eye(n, requires_grad?) -> Tensor
+    tensor.register_unevaluated_static_method("eye", compile_tensor_eye, vec![Type::I64, Type::Bool], Type::Tensor(Box::new(Type::F32), 2));
+    tensor.register_unevaluated_static_method("eye", compile_tensor_eye, vec![Type::I64], Type::Tensor(Box::new(Type::F32), 2));
+
+    // arange(start, end, step) -> Tensor
+    tensor.register_unevaluated_static_method("arange", compile_tensor_arange, vec![Type::F32, Type::F32, Type::F32], Type::Tensor(Box::new(Type::F32), 1));
+    tensor.register_unevaluated_static_method("arange", compile_tensor_arange, vec![Type::I64, Type::I64, Type::I64], Type::Tensor(Box::new(Type::F32), 1));
+    tensor.register_unevaluated_static_method("arange", compile_tensor_arange, vec![Type::F64, Type::F64, Type::F64], Type::Tensor(Box::new(Type::F32), 1));
+
     // Evaluated static methods
+    // zeros_like(t) -> Tensor (same shape as t, filled with zeros)
+    tensor.register_evaluated_static_method("zeros_like", compile_tensor_zeros_like, vec![Type::Tensor(Box::new(Type::F32), 0)], Type::Tensor(Box::new(Type::F32), 0));
+    // ones_like(t) -> Tensor (same shape as t, filled with ones)
+    tensor.register_evaluated_static_method("ones_like", compile_tensor_ones_like, vec![Type::Tensor(Box::new(Type::F32), 0)], Type::Tensor(Box::new(Type::F32), 0));
+
+    // from_vec(data: Vec<f32>, shape: Vec<i64>) -> Tensor
+    tensor.register_evaluated_static_method("from_vec", compile_from_vec_f32, vec![Type::Struct("Vec".into(), vec![Type::F32]), Type::Struct("Vec".into(), vec![Type::I64])], Type::Tensor(Box::new(Type::F32), 0));
+
     // load(path: String) -> Tensor
     tensor.register_evaluated_static_method("load", compile_load_tensor, vec![Type::String("String".to_string())], Type::Tensor(Box::new(Type::F32), 1));
     // clear_grads() -> Void
@@ -1226,4 +1247,192 @@ fn compile_tensor_zeros<'ctx>(
     }
 
     Err("Generic Tensor::zeros (non-literal shape) not yet ported. Please use literal shape [d1, d2] for now.".into())
+}
+
+fn compile_tensor_full<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: &[Expr],
+    _target: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() < 2 {
+        return Err("Tensor::full requires (shape, value) arguments".into());
+    }
+
+    let i64_type = codegen.context.i64_type();
+    let f32_type = codegen.context.f32_type();
+
+    let elements_ref = if let ExprKind::TensorLiteral(el) = &args[0].inner {
+        Some(el)
+    } else if let ExprKind::TensorConstLiteral(el) = &args[0].inner {
+        Some(el)
+    } else {
+        None
+    };
+
+    let el = elements_ref.ok_or("Tensor::full requires literal shape [d1, d2, ...] for now")?;
+    let rank = el.len();
+
+    // Build shape array
+    let shape_array_type = i64_type.array_type(rank as u32);
+    let shape_alloca = codegen.builder.build_alloca(shape_array_type, "shape_arr").map_err(|e| e.to_string())?;
+    for (i, e) in el.iter().enumerate() {
+        let (v, t) = codegen.compile_expr(e)?;
+        let int_val = match t {
+            Type::I64 => v.into_int_value(),
+            Type::I32 => codegen.builder.build_int_z_extend(v.into_int_value(), i64_type, "ext").map_err(|e| e.to_string())?,
+            _ => return Err(format!("Dimension must be integer, found {:?}", t)),
+        };
+        let ptr = unsafe {
+            codegen.builder.build_in_bounds_gep(
+                shape_array_type, shape_alloca,
+                &[i64_type.const_int(0, false), i64_type.const_int(i as u64, false)],
+                "tmp",
+            ).map_err(|e| e.to_string())?
+        };
+        codegen.builder.build_store(ptr, int_val).map_err(|e| e.to_string())?;
+    }
+
+    // Compile value argument
+    let (val_v, val_t) = codegen.compile_expr(&args[1])?;
+    let value_f32 = match val_t {
+        Type::F32 => val_v.into_float_value(),
+        Type::F64 => codegen.builder.build_float_trunc(val_v.into_float_value(), f32_type, "trunc").map_err(|e| e.to_string())?,
+        Type::I64 | Type::I32 => codegen.builder.build_signed_int_to_float(val_v.into_int_value(), f32_type, "itof").map_err(|e| e.to_string())?,
+        _ => return Err(format!("Tensor::full value must be numeric, found {:?}", val_t)),
+    };
+
+    let req_grad = if args.len() > 2 {
+        let (v, _) = codegen.compile_expr(&args[2])?;
+        v.into_int_value()
+    } else {
+        codegen.context.bool_type().const_int(0, false)
+    };
+
+    let f = codegen.module.get_function("tl_tensor_full").ok_or("tl_tensor_full not found")?;
+    let call = codegen.builder.build_call(
+        f,
+        &[
+            i64_type.const_int(rank as u64, false).into(),
+            shape_alloca.into(),
+            value_f32.into(),
+            req_grad.into(),
+        ],
+        "full_res",
+    ).map_err(|e| e.to_string())?;
+    let v = codegen.check_tensor_result(call, "full_error")?;
+    Ok((v, Type::Tensor(Box::new(Type::F32), rank)))
+}
+
+fn compile_tensor_eye<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: &[Expr],
+    _target: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.is_empty() {
+        return Err("Tensor::eye requires n argument".into());
+    }
+
+    let i64_type = codegen.context.i64_type();
+    let (n_v, n_t) = codegen.compile_expr(&args[0])?;
+    let n_val = match n_t {
+        Type::I64 => n_v.into_int_value(),
+        Type::I32 => codegen.builder.build_int_z_extend(n_v.into_int_value(), i64_type, "ext").map_err(|e| e.to_string())?,
+        _ => return Err(format!("Tensor::eye requires integer argument, found {:?}", n_t)),
+    };
+
+    let req_grad = if args.len() > 1 {
+        let (v, _) = codegen.compile_expr(&args[1])?;
+        v.into_int_value()
+    } else {
+        codegen.context.bool_type().const_int(0, false)
+    };
+
+    let f = codegen.module.get_function("tl_tensor_eye").ok_or("tl_tensor_eye not found")?;
+    let call = codegen.builder.build_call(
+        f,
+        &[n_val.into(), req_grad.into()],
+        "eye_res",
+    ).map_err(|e| e.to_string())?;
+    let v = codegen.check_tensor_result(call, "eye_error")?;
+    Ok((v, Type::Tensor(Box::new(Type::F32), 2)))
+}
+
+fn compile_tensor_arange<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: &[Expr],
+    _target: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() < 3 {
+        return Err("Tensor::arange requires (start, end, step) arguments".into());
+    }
+
+    let f64_type = codegen.context.f64_type();
+    let _f32_type = codegen.context.f32_type();
+    let mut vals = Vec::new();
+    for arg in &args[..3] {
+        let (v, t) = codegen.compile_expr(arg)?;
+        let f64_val = match t {
+            Type::F64 => v.into_float_value(),
+            Type::F32 => codegen.builder.build_float_ext(v.into_float_value(), f64_type, "fext").map_err(|e| e.to_string())?,
+            Type::I64 => codegen.builder.build_signed_int_to_float(v.into_int_value(), f64_type, "itof").map_err(|e| e.to_string())?,
+            Type::I32 => codegen.builder.build_signed_int_to_float(v.into_int_value(), f64_type, "itof").map_err(|e| e.to_string())?,
+            _ => return Err(format!("Tensor::arange requires numeric arguments, found {:?}", t)),
+        };
+        vals.push(f64_val);
+    }
+
+    let f = codegen.module.get_function("tl_tensor_arange").ok_or("tl_tensor_arange not found")?;
+    let call = codegen.builder.build_call(
+        f,
+        &[vals[0].into(), vals[1].into(), vals[2].into()],
+        "arange_res",
+    ).map_err(|e| e.to_string())?;
+    let v = codegen.check_tensor_result(call, "arange_error")?;
+    Ok((v, Type::Tensor(Box::new(Type::F32), 1)))
+}
+
+fn compile_tensor_zeros_like<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.is_empty() {
+        return Err("Tensor::zeros_like requires 1 argument".into());
+    }
+    let tensor_val = args[0].0;
+    let f = codegen.module.get_function("tl_tensor_zeros_like").ok_or("tl_tensor_zeros_like not found")?;
+    let call = codegen.builder.build_call(f, &[tensor_val.into()], "zeros_like_res").map_err(|e| e.to_string())?;
+    let v = codegen.check_tensor_result(call, "zeros_like_error")?;
+    Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
+}
+
+fn compile_tensor_ones_like<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.is_empty() {
+        return Err("Tensor::ones_like requires 1 argument".into());
+    }
+    let tensor_val = args[0].0;
+    let f = codegen.module.get_function("tl_tensor_ones_like").ok_or("tl_tensor_ones_like not found")?;
+    let call = codegen.builder.build_call(f, &[tensor_val.into()], "ones_like_res").map_err(|e| e.to_string())?;
+    let v = codegen.check_tensor_result(call, "ones_like_error")?;
+    Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
+}
+
+fn compile_from_vec_f32<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() < 2 {
+        return Err("Tensor::from_vec requires (data, shape) arguments".into());
+    }
+    let data_val = args[0].0;
+    let shape_val = args[1].0;
+    let f = codegen.module.get_function("tl_tensor_from_vec_f32").ok_or("tl_tensor_from_vec_f32 not found")?;
+    let call = codegen.builder.build_call(f, &[data_val.into(), shape_val.into()], "from_vec_res").map_err(|e| e.to_string())?;
+    let v = codegen.check_tensor_result(call, "from_vec_error")?;
+    Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
 }

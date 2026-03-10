@@ -211,6 +211,45 @@ pub fn tl_cuda_from_i64_array(data: *const i64, len: i64) -> *mut OpaqueTensor {
     make_tensor(CudaTensor::from_slice(s, &[len], DType::I64))
 }
 
+#[no_mangle]
+pub fn tl_cuda_full(rank: usize, shape: *const usize, value: f32, req_grad: bool) -> *mut OpaqueTensor {
+    if shape.is_null() {
+        return std::ptr::null_mut();
+    }
+    let shape_slice = unsafe { std::slice::from_raw_parts(shape, rank) };
+    let numel: usize = shape_slice.iter().product();
+    let data = vec![value; numel];
+    let mut t = CudaTensor::from_slice(&data, shape_slice, DType::F32);
+    if req_grad {
+        t.enable_grad();
+    }
+    make_tensor(t)
+}
+
+#[no_mangle]
+pub fn tl_cuda_eye(n: usize, req_grad: bool) -> *mut OpaqueTensor {
+    let numel = n * n;
+    let mut data = vec![0.0f32; numel];
+    for i in 0..n {
+        data[i * n + i] = 1.0;
+    }
+    let mut t = CudaTensor::from_slice(&data, &[n, n], DType::F32);
+    if req_grad {
+        t.enable_grad();
+    }
+    make_tensor(t)
+}
+
+#[no_mangle]
+pub fn tl_cuda_arange(start: f64, end: f64, step: f64) -> *mut OpaqueTensor {
+    if step == 0.0 || (step > 0.0 && start >= end) || (step < 0.0 && start <= end) {
+        return make_tensor(CudaTensor::from_slice(&[] as &[f32], &[0], DType::F32));
+    }
+    let len = ((end - start) / step).ceil() as usize;
+    let data: Vec<f32> = (0..len).map(|i| (start + step * i as f64) as f32).collect();
+    make_tensor(CudaTensor::from_slice(&data, &[len], DType::F32))
+}
+
 // ========== テンソル解放 ==========
 #[no_mangle]
 pub fn tl_cuda_free(t: *mut OpaqueTensor) {

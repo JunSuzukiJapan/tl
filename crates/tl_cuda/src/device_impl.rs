@@ -73,7 +73,15 @@ impl IDevice for CudaDeviceImpl {
     fn tensor_from_u8_labels(&self, data: *const u8, len: i64) -> BackendResult<*mut c_void> {
         Ok(v(ffi_ops::tl_cuda_from_u8_labels(data, len)))
     }
-
+    fn tensor_full(&self, rank: usize, shape: *const usize, value: f32, req_grad: bool) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_full(rank, shape, value, req_grad)))
+    }
+    fn tensor_eye(&self, n: usize, req_grad: bool) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_eye(n, req_grad)))
+    }
+    fn tensor_arange(&self, start: f64, end: f64, step: f64) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_arange(start, end, step)))
+    }
     // ========== メモリ管理 ==========
     fn tensor_clone(&self, t: *mut c_void) -> BackendResult<*mut c_void> {
         Ok(v(crate::ffi::tl_cuda_clone(p(t))))

@@ -139,6 +139,55 @@ pub extern "C" fn tl_cpu_tensor_from_u8_labels(data: *const u8, len: i64) -> *mu
     make_tensor(CpuTensor::from_slice(&f32_data, &[len], DType::F32))
 }
 
+pub extern "C" fn tl_cpu_tensor_full(
+    rank: usize,
+    shape: *const usize,
+    value: f32,
+    req_grad: bool,
+) -> *mut OpaqueTensor {
+    if shape.is_null() {
+        return std::ptr::null_mut();
+    }
+    let shape_slice = unsafe { std::slice::from_raw_parts(shape, rank) };
+    let numel: usize = shape_slice.iter().product();
+    let data = vec![value; numel];
+    let mut t = CpuTensor::from_slice(&data, shape_slice, DType::F32);
+    if req_grad {
+        t.enable_grad();
+    }
+    make_tensor(t)
+}
+
+pub extern "C" fn tl_cpu_tensor_eye(
+    n: usize,
+    req_grad: bool,
+) -> *mut OpaqueTensor {
+    let numel = n * n;
+    let mut data = vec![0.0f32; numel];
+    for i in 0..n {
+        data[i * n + i] = 1.0;
+    }
+    let mut t = CpuTensor::from_slice(&data, &[n, n], DType::F32);
+    if req_grad {
+        t.enable_grad();
+    }
+    make_tensor(t)
+}
+
+pub extern "C" fn tl_cpu_tensor_arange(
+    start: f64,
+    end: f64,
+    step: f64,
+) -> *mut OpaqueTensor {
+    if step == 0.0 || (step > 0.0 && start >= end) || (step < 0.0 && start <= end) {
+        // Empty tensor
+        return make_tensor(CpuTensor::from_slice(&[], &[0], DType::F32));
+    }
+    let len = ((end - start) / step).ceil() as usize;
+    let data: Vec<f32> = (0..len).map(|i| (start + step * i as f64) as f32).collect();
+    make_tensor(CpuTensor::from_slice(&data, &[len], DType::F32))
+}
+
 // ========== テンソル解放 (Arc ベース) ==========
 // Arc::into_raw で作成されたポインタを Arc::from_raw で復元し、
 // 参照カウントを -1 する。RC=0 になれば CpuTensor（autograd グラフ含む）が
