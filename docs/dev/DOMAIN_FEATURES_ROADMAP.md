@@ -187,10 +187,10 @@ DOMAIN_FEATURES_ANALYSIS.md の分析結果に基づく実装計画。
 
 ### 4.3 その他NN（高〜中優先度）
 
-- [ ] `linear(weight, bias?)` — 全結合層
-  - [ ] matmul + optional bias add のラッパー
-  - [ ] FFI + TypeManager登録
-  - [ ] テスト
+- [x] `linear(weight, bias)` — 全結合層
+  - [x] CPU/Metal: matmul(W^T) + bias
+  - [x] FFI + TypeManager登録 + compile関数
+
 
 - [x] `leaky_relu(negative_slope?)` — LeakyReLU
   - [x] CPU/Metal: element-wise kernel (x > 0 ? x : slope * x)
@@ -221,7 +221,9 @@ DOMAIN_FEATURES_ANALYSIS.md の分析結果に基づく実装計画。
   - [x] CPU/Metal 実装、CUDA stub
 - [x] `mish()` — Mish活性化
   - [x] CPU/Metal 実装、CUDA stub
-- [ ] `hardswish()` / `hardsigmoid()` — モバイル向け活性化
+- [x] `hardswish()` / `hardsigmoid()` — モバイル向け活性化
+  - [x] CPU/Metal 実装、CUDA stub
+  - [x] テスト: hardswish([-6,-3,0,3,6])=[-0,-0,0,3,6]
 - [ ] `dropout2d(p, training)` — チャネル単位ドロップアウト
 - [ ] `instance_norm(...)` — InstanceNorm
 

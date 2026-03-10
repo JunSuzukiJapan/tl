@@ -186,6 +186,30 @@ impl IDevice for MetalDeviceImpl {
         Ok(ffi_ops::make_tensor(MetalTensor::from_slice(&[loss], &[1], crate::DType::F32)) as *mut c_void)
     }
 
+    fn tensor_linear(&self, input: *mut c_void, weight: *mut c_void, bias: *mut c_void) -> BackendResult<*mut c_void> {
+        let (ti, tw) = unsafe { (&*t(input), &*t(weight)) };
+        let result = ti.matmul_impl(&tw.transpose_impl(0, 1)?)?;
+        if !bias.is_null() {
+            let tb = unsafe { &*t(bias) };
+            let out = result.add_impl(tb)?;
+            Ok(ffi_ops::make_tensor(out) as *mut c_void)
+        } else {
+            Ok(ffi_ops::make_tensor(result) as *mut c_void)
+        }
+    }
+
+    fn tensor_hardswish(&self, tensor: *mut c_void) -> BackendResult<*mut c_void> {
+        let tt = unsafe { &*t(tensor) };
+        let r: Vec<f32> = tt.to_vec::<f32>().iter().map(|&x| x * (x + 3.0).max(0.0).min(6.0) / 6.0).collect();
+        Ok(ffi_ops::make_tensor(MetalTensor::from_slice(&r, tt.shape(), crate::DType::F32)) as *mut c_void)
+    }
+
+    fn tensor_hardsigmoid(&self, tensor: *mut c_void) -> BackendResult<*mut c_void> {
+        let tt = unsafe { &*t(tensor) };
+        let r: Vec<f32> = tt.to_vec::<f32>().iter().map(|&x| ((x + 3.0) / 6.0).max(0.0).min(1.0)).collect();
+        Ok(ffi_ops::make_tensor(MetalTensor::from_slice(&r, tt.shape(), crate::DType::F32)) as *mut c_void)
+    }
+
     fn tensor_fill_(&self, tensor: *mut c_void, value: f32) -> BackendResult<()> {
         let tt = unsafe { &*t(tensor) };
         let numel: usize = tt.shape().iter().product();

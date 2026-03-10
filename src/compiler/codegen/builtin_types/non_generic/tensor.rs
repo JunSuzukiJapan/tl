@@ -166,6 +166,12 @@ pub fn register_tensor_types(manager: &mut TypeManager) {
     tensor.register_evaluated_static_method("l1_loss", compile_tensor_l1_loss, vec![any_tensor.clone(), any_tensor.clone()], any_tensor.clone());
     tensor.register_evaluated_static_method("bce_loss", compile_tensor_bce_loss, vec![any_tensor.clone(), any_tensor.clone()], any_tensor.clone());
 
+    // linear(weight, bias) -> Tensor
+    tensor.register_evaluated_instance_method("linear", compile_tensor_linear, vec![any_tensor.clone(), any_tensor.clone()], any_tensor.clone());
+    // hardswish / hardsigmoid
+    tensor.register_evaluated_instance_method("hardswish", compile_tensor_hardswish, vec![], any_tensor.clone());
+    tensor.register_evaluated_instance_method("hardsigmoid", compile_tensor_hardsigmoid, vec![], any_tensor.clone());
+
     tensor.register_evaluated_instance_method("clone", compile_tensor_clone, vec![], any_tensor.clone());
     tensor.register_evaluated_instance_method("shallow_clone", compile_tensor_shallow_clone, vec![], any_tensor.clone());
     tensor.register_evaluated_instance_method("grad", compile_tensor_grad, vec![], any_tensor.clone());
@@ -1935,5 +1941,43 @@ fn compile_tensor_bce_loss<'ctx>(
     let f = codegen.module.get_function("tl_tensor_bce_loss").ok_or("tl_tensor_bce_loss not found")?;
     let call = codegen.builder.build_call(f, &[args[0].0.into(), args[1].0.into()], "bce_res").map_err(|e| e.to_string())?;
     let v = codegen.check_tensor_result(call, "bce_error")?;
+    Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
+}
+
+fn compile_tensor_linear<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj: BasicValueEnum<'ctx>,
+    _obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() < 2 { return Err("linear requires (weight, bias) arguments".into()); }
+    let f = codegen.module.get_function("tl_tensor_linear").ok_or("tl_tensor_linear not found")?;
+    let call = codegen.builder.build_call(f, &[obj.into(), args[0].0.into(), args[1].0.into()], "linear_res")
+        .map_err(|e| e.to_string())?;
+    let v = codegen.check_tensor_result(call, "linear_error")?;
+    Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
+}
+
+fn compile_tensor_hardswish<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj: BasicValueEnum<'ctx>,
+    _obj_ty: Type,
+    _args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let f = codegen.module.get_function("tl_tensor_hardswish").ok_or("tl_tensor_hardswish not found")?;
+    let call = codegen.builder.build_call(f, &[obj.into()], "hswish_res").map_err(|e| e.to_string())?;
+    let v = codegen.check_tensor_result(call, "hardswish_error")?;
+    Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
+}
+
+fn compile_tensor_hardsigmoid<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj: BasicValueEnum<'ctx>,
+    _obj_ty: Type,
+    _args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let f = codegen.module.get_function("tl_tensor_hardsigmoid").ok_or("tl_tensor_hardsigmoid not found")?;
+    let call = codegen.builder.build_call(f, &[obj.into()], "hsigmoid_res").map_err(|e| e.to_string())?;
+    let v = codegen.check_tensor_result(call, "hardsigmoid_error")?;
     Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
 }

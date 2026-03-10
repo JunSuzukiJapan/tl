@@ -228,6 +228,38 @@ impl IDevice for CpuDevice {
         Ok(std::sync::Arc::into_raw(arc) as *mut c_void)
     }
 
+    fn tensor_linear(&self, input: *mut c_void, weight: *mut c_void, bias: *mut c_void) -> BackendResult<*mut c_void> {
+        let (ti, tw) = unsafe { (&*t(input), &*t(weight)) };
+        let result = ti.matmul_impl(&tw.transpose_impl(0, 1)?)?;
+        if !bias.is_null() {
+            let tb = unsafe { &*t(bias) };
+            let out = result.add_impl(tb)?;
+            let arc = std::sync::Arc::new(std::cell::UnsafeCell::new(out));
+            Ok(std::sync::Arc::into_raw(arc) as *mut c_void)
+        } else {
+            let arc = std::sync::Arc::new(std::cell::UnsafeCell::new(result));
+            Ok(std::sync::Arc::into_raw(arc) as *mut c_void)
+        }
+    }
+
+    fn tensor_hardswish(&self, tensor: *mut c_void) -> BackendResult<*mut c_void> {
+        let tt = unsafe { &*t(tensor) };
+        let data = tt.to_vec::<f32>();
+        let r: Vec<f32> = data.iter().map(|&x| x * (x + 3.0).max(0.0).min(6.0) / 6.0).collect();
+        let out = crate::tensor::CpuTensor::from_slice(&r, tt.shape(), crate::DType::F32);
+        let arc = std::sync::Arc::new(std::cell::UnsafeCell::new(out));
+        Ok(std::sync::Arc::into_raw(arc) as *mut c_void)
+    }
+
+    fn tensor_hardsigmoid(&self, tensor: *mut c_void) -> BackendResult<*mut c_void> {
+        let tt = unsafe { &*t(tensor) };
+        let data = tt.to_vec::<f32>();
+        let r: Vec<f32> = data.iter().map(|&x| ((x + 3.0) / 6.0).max(0.0).min(1.0)).collect();
+        let out = crate::tensor::CpuTensor::from_slice(&r, tt.shape(), crate::DType::F32);
+        let arc = std::sync::Arc::new(std::cell::UnsafeCell::new(out));
+        Ok(std::sync::Arc::into_raw(arc) as *mut c_void)
+    }
+
     fn tensor_fill_(&self, tensor: *mut c_void, value: f32) -> BackendResult<()> {
         let tt = unsafe { &*t(tensor) };
         let numel: usize = tt.shape().iter().product();
