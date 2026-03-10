@@ -34,10 +34,12 @@ Notes:
 ## 2. Standard Types (Static Methods)
 
 ### Tensor (Static)
-- `Tensor::zeros(shape, requires_grad: bool) -> Tensor`
-- `Tensor::randn(shape, requires_grad: bool) -> Tensor`
-- `Tensor::ones(shape, requires_grad: bool) -> Tensor`
+- `Tensor::zeros(shape, requires_grad?: bool) -> Tensor`
+- `Tensor::randn(shape, requires_grad?: bool) -> Tensor`
+- `Tensor::ones(shape, requires_grad?: bool) -> Tensor`
 - `Tensor::load(path: String) -> Tensor`
+- `Tensor::from_vec_u8(data: Vec<u8>, shape: Vec<i64>) -> Tensor` — Creates a Tensor from a byte Vec
+- `Tensor::clear_grads() -> void` — Clears the global gradient store
 
 ### Vec\<T\> (Static)
 - `Vec<T>::new() -> Vec<T>` — Creates an empty Vec
@@ -124,12 +126,21 @@ Notes:
 #### Shape and Indexing
 - `reshape(shape) -> Tensor`
 - `narrow(dim: i64, start: i64, len: i64) -> Tensor`
-- `slice(start: i64, len: i64) -> Tensor`
+- `slice(dim: i64, start: i64, len: i64, stride: i64) -> Tensor`
 - `transpose(dim1: i64, dim2: i64) -> Tensor`
 - `transpose_2d() -> Tensor`
+- `squeeze(dim: i64) -> Tensor` — Removes a dimension of size 1
+- `unsqueeze(dim: i64) -> Tensor` — Adds a dimension of size 1
+- `flatten(dim: i64) -> Tensor` — Flattens from the given dimension
+- `permute(dims: Vec<i64>) -> Tensor` — Reorders dimensions
+- `contiguous() -> Tensor` — Ensures contiguous memory layout
+- `cat(other: Tensor) -> Tensor` — Concatenates tensors
+- `gather(indices: Tensor) -> Tensor` — Gathers elements along an axis
 - `len() -> i64`
-- `dim() -> i64`
-- `get_shape() -> Tensor`
+- `dim(d: i64) -> i64` — Size of a specific dimension
+- `ndim() -> i64` — Number of dimensions (rank)
+- `shape() -> Vec<i64>` — Returns shape as a Vec
+- `get_shape() -> Vec<i64>` — Same as `shape()`
 - `get(i64...) -> f32`
 - `set(i64..., value: f32) -> void`
 
@@ -170,25 +181,42 @@ Notes:
 - `add(other)`, `sub(other)`, `mul(other)`, `div(other)`, `mod(other)`
 - `add_assign(other)`, `sub_assign(other)`, `mul_assign(other)`, `div_assign(other)`, `mod_assign(other)`
 
+#### Comparison (Operator Form)
+These return a Tensor of `0.0` / `1.0` values:
+- `==` (`eq`), `!=` (`neq`), `<` (`lt`), `<=` (`le`), `>` (`gt`), `>=` (`ge`)
+
 #### Autograd
 - `backward() -> void`
 - `grad() -> Tensor`
-- `detach() -> Tensor`
+- `detach(requires_grad?: bool) -> Tensor`
 - `enable_grad() -> Tensor`
 - `clone() -> Tensor`
+- `shallow_clone() -> Tensor` — Clones without deep-copying data
 
 #### Device
 - `cuda() -> Tensor`
 - `cpu() -> Tensor`
+- `to(device: String) -> Tensor` — Move tensor to specified device
 
 #### Debug / I/O
-- `print()`, `print_1()`, `print_2()`, `print_3()`
+- `print()`, `display()`
 - `item() -> f32`
 - `item_i64() -> i64`
+- `save(path: String) -> void` — Save tensor to file
+
+#### Type Conversion
+- `to_i64() -> Tensor<I64>` — Converts element type to i64
+
+#### Regularization
+- `dropout(p: f32, training: bool) -> Tensor` — Applies dropout
+
+#### Sampling
+- `sample(temperature: f32, top_p: f32) -> Tensor<I64>` — Samples from logits with temperature and top-p
 
 #### Quantization / Other
 - `matmul_quantized(weight) -> Tensor`
-- `cat_i64(other) -> Tensor`
+- `cat_i64(other, dim: i64) -> Tensor`
+- `sumall() -> Tensor` — Reduces all elements to a scalar tensor
 
 ---
 

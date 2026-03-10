@@ -109,10 +109,12 @@ fn divide(a: i64, b: i64) -> Result<i64, String> {
 ## 4. Standard Classes (Static Methods)
 
 ### Tensor
-- `Tensor::zeros(shape, requires_grad) -> Tensor`
-- `Tensor::randn(shape, requires_grad) -> Tensor`
-- `Tensor::ones(shape, requires_grad) -> Tensor`
+- `Tensor::zeros(shape, requires_grad?) -> Tensor`
+- `Tensor::randn(shape, requires_grad?) -> Tensor`
+- `Tensor::ones(shape, requires_grad?) -> Tensor`
 - `Tensor::load(path: String) -> Tensor`
+- `Tensor::from_vec_u8(data: Vec<u8>, shape: Vec<i64>) -> Tensor`
+- `Tensor::clear_grads() -> void`
 
 ### Param (Parameter Management)
 - `Param::save_all(path) -> void` — Save all parameters
@@ -158,8 +160,10 @@ fn divide(a: i64, b: i64) -> Result<i64, String> {
 `sin()`, `cos()`, `tan()`, `sqrt()`, `exp()`, `log()`, `pow(exp)`
 
 #### Shape & Operations
-- `reshape(...dims)`, `transpose(dim1, dim2)`, `slice(start, len)`
-- `len()`, `dim()`, `item()`, `item_i64()`
+- `reshape(...dims)`, `transpose(dim1, dim2)`, `slice(dim, start, len, stride)`
+- `squeeze(dim)`, `unsqueeze(dim)`, `flatten(dim)`, `permute(dims)`
+- `contiguous()`, `cat(other)`, `gather(indices)`
+- `len()`, `dim(d)`, `ndim()`, `shape()`, `item()`, `item_i64()`
 
 #### Reductions & Statistics
 `sum(dim?)`, `mean(dim?)`, `max(dim?)`, `min(dim?)`, `argmax(dim)`, `argmin(dim)`,
@@ -171,10 +175,20 @@ fn divide(a: i64, b: i64) -> Result<i64, String> {
 - `rms_norm(weight, eps)`, `apply_rope(cos, sin, dim)`
 
 #### Autograd
-- `backward()`, `grad()`, `enable_grad()`, `detach()`, `clone()`
+- `backward()`, `grad()`, `enable_grad()`, `detach(requires_grad?)`, `clone()`, `shallow_clone()`
 
 #### Device
-- `cuda()`, `cpu()`
+- `cuda()`, `cpu()`, `to(device)`
+
+#### Comparison (Operator Form)
+- `==`, `!=`, `<`, `<=`, `>`, `>=` — Returns Tensor of `0.0` / `1.0` values
+
+#### Debug / I/O / Other
+- `print()`, `display()`, `save(path)`
+- `to_i64()` — Converts element type to i64
+- `dropout(p, training)` — Applies dropout
+- `sample(temperature, top_p)` — Samples from logits
+- `sumall()` — Reduces all elements to a scalar
 
 ---
 
