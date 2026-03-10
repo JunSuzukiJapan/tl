@@ -94,6 +94,10 @@ impl IDevice for CudaDeviceImpl {
         let result = CudaTensor::where_cond_impl(tc, tx, ty)?;
         Ok(v(ffi_ops::make_tensor(result)))
     }
+    fn tensor_masked_fill(&self, _t: *mut c_void, _mask: *mut c_void, _value: f32) -> BackendResult<*mut c_void> { unimplemented!("CUDA masked_fill") }
+    fn tensor_to_vec_f32(&self, _t: *mut c_void) -> BackendResult<(*mut f32, usize)> { unimplemented!("CUDA to_vec_f32") }
+    fn tensor_var(&self, _t: *mut c_void, _dim: i32) -> BackendResult<*mut c_void> { unimplemented!("CUDA var") }
+    fn tensor_std(&self, _t: *mut c_void, _dim: i32) -> BackendResult<*mut c_void> { unimplemented!("CUDA std") }
     // ========== メモリ管理 ==========
     fn tensor_clone(&self, t: *mut c_void) -> BackendResult<*mut c_void> {
         Ok(v(crate::ffi::tl_cuda_clone(p(t))))

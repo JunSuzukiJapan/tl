@@ -35,6 +35,14 @@ pub trait IDevice {
 
     // ========== 要素操作 ==========
     fn tensor_where_cond(&self, cond: *mut c_void, x: *mut c_void, y: *mut c_void) -> BackendResult<*mut c_void>;
+    fn tensor_masked_fill(&self, t: *mut c_void, mask: *mut c_void, value: f32) -> BackendResult<*mut c_void>;
+
+    // ========== テンソル→Vec変換 ==========
+    fn tensor_to_vec_f32(&self, t: *mut c_void) -> BackendResult<(*mut f32, usize)>;
+
+    // ========== リダクション ==========
+    fn tensor_var(&self, t: *mut c_void, dim: i32) -> BackendResult<*mut c_void>;
+    fn tensor_std(&self, t: *mut c_void, dim: i32) -> BackendResult<*mut c_void>;
 
     // ========== メモリ管理 ==========
     fn tensor_clone(&self, t: *mut c_void) -> BackendResult<*mut c_void>;

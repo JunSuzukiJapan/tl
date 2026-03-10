@@ -49,6 +49,41 @@ impl IDevice for MetalDeviceImpl {
         let result = MetalTensor::where_cond(tc, tx, ty)?;
         Ok(ffi_ops::make_tensor(result) as *mut c_void)
     }
+
+    fn tensor_masked_fill(&self, tensor: *mut c_void, mask: *mut c_void, value: f32) -> BackendResult<*mut c_void> {
+        let (tt, tm) = unsafe { (&*t(tensor), &*t(mask)) };
+        let numel: usize = tt.shape().iter().product();
+        let value_tensor = MetalTensor::from_slice(&vec![value; numel], tt.shape(), crate::DType::F32);
+        let result = MetalTensor::where_cond(tm, &value_tensor, tt)?;
+        Ok(ffi_ops::make_tensor(result) as *mut c_void)
+    }
+
+    fn tensor_to_vec_f32(&self, tensor: *mut c_void) -> BackendResult<(*mut f32, usize)> {
+        let tt = unsafe { &*t(tensor) };
+        let vec: Vec<f32> = tt.to_vec::<f32>();
+        let len = vec.len();
+        let ptr = vec.as_ptr() as *mut f32;
+        std::mem::forget(vec);
+        Ok((ptr, len))
+    }
+
+    fn tensor_var(&self, tensor: *mut c_void, dim: i32) -> BackendResult<*mut c_void> {
+        let tt = unsafe { &*t(tensor) };
+        let mean = tt.mean_impl(dim)?;
+        let diff = tt.sub_impl(&mean)?;
+        let sq = diff.mul_impl(&diff)?;
+        let result = sq.mean_impl(dim)?;
+        Ok(ffi_ops::make_tensor(result) as *mut c_void)
+    }
+
+    fn tensor_std(&self, tensor: *mut c_void, dim: i32) -> BackendResult<*mut c_void> {
+        let var_ptr = self.tensor_var(tensor, dim)?;
+        let var_t = unsafe { &*(var_ptr as *mut MetalTensor) };
+        let result = var_t.sqrt_impl()?;
+        unsafe { let _ = std::sync::Arc::from_raw(var_ptr as *const std::cell::UnsafeCell<MetalTensor>); }
+        Ok(ffi_ops::make_tensor(result) as *mut c_void)
+    }
+
     // ========== メモリ管理 ==========
     #[inline] fn tensor_clone(&self, a: *mut c_void) -> BackendResult<*mut c_void> { v(ffi::tl_metal_clone(t(a))) }
     #[inline] fn tensor_shallow_clone(&self, a: *mut c_void) -> BackendResult<*mut c_void> { v(ffi::tl_metal_shallow_clone(t(a))) }

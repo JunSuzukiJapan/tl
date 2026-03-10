@@ -54,6 +54,45 @@ impl IDevice for CpuDevice {
         Ok(std::sync::Arc::into_raw(arc) as *mut c_void)
     }
 
+    fn tensor_masked_fill(&self, tensor: *mut c_void, mask: *mut c_void, value: f32) -> BackendResult<*mut c_void> {
+        use crate::tensor::CpuTensor as CT;
+        let (tt, tm) = unsafe { (&*t(tensor), &*t(mask)) };
+        let numel: usize = tt.shape().iter().product();
+        let value_tensor = CT::from_slice(&vec![value; numel], tt.shape(), crate::DType::F32);
+        let result = CT::where_cond(tm, &value_tensor, tt)?;
+        let arc = std::sync::Arc::new(std::cell::UnsafeCell::new(result));
+        Ok(std::sync::Arc::into_raw(arc) as *mut c_void)
+    }
+
+    fn tensor_to_vec_f32(&self, tensor: *mut c_void) -> BackendResult<(*mut f32, usize)> {
+        let tt = unsafe { &*t(tensor) };
+        let vec: Vec<f32> = tt.to_vec::<f32>();
+        let len = vec.len();
+        let ptr = vec.as_ptr() as *mut f32;
+        std::mem::forget(vec);
+        Ok((ptr, len))
+    }
+
+    fn tensor_var(&self, tensor: *mut c_void, dim: i32) -> BackendResult<*mut c_void> {
+        use crate::tensor::CpuTensor as CT;
+        let tt = unsafe { &*t(tensor) };
+        let mean = tt.mean_impl(dim)?;
+        let diff = tt.sub_impl(&mean)?;
+        let sq = diff.mul_impl(&diff)?;
+        let result = sq.mean_impl(dim)?;
+        let arc = std::sync::Arc::new(std::cell::UnsafeCell::new(result));
+        Ok(std::sync::Arc::into_raw(arc) as *mut c_void)
+    }
+
+    fn tensor_std(&self, tensor: *mut c_void, dim: i32) -> BackendResult<*mut c_void> {
+        let var_ptr = self.tensor_var(tensor, dim)?;
+        let var_t = unsafe { &*(var_ptr as *mut crate::tensor::CpuTensor) };
+        let result = var_t.sqrt_impl()?;
+        unsafe { let _ = std::sync::Arc::from_raw(var_ptr as *const std::cell::UnsafeCell<crate::tensor::CpuTensor>); }
+        let arc = std::sync::Arc::new(std::cell::UnsafeCell::new(result));
+        Ok(std::sync::Arc::into_raw(arc) as *mut c_void)
+    }
+
     // ========== メモリ管理 ==========
     #[inline] fn tensor_clone(&self, a: *mut c_void) -> BackendResult<*mut c_void> { check(ffi::tl_cpu_tensor_clone(t(a))) }
     #[inline] fn tensor_shallow_clone(&self, a: *mut c_void) -> BackendResult<*mut c_void> { check(ffi::tl_cpu_tensor_shallow_clone(t(a))) }

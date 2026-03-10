@@ -80,12 +80,12 @@ DOMAIN_FEATURES_ANALYSIS.md の分析結果に基づく実装計画。
   - [x] TypeManager: evaluated 静的メソッドとして登録
   - [x] テスト
 
-- [ ] `masked_fill(mask, value)` — マスク付き値埋め
-  - [ ] tl_cpu: `masked_fill_impl`
-  - [ ] tl_metal: GPU kernel (condition ? value : original)
+- [x] `masked_fill(mask, value)` — マスク付き値埋め
+  - [x] tl_cpu: `masked_fill_impl`
+  - [x] tl_metal: GPU kernel (condition ? value : original)
   - [ ] tl_cuda: `masked_fill_impl`
-  - [ ] FFI + TypeManager登録
-  - [ ] テスト
+  - [x] FFI + TypeManager登録
+  - [x] テスト
 
 - [ ] `to_dtype(dtype: String)` — 型変換
   - [ ] tl_cpu: f32↔f64, f32↔i64 変換
@@ -101,12 +101,12 @@ DOMAIN_FEATURES_ANALYSIS.md の分析結果に基づく実装計画。
   - [ ] FFI + TypeManager登録
   - [ ] テスト
 
-- [ ] `std(dim?)` / `var(dim?)` — 標準偏差・分散
-  - [ ] tl_cpu: `var_impl`, `std_impl`
-  - [ ] tl_metal: GPU reduction (mean→差の二乗→mean)
+- [x] `std(dim?)` / `var(dim?)` — 標準偏差・分散
+  - [x] tl_cpu: `var_impl`, `std_impl`
+  - [x] tl_metal: GPU reduction (mean→差の二乗→mean)
   - [ ] tl_cuda: 同上
-  - [ ] FFI + TypeManager登録
-  - [ ] テスト
+  - [x] FFI + TypeManager登録
+  - [x] テスト
 
 ### 2.2 中優先度
 

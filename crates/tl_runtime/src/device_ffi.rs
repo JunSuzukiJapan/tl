@@ -247,6 +247,34 @@ pub extern "C" fn tl_device_tensor_randn_like(t: *mut c_void) -> *mut c_void {
 pub extern "C" fn tl_device_tensor_where_cond(cond: *mut c_void, x: *mut c_void, y: *mut c_void) -> *mut c_void {
     dispatch(|d| d.tensor_where_cond(cond, x, y))
 }
+/// @ffi_sig (Tensor*, Tensor*, f32) -> Tensor*
+/// mask > 0 の位置を value で置換
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_device_tensor_masked_fill(t: *mut c_void, mask: *mut c_void, value: f32) -> *mut c_void {
+    dispatch(|d| d.tensor_masked_fill(t, mask, value))
+}
+/// @ffi_sig (Tensor*, i64, bool) -> Tensor*
+/// var with dim (reduce_generic pattern)
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_device_tensor_var_dim(t: *mut c_void, dim: i64, _keepdim: bool) -> *mut c_void {
+    dispatch(|d| d.tensor_var(t, dim as i32))
+}
+/// @ffi_sig (Tensor*, i64, bool) -> Tensor*
+/// std with dim (reduce_generic pattern)
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_device_tensor_std_dim(t: *mut c_void, dim: i64, _keepdim: bool) -> *mut c_void {
+    dispatch(|d| d.tensor_std(t, dim as i32))
+}
+/// @ffi_sig (Tensor*, i32) -> Tensor*
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_device_tensor_var(t: *mut c_void, dim: i32) -> *mut c_void {
+    dispatch(|d| d.tensor_var(t, dim))
+}
+/// @ffi_sig (Tensor*, i32) -> Tensor*
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_device_tensor_std(t: *mut c_void, dim: i32) -> *mut c_void {
+    dispatch(|d| d.tensor_std(t, dim))
+}
 /// @ffi_sig (Tensor*) -> Tensor*
 /// 入力テンソルと同じ形状のゼロテンソルを生成
 #[unsafe(no_mangle)]
