@@ -201,6 +201,46 @@ pub extern "C" fn tl_device_tensor_eye(n: usize, req_grad: bool) -> *mut c_void 
 pub extern "C" fn tl_device_tensor_arange(start: f64, end: f64, step: f64) -> *mut c_void {
     dispatch(|d| d.tensor_arange(start, end, step))
 }
+/// @ffi_sig (f64, f64, usize) -> Tensor*
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_device_tensor_linspace(start: f64, end: f64, steps: usize) -> *mut c_void {
+    dispatch(|d| d.tensor_linspace(start, end, steps))
+}
+/// @ffi_sig (usize, usize*, bool) -> Tensor*
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_device_tensor_rand(rank: usize, shape: *const usize, req_grad: bool) -> *mut c_void {
+    dispatch(|d| d.tensor_rand(rank, shape, req_grad))
+}
+/// @ffi_sig (Tensor*) -> Tensor*
+/// 入力テンソルと同じ形状の一様分布乱数テンソルを生成
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_device_tensor_rand_like(t: *mut c_void) -> *mut c_void {
+    let shape_t = tl_device_tensor_get_shape(t);
+    if shape_t.is_null() { return std::ptr::null_mut(); }
+    let rank = dispatch(|d| d.tensor_numel(shape_t)) as usize;
+    let data_ptr = dispatch(|d| d.tensor_data(shape_t));
+    if data_ptr.is_null() || rank == 0 { return std::ptr::null_mut(); }
+    let dims_f32 = unsafe { std::slice::from_raw_parts(data_ptr, rank) };
+    let dims_usize: Vec<usize> = dims_f32.iter().map(|&x| x as usize).collect();
+    let result = dispatch(|d| d.tensor_rand(rank, dims_usize.as_ptr(), false));
+    dispatch(|d| d.tensor_free(shape_t));
+    result
+}
+/// @ffi_sig (Tensor*) -> Tensor*
+/// 入力テンソルと同じ形状の正規分布乱数テンソルを生成
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_device_tensor_randn_like(t: *mut c_void) -> *mut c_void {
+    let shape_t = tl_device_tensor_get_shape(t);
+    if shape_t.is_null() { return std::ptr::null_mut(); }
+    let rank = dispatch(|d| d.tensor_numel(shape_t)) as usize;
+    let data_ptr = dispatch(|d| d.tensor_data(shape_t));
+    if data_ptr.is_null() || rank == 0 { return std::ptr::null_mut(); }
+    let dims_f32 = unsafe { std::slice::from_raw_parts(data_ptr, rank) };
+    let dims_usize: Vec<usize> = dims_f32.iter().map(|&x| x as usize).collect();
+    let result = dispatch(|d| d.tensor_randn_debug(rank, dims_usize.as_ptr(), 0, false));
+    dispatch(|d| d.tensor_free(shape_t));
+    result
+}
 /// @ffi_sig (Tensor*) -> Tensor*
 /// 入力テンソルと同じ形状のゼロテンソルを生成
 #[unsafe(no_mangle)]

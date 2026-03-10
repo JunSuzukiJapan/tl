@@ -41,6 +41,8 @@ impl IDevice for MetalDeviceImpl {
     #[inline] fn tensor_full(&self, rank: usize, shape: *const usize, value: f32, req_grad: bool) -> BackendResult<*mut c_void> { v(ffi_ops::tl_metal_full(rank, shape, value, req_grad)) }
     #[inline] fn tensor_eye(&self, n: usize, req_grad: bool) -> BackendResult<*mut c_void> { v(ffi_ops::tl_metal_eye(n, req_grad)) }
     #[inline] fn tensor_arange(&self, start: f64, end: f64, step: f64) -> BackendResult<*mut c_void> { v(ffi_ops::tl_metal_arange(start, end, step)) }
+    #[inline] fn tensor_linspace(&self, start: f64, end: f64, steps: usize) -> BackendResult<*mut c_void> { v(ffi_ops::tl_metal_linspace(start, end, steps)) }
+    #[inline] fn tensor_rand(&self, rank: usize, shape: *const usize, req_grad: bool) -> BackendResult<*mut c_void> { v(ffi_ops::tl_metal_rand(rank as i64, shape, req_grad)) }
     // ========== メモリ管理 ==========
     #[inline] fn tensor_clone(&self, a: *mut c_void) -> BackendResult<*mut c_void> { v(ffi::tl_metal_clone(t(a))) }
     #[inline] fn tensor_shallow_clone(&self, a: *mut c_void) -> BackendResult<*mut c_void> { v(ffi::tl_metal_shallow_clone(t(a))) }

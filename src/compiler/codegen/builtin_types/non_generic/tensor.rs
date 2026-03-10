@@ -38,7 +38,20 @@ pub fn register_tensor_types(manager: &mut TypeManager) {
     tensor.register_unevaluated_static_method("arange", compile_tensor_arange, vec![Type::I64, Type::I64, Type::I64], Type::Tensor(Box::new(Type::F32), 1));
     tensor.register_unevaluated_static_method("arange", compile_tensor_arange, vec![Type::F64, Type::F64, Type::F64], Type::Tensor(Box::new(Type::F32), 1));
 
+    // linspace(start, end, steps) -> Tensor
+    tensor.register_unevaluated_static_method("linspace", compile_tensor_linspace, vec![Type::F32, Type::F32, Type::I64], Type::Tensor(Box::new(Type::F32), 1));
+    tensor.register_unevaluated_static_method("linspace", compile_tensor_linspace, vec![Type::F64, Type::F64, Type::I64], Type::Tensor(Box::new(Type::F32), 1));
+    tensor.register_unevaluated_static_method("linspace", compile_tensor_linspace, vec![Type::I64, Type::I64, Type::I64], Type::Tensor(Box::new(Type::F32), 1));
+
+    // rand(shape, requires_grad?) -> Tensor (uniform [0,1))
+    tensor.register_unevaluated_static_method("rand", compile_tensor_rand, vec![shape_type.clone(), Type::Bool], Type::Tensor(Box::new(Type::F32), 0));
+    tensor.register_unevaluated_static_method("rand", compile_tensor_rand, vec![shape_type.clone()], Type::Tensor(Box::new(Type::F32), 0));
+
     // Evaluated static methods
+    // rand_like(t) -> Tensor (same shape, uniform random)
+    tensor.register_evaluated_static_method("rand_like", compile_tensor_rand_like, vec![Type::Tensor(Box::new(Type::F32), 0)], Type::Tensor(Box::new(Type::F32), 0));
+    // randn_like(t) -> Tensor (same shape, normal random)
+    tensor.register_evaluated_static_method("randn_like", compile_tensor_randn_like, vec![Type::Tensor(Box::new(Type::F32), 0)], Type::Tensor(Box::new(Type::F32), 0));
     // zeros_like(t) -> Tensor (same shape as t, filled with zeros)
     tensor.register_evaluated_static_method("zeros_like", compile_tensor_zeros_like, vec![Type::Tensor(Box::new(Type::F32), 0)], Type::Tensor(Box::new(Type::F32), 0));
     // ones_like(t) -> Tensor (same shape as t, filled with ones)
@@ -1434,5 +1447,73 @@ fn compile_from_vec_f32<'ctx>(
     let f = codegen.module.get_function("tl_tensor_from_vec_f32").ok_or("tl_tensor_from_vec_f32 not found")?;
     let call = codegen.builder.build_call(f, &[data_val.into(), shape_val.into()], "from_vec_res").map_err(|e| e.to_string())?;
     let v = codegen.check_tensor_result(call, "from_vec_error")?;
+    Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
+}
+
+fn compile_tensor_linspace<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: &[Expr],
+    _target: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() < 3 {
+        return Err("Tensor::linspace requires (start, end, steps) arguments".into());
+    }
+    let f64_type = codegen.context.f64_type();
+    let i64_type = codegen.context.i64_type();
+    let mut float_vals = Vec::new();
+    for arg in &args[..2] {
+        let (v, t) = codegen.compile_expr(arg)?;
+        let f64_val = match t {
+            Type::F64 => v.into_float_value(),
+            Type::F32 => codegen.builder.build_float_ext(v.into_float_value(), f64_type, "fext").map_err(|e| e.to_string())?,
+            Type::I64 => codegen.builder.build_signed_int_to_float(v.into_int_value(), f64_type, "itof").map_err(|e| e.to_string())?,
+            Type::I32 => codegen.builder.build_signed_int_to_float(v.into_int_value(), f64_type, "itof").map_err(|e| e.to_string())?,
+            _ => return Err(format!("Tensor::linspace requires numeric arguments, found {:?}", t)),
+        };
+        float_vals.push(f64_val);
+    }
+    let (steps_v, steps_t) = codegen.compile_expr(&args[2])?;
+    let steps_val = match steps_t {
+        Type::I64 => steps_v.into_int_value(),
+        Type::I32 => codegen.builder.build_int_z_extend(steps_v.into_int_value(), i64_type, "ext").map_err(|e| e.to_string())?,
+        _ => return Err(format!("Tensor::linspace steps must be integer, found {:?}", steps_t)),
+    };
+    let f = codegen.module.get_function("tl_tensor_linspace").ok_or("tl_tensor_linspace not found")?;
+    let call = codegen.builder.build_call(
+        f, &[float_vals[0].into(), float_vals[1].into(), steps_val.into()], "linspace_res",
+    ).map_err(|e| e.to_string())?;
+    let v = codegen.check_tensor_result(call, "linspace_error")?;
+    Ok((v, Type::Tensor(Box::new(Type::F32), 1)))
+}
+
+fn compile_tensor_rand<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: &[Expr],
+    _target: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    compile_tensor_creation_helper(codegen, args, "tl_tensor_rand")
+}
+
+fn compile_tensor_rand_like<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.is_empty() { return Err("Tensor::rand_like requires 1 argument".into()); }
+    let f = codegen.module.get_function("tl_tensor_rand_like").ok_or("tl_tensor_rand_like not found")?;
+    let call = codegen.builder.build_call(f, &[args[0].0.into()], "rand_like_res").map_err(|e| e.to_string())?;
+    let v = codegen.check_tensor_result(call, "rand_like_error")?;
+    Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
+}
+
+fn compile_tensor_randn_like<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.is_empty() { return Err("Tensor::randn_like requires 1 argument".into()); }
+    let f = codegen.module.get_function("tl_tensor_randn_like").ok_or("tl_tensor_randn_like not found")?;
+    let call = codegen.builder.build_call(f, &[args[0].0.into()], "randn_like_res").map_err(|e| e.to_string())?;
+    let v = codegen.check_tensor_result(call, "randn_like_error")?;
     Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
 }

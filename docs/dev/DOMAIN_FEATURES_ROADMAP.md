@@ -58,16 +58,16 @@ DOMAIN_FEATURES_ANALYSIS.md の分析結果に基づく実装計画。
 
 ### 1.2 中優先度
 
-- [ ] `Tensor::linspace(start, end, steps)` — 等間隔テンソル
-  - [ ] 全バックエンド実装
-  - [ ] FFI + TypeManager登録
+- [x] `Tensor::linspace(start, end, steps)` — 等間隔テンソル
+  - [x] 全バックエンド実装
+  - [x] FFI + TypeManager登録
 
-- [ ] `Tensor::rand(shape, requires_grad?)` — 一様分布乱数
-  - [ ] 全バックエンド実装
-  - [ ] FFI + TypeManager登録
+- [x] `Tensor::rand(shape, requires_grad?)` — 一様分布乱数
+  - [x] 全バックエンド実装
+  - [x] FFI + TypeManager登録
 
-- [ ] `Tensor::rand_like(t)` / `Tensor::randn_like(t)` — 形状コピー乱数
-  - [ ] 全バックエンド（ラッパー）
+- [x] `Tensor::rand_like(t)` / `Tensor::randn_like(t)` — 形状コピー乱数
+  - [x] 全バックエンド（ラッパー）
 
 ---
 

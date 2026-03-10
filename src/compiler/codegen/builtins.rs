@@ -867,6 +867,24 @@ pub fn declare_runtime_functions<'ctx>(
     let from_vec_f32_type = void_ptr.fn_type(&[void_ptr.into(), void_ptr.into()], false);
     add_fn("tl_tensor_from_vec_f32", from_vec_f32_type);
 
+    // tl_tensor_linspace(start: f64, end: f64, steps: i64) -> *mut OpaqueTensor
+    let linspace_type = void_ptr.fn_type(
+        &[
+            f64_type.into(), // start
+            f64_type.into(), // end
+            i64_type.into(), // steps
+        ],
+        false,
+    );
+    add_fn("tl_tensor_linspace", linspace_type);
+
+    // tl_tensor_rand(rank, shape_ptr, req_grad) -> *mut OpaqueTensor (same sig as zeros)
+    add_fn("tl_tensor_rand", zeros_type);
+
+    // tl_tensor_rand_like / tl_tensor_randn_like (unary tensor -> tensor)
+    add_fn("tl_tensor_rand_like", unary_type);
+    add_fn("tl_tensor_randn_like", unary_type);
+
     // VarBuilder
     // tl_varbuilder_get(name: *const c_char, rank: usize, shape: *const usize) -> *mut OpaqueTensor
     let varbuilder_get_type =
@@ -1595,6 +1613,11 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_tensor_ones_like") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_ones_like as *const () as usize); }
     // [IDevice] from_vec_f32 → device_ffi
     if let Some(f) = module.get_function("tl_tensor_from_vec_f32") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_from_vec_f32 as *const () as usize); }
+    // [IDevice] linspace / rand / rand_like / randn_like → device_ffi
+    if let Some(f) = module.get_function("tl_tensor_linspace") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_linspace as *const () as usize); }
+    if let Some(f) = module.get_function("tl_tensor_rand") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_rand as *const () as usize); }
+    if let Some(f) = module.get_function("tl_tensor_rand_like") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_rand_like as *const () as usize); }
+    if let Some(f) = module.get_function("tl_tensor_randn_like") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_randn_like as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
     if let Some(f) = module.get_function("tl_tensor_sub_assign") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_sub_assign as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi

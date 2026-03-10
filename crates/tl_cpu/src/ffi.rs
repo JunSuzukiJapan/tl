@@ -188,6 +188,47 @@ pub extern "C" fn tl_cpu_tensor_arange(
     make_tensor(CpuTensor::from_slice(&data, &[len], DType::F32))
 }
 
+pub extern "C" fn tl_cpu_tensor_linspace(
+    start: f64,
+    end: f64,
+    steps: usize,
+) -> *mut OpaqueTensor {
+    if steps == 0 {
+        return make_tensor(CpuTensor::from_slice(&[] as &[f32], &[0], DType::F32));
+    }
+    if steps == 1 {
+        return make_tensor(CpuTensor::from_slice(&[start as f32], &[1], DType::F32));
+    }
+    let step = (end - start) / (steps - 1) as f64;
+    let data: Vec<f32> = (0..steps).map(|i| (start + step * i as f64) as f32).collect();
+    make_tensor(CpuTensor::from_slice(&data, &[steps], DType::F32))
+}
+
+pub extern "C" fn tl_cpu_tensor_rand(
+    rank: i64,
+    shape_ptr: *const usize,
+    req_grad: bool,
+) -> *mut OpaqueTensor {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let rank = rank as usize;
+    let shape = unsafe { std::slice::from_raw_parts(shape_ptr, rank) };
+    let numel: usize = shape.iter().product();
+    // Simple LCG-based uniform random [0, 1)
+    let mut hasher = DefaultHasher::new();
+    std::time::SystemTime::now().hash(&mut hasher);
+    let mut seed = hasher.finish();
+    let data: Vec<f32> = (0..numel).map(|_| {
+        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        ((seed >> 33) as f32) / (u32::MAX as f32)
+    }).collect();
+    let mut t = CpuTensor::from_slice(&data, shape, DType::F32);
+    if req_grad {
+        t.enable_grad();
+    }
+    make_tensor(t)
+}
+
 // ========== テンソル解放 (Arc ベース) ==========
 // Arc::into_raw で作成されたポインタを Arc::from_raw で復元し、
 // 参照カウントを -1 する。RC=0 になれば CpuTensor（autograd グラフ含む）が

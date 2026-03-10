@@ -30,6 +30,8 @@ pub trait IDevice {
     fn tensor_full(&self, rank: usize, shape: *const usize, value: f32, req_grad: bool) -> BackendResult<*mut c_void>;
     fn tensor_eye(&self, n: usize, req_grad: bool) -> BackendResult<*mut c_void>;
     fn tensor_arange(&self, start: f64, end: f64, step: f64) -> BackendResult<*mut c_void>;
+    fn tensor_linspace(&self, start: f64, end: f64, steps: usize) -> BackendResult<*mut c_void>;
+    fn tensor_rand(&self, rank: usize, shape: *const usize, req_grad: bool) -> BackendResult<*mut c_void>;
 
     // ========== メモリ管理 ==========
     fn tensor_clone(&self, t: *mut c_void) -> BackendResult<*mut c_void>;

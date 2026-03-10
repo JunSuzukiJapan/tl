@@ -30,4 +30,16 @@ fn main() {
     shape.push(3);
     let fv = Tensor::from_vec(data, shape);
     print(fv);
+
+    let ls = Tensor::linspace(0.0, 1.0, 5);
+    print(ls);
+
+    let r = Tensor::rand([3, 2]);
+    print(r);
+
+    let rl = Tensor::rand_like(src);
+    print(rl);
+
+    let rnl = Tensor::randn_like(src);
+    print(rnl);
 }

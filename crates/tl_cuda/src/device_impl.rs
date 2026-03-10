@@ -82,6 +82,12 @@ impl IDevice for CudaDeviceImpl {
     fn tensor_arange(&self, start: f64, end: f64, step: f64) -> BackendResult<*mut c_void> {
         Ok(v(ffi_ops::tl_cuda_arange(start, end, step)))
     }
+    fn tensor_linspace(&self, start: f64, end: f64, steps: usize) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_linspace(start, end, steps)))
+    }
+    fn tensor_rand(&self, rank: usize, shape: *const usize, req_grad: bool) -> BackendResult<*mut c_void> {
+        Ok(v(ffi_ops::tl_cuda_rand(rank as i64, shape, req_grad)))
+    }
     // ========== メモリ管理 ==========
     fn tensor_clone(&self, t: *mut c_void) -> BackendResult<*mut c_void> {
         Ok(v(crate::ffi::tl_cuda_clone(p(t))))
