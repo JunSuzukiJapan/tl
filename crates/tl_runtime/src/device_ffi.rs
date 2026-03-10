@@ -439,6 +439,21 @@ pub extern "C" fn tl_device_tensor_top_k_sample(logits: *mut c_void, k: i64) -> 
 pub extern "C" fn tl_device_tensor_top_p_sample(logits: *mut c_void, p: f64) -> *mut c_void {
     dispatch(|d| d.tensor_top_p_sample(logits, p))
 }
+/// @ffi_sig (Tensor*, f64) -> Tensor*
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_device_tensor_temperature_scale(logits: *mut c_void, temperature: f64) -> *mut c_void {
+    dispatch(|d| d.tensor_temperature_scale(logits, temperature))
+}
+/// @ffi_sig (Tensor*, Tensor*, f64) -> Tensor*
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_device_tensor_repetition_penalty(logits: *mut c_void, tokens: *mut c_void, penalty: f64) -> *mut c_void {
+    dispatch(|d| d.tensor_repetition_penalty(logits, tokens, penalty))
+}
+/// @ffi_sig (Tensor*, Tensor*) -> Tensor*
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_device_tensor_dot(a: *mut c_void, b: *mut c_void) -> *mut c_void {
+    dispatch(|d| d.tensor_dot(a, b))
+}
 /// @ffi_sig (Tensor*) -> Tensor*
 /// 入力テンソルと同じ形状のゼロテンソルを生成
 #[unsafe(no_mangle)]

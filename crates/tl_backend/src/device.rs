@@ -76,6 +76,9 @@ pub trait IDevice {
     fn tensor_scaled_dot_product_attention(&self, q: *mut c_void, k: *mut c_void, v: *mut c_void, mask: *mut c_void) -> BackendResult<*mut c_void>;
     fn tensor_top_k_sample(&self, logits: *mut c_void, k: i64) -> BackendResult<*mut c_void>;
     fn tensor_top_p_sample(&self, logits: *mut c_void, p: f64) -> BackendResult<*mut c_void>;
+    fn tensor_temperature_scale(&self, logits: *mut c_void, temperature: f64) -> BackendResult<*mut c_void>;
+    fn tensor_repetition_penalty(&self, logits: *mut c_void, tokens: *mut c_void, penalty: f64) -> BackendResult<*mut c_void>;
+    fn tensor_dot(&self, a: *mut c_void, b: *mut c_void) -> BackendResult<*mut c_void>;
 
     // ========== インプレース操作 ==========
     fn tensor_fill_(&self, t: *mut c_void, value: f32) -> BackendResult<()>;

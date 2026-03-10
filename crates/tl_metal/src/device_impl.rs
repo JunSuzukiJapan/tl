@@ -448,6 +448,32 @@ impl IDevice for MetalDeviceImpl {
         Ok(ffi_ops::make_tensor(MetalTensor::from_slice(&[idx as f32], &[1], crate::DType::F32)) as *mut c_void)
     }
 
+    fn tensor_temperature_scale(&self, logits: *mut c_void, temperature: f64) -> BackendResult<*mut c_void> {
+        let tl = unsafe { &*t(logits) };
+        let data = tl.to_vec::<f32>();
+        let temp = temperature as f32;
+        let result: Vec<f32> = data.iter().map(|&v| v / temp).collect();
+        Ok(ffi_ops::make_tensor(MetalTensor::from_slice(&result, tl.shape(), crate::DType::F32)) as *mut c_void)
+    }
+
+    fn tensor_repetition_penalty(&self, logits: *mut c_void, tokens: *mut c_void, penalty: f64) -> BackendResult<*mut c_void> {
+        let (tl, tt) = unsafe { (&*t(logits), &*t(tokens)) };
+        let mut data = tl.to_vec::<f32>();
+        let tok = tt.to_vec::<f32>();
+        let p = penalty as f32;
+        for &idx in &tok {
+            let i = idx as usize;
+            if i < data.len() { data[i] = if data[i] > 0.0 { data[i] / p } else { data[i] * p }; }
+        }
+        Ok(ffi_ops::make_tensor(MetalTensor::from_slice(&data, tl.shape(), crate::DType::F32)) as *mut c_void)
+    }
+
+    fn tensor_dot(&self, a: *mut c_void, b: *mut c_void) -> BackendResult<*mut c_void> {
+        let (ta, tb) = unsafe { (&*t(a), &*t(b)) };
+        let dot: f32 = ta.to_vec::<f32>().iter().zip(tb.to_vec::<f32>().iter()).map(|(&x, &y)| x * y).sum();
+        Ok(ffi_ops::make_tensor(MetalTensor::from_slice(&[dot], &[1], crate::DType::F32)) as *mut c_void)
+    }
+
     fn tensor_fill_(&self, tensor: *mut c_void, value: f32) -> BackendResult<()> {
         let tt = unsafe { &*t(tensor) };
         let numel: usize = tt.shape().iter().product();

@@ -588,6 +588,42 @@ impl IDevice for CpuDevice {
         Ok(std::sync::Arc::into_raw(arc) as *mut c_void)
     }
 
+    fn tensor_temperature_scale(&self, logits: *mut c_void, temperature: f64) -> BackendResult<*mut c_void> {
+        let tl = unsafe { &*t(logits) };
+        let data = tl.to_vec::<f32>();
+        let t = temperature as f32;
+        let result: Vec<f32> = data.iter().map(|&v| v / t).collect();
+        let out = crate::tensor::CpuTensor::from_slice(&result, tl.shape(), crate::DType::F32);
+        let arc = std::sync::Arc::new(std::cell::UnsafeCell::new(out));
+        Ok(std::sync::Arc::into_raw(arc) as *mut c_void)
+    }
+
+    fn tensor_repetition_penalty(&self, logits: *mut c_void, tokens: *mut c_void, penalty: f64) -> BackendResult<*mut c_void> {
+        let (tl, tt) = unsafe { (&*t(logits), &*t(tokens)) };
+        let mut data = tl.to_vec::<f32>();
+        let tok = tt.to_vec::<f32>();
+        let p = penalty as f32;
+        for &idx in &tok {
+            let i = idx as usize;
+            if i < data.len() {
+                data[i] = if data[i] > 0.0 { data[i] / p } else { data[i] * p };
+            }
+        }
+        let out = crate::tensor::CpuTensor::from_slice(&data, tl.shape(), crate::DType::F32);
+        let arc = std::sync::Arc::new(std::cell::UnsafeCell::new(out));
+        Ok(std::sync::Arc::into_raw(arc) as *mut c_void)
+    }
+
+    fn tensor_dot(&self, a: *mut c_void, b: *mut c_void) -> BackendResult<*mut c_void> {
+        let (ta, tb) = unsafe { (&*t(a), &*t(b)) };
+        let da = ta.to_vec::<f32>();
+        let db = tb.to_vec::<f32>();
+        let dot: f32 = da.iter().zip(db.iter()).map(|(&x, &y)| x * y).sum();
+        let out = crate::tensor::CpuTensor::from_slice(&[dot], &[1], crate::DType::F32);
+        let arc = std::sync::Arc::new(std::cell::UnsafeCell::new(out));
+        Ok(std::sync::Arc::into_raw(arc) as *mut c_void)
+    }
+
     fn tensor_fill_(&self, tensor: *mut c_void, value: f32) -> BackendResult<()> {
         let tt = unsafe { &*t(tensor) };
         let numel: usize = tt.shape().iter().product();

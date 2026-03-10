@@ -200,6 +200,15 @@ pub fn register_tensor_types(manager: &mut TypeManager) {
     tensor.register_evaluated_instance_method("top_p_sample", compile_tensor_top_p_sample, vec![Type::F64], any_tensor.clone());
     tensor.register_evaluated_instance_method("top_p_sample", compile_tensor_top_p_sample, vec![Type::F32], any_tensor.clone());
 
+    // temperature_scale(temperature)
+    tensor.register_evaluated_instance_method("temperature_scale", compile_tensor_temperature_scale, vec![Type::F64], any_tensor.clone());
+    tensor.register_evaluated_instance_method("temperature_scale", compile_tensor_temperature_scale, vec![Type::F32], any_tensor.clone());
+    // repetition_penalty(tokens, penalty)
+    tensor.register_evaluated_instance_method("repetition_penalty", compile_tensor_repetition_penalty, vec![any_tensor.clone(), Type::F64], any_tensor.clone());
+    tensor.register_evaluated_instance_method("repetition_penalty", compile_tensor_repetition_penalty, vec![any_tensor.clone(), Type::F32], any_tensor.clone());
+    // dot(other)
+    tensor.register_evaluated_instance_method("dot", compile_tensor_dot, vec![any_tensor.clone()], any_tensor.clone());
+
     tensor.register_evaluated_instance_method("clone", compile_tensor_clone, vec![], any_tensor.clone());
     tensor.register_evaluated_instance_method("shallow_clone", compile_tensor_shallow_clone, vec![], any_tensor.clone());
     tensor.register_evaluated_instance_method("grad", compile_tensor_grad, vec![], any_tensor.clone());
@@ -2176,5 +2185,56 @@ fn compile_tensor_top_p_sample<'ctx>(
     let call = codegen.builder.build_call(f, &[obj.into(), p_val.into()], "topp_res")
         .map_err(|e| e.to_string())?;
     let v = codegen.check_tensor_result(call, "topp_error")?;
+    Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
+}
+
+fn compile_tensor_temperature_scale<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj: BasicValueEnum<'ctx>,
+    _obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() < 1 { return Err("temperature_scale requires (temperature)".into()); }
+    let f64_type = codegen.context.f64_type();
+    let temp = match args[0].1 {
+        Type::F64 => args[0].0.into_float_value(),
+        Type::F32 => codegen.builder.build_float_ext(args[0].0.into_float_value(), f64_type, "t_ext").map_err(|e| e.to_string())?,
+        _ => return Err("temperature must be float".into()),
+    };
+    let f = codegen.module.get_function("tl_tensor_temperature_scale").ok_or("tl_tensor_temperature_scale not found")?;
+    let call = codegen.builder.build_call(f, &[obj.into(), temp.into()], "tscale_res").map_err(|e| e.to_string())?;
+    let v = codegen.check_tensor_result(call, "tscale_error")?;
+    Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
+}
+
+fn compile_tensor_repetition_penalty<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj: BasicValueEnum<'ctx>,
+    _obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() < 2 { return Err("repetition_penalty requires (tokens, penalty)".into()); }
+    let f64_type = codegen.context.f64_type();
+    let penalty = match args[1].1 {
+        Type::F64 => args[1].0.into_float_value(),
+        Type::F32 => codegen.builder.build_float_ext(args[1].0.into_float_value(), f64_type, "p_ext").map_err(|e| e.to_string())?,
+        _ => return Err("penalty must be float".into()),
+    };
+    let f = codegen.module.get_function("tl_tensor_repetition_penalty").ok_or("tl_tensor_repetition_penalty not found")?;
+    let call = codegen.builder.build_call(f, &[obj.into(), args[0].0.into(), penalty.into()], "rpen_res").map_err(|e| e.to_string())?;
+    let v = codegen.check_tensor_result(call, "rpen_error")?;
+    Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
+}
+
+fn compile_tensor_dot<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj: BasicValueEnum<'ctx>,
+    _obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() < 1 { return Err("dot requires (other)".into()); }
+    let f = codegen.module.get_function("tl_tensor_dot").ok_or("tl_tensor_dot not found")?;
+    let call = codegen.builder.build_call(f, &[obj.into(), args[0].0.into()], "dot_res").map_err(|e| e.to_string())?;
+    let v = codegen.check_tensor_result(call, "dot_error")?;
     Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
 }

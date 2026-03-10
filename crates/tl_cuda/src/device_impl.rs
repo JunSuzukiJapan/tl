@@ -127,6 +127,9 @@ impl IDevice for CudaDeviceImpl {
     fn tensor_scaled_dot_product_attention(&self, _q: *mut c_void, _k: *mut c_void, _v: *mut c_void, _m: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!("CUDA sdpa") }
     fn tensor_top_k_sample(&self, _l: *mut c_void, _k: i64) -> BackendResult<*mut c_void> { unimplemented!("CUDA top_k") }
     fn tensor_top_p_sample(&self, _l: *mut c_void, _p: f64) -> BackendResult<*mut c_void> { unimplemented!("CUDA top_p") }
+    fn tensor_temperature_scale(&self, _l: *mut c_void, _t: f64) -> BackendResult<*mut c_void> { unimplemented!("CUDA temp_scale") }
+    fn tensor_repetition_penalty(&self, _l: *mut c_void, _t: *mut c_void, _p: f64) -> BackendResult<*mut c_void> { unimplemented!("CUDA rep_penalty") }
+    fn tensor_dot(&self, _a: *mut c_void, _b: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!("CUDA dot") }
     fn tensor_fill_(&self, _t: *mut c_void, _value: f32) -> BackendResult<()> { unimplemented!("CUDA fill_") }
     fn tensor_broadcast_to(&self, _t: *mut c_void, _shape: &[usize]) -> BackendResult<*mut c_void> { unimplemented!("CUDA broadcast_to") }
     fn tensor_stack(&self, _a: *mut c_void, _b: *mut c_void, _dim: i64) -> BackendResult<*mut c_void> { unimplemented!("CUDA stack") }

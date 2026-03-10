@@ -355,11 +355,11 @@ DOMAIN_FEATURES_ANALYSIS.md の分析結果に基づく実装計画。
   - [ ] tl_metal: tiled attention kernel
   - [ ] tl_cuda: cutlass/flash-attn integration
 
-- [ ] `temperature_scale(logits, t)` — 温度スケーリング
-  - [ ] テンソル演算のラッパー (logits / temperature)
+- [x] `temperature_scale(logits, t)` — 温度スケーリング
+  - [x] CPU/Metal: logits / temperature
 
-- [ ] `repetition_penalty(logits, tokens, penalty)` — 繰り返しペナルティ
-  - [ ] 全バックエンド実装
+- [x] `repetition_penalty(logits, tokens, penalty)` — 繰り返しペナルティ
+  - [x] CPU/Metal: 正の値は/p、負の値は*p
 
 - [ ] `KVCache::len()` — キャッシュ長取得
   - [ ] ランタイム実装
@@ -370,8 +370,8 @@ DOMAIN_FEATURES_ANALYSIS.md の分析結果に基づく実装計画。
 
 ## フェーズ 8: 線形代数（低〜中優先度）
 
-- [ ] `dot(other)` — ベクトル内積
-  - [ ] 全バックエンド: 1D matmul のラッパー
+- [x] `dot(other)` — ベクトル内積
+  - [x] CPU/Metal: sum(a*b)
 
 - [ ] `inverse()` — 逆行列
   - [ ] CPU: LAPACK / 手動実装
