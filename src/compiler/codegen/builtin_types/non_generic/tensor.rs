@@ -182,6 +182,11 @@ pub fn register_tensor_types(manager: &mut TypeManager) {
     tensor.register_evaluated_instance_method("pad", compile_tensor_pad, vec![Type::I64, Type::I64, Type::F64], any_tensor.clone());
     tensor.register_evaluated_instance_method("pad", compile_tensor_pad, vec![Type::I64, Type::I64], any_tensor.clone());
 
+    // conv1d(weight, bias, stride, padding)
+    tensor.register_evaluated_instance_method("conv1d", compile_tensor_conv1d, vec![any_tensor.clone(), any_tensor.clone(), Type::I64, Type::I64], any_tensor.clone());
+    // kl_div_loss
+    tensor.register_evaluated_static_method("kl_div_loss", compile_tensor_kl_div_loss, vec![any_tensor.clone(), any_tensor.clone()], any_tensor.clone());
+
     tensor.register_evaluated_instance_method("clone", compile_tensor_clone, vec![], any_tensor.clone());
     tensor.register_evaluated_instance_method("shallow_clone", compile_tensor_shallow_clone, vec![], any_tensor.clone());
     tensor.register_evaluated_instance_method("grad", compile_tensor_grad, vec![], any_tensor.clone());
@@ -2053,5 +2058,31 @@ fn compile_tensor_pad<'ctx>(
     let call = codegen.builder.build_call(f, &[obj.into(), args[0].0.into(), args[1].0.into(), value.into()], "pad_res")
         .map_err(|e| e.to_string())?;
     let v = codegen.check_tensor_result(call, "pad_error")?;
+    Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
+}
+
+fn compile_tensor_conv1d<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj: BasicValueEnum<'ctx>,
+    _obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() < 4 { return Err("conv1d requires (weight, bias, stride, padding)".into()); }
+    let f = codegen.module.get_function("tl_tensor_conv1d").ok_or("tl_tensor_conv1d not found")?;
+    let call = codegen.builder.build_call(f, &[obj.into(), args[0].0.into(), args[1].0.into(), args[2].0.into(), args[3].0.into()], "conv1d_res")
+        .map_err(|e| e.to_string())?;
+    let v = codegen.check_tensor_result(call, "conv1d_error")?;
+    Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
+}
+
+fn compile_tensor_kl_div_loss<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() < 2 { return Err("kl_div_loss requires (pred, target)".into()); }
+    let f = codegen.module.get_function("tl_tensor_kl_div_loss").ok_or("tl_tensor_kl_div_loss not found")?;
+    let call = codegen.builder.build_call(f, &[args[0].0.into(), args[1].0.into()], "kl_res").map_err(|e| e.to_string())?;
+    let v = codegen.check_tensor_result(call, "kl_error")?;
     Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
 }

@@ -69,6 +69,8 @@ pub trait IDevice {
     fn tensor_pad(&self, input: *mut c_void, pad_left: i64, pad_right: i64, value: f32) -> BackendResult<*mut c_void>;
     fn tensor_instance_norm(&self, input: *mut c_void, weight: *mut c_void, bias: *mut c_void, eps: f64) -> BackendResult<*mut c_void>;
     fn tensor_dropout2d(&self, input: *mut c_void, p: f64, training: bool) -> BackendResult<*mut c_void>;
+    fn tensor_conv1d(&self, input: *mut c_void, weight: *mut c_void, bias: *mut c_void, stride: i64, padding: i64) -> BackendResult<*mut c_void>;
+    fn tensor_kl_div_loss(&self, pred: *mut c_void, target: *mut c_void) -> BackendResult<*mut c_void>;
 
     // ========== インプレース操作 ==========
     fn tensor_fill_(&self, t: *mut c_void, value: f32) -> BackendResult<()>;

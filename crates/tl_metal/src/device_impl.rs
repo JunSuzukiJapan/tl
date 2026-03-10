@@ -294,6 +294,35 @@ impl IDevice for MetalDeviceImpl {
         Ok(ffi_ops::make_tensor(MetalTensor::from_slice(&ti.to_vec::<f32>(), ti.shape(), crate::DType::F32)) as *mut c_void)
     }
 
+    fn tensor_conv1d(&self, input: *mut c_void, weight: *mut c_void, bias: *mut c_void, stride: i64, padding: i64) -> BackendResult<*mut c_void> {
+        let (ti, tw) = unsafe { (&*t(input), &*t(weight)) };
+        let inp = ti.to_vec::<f32>(); let w = tw.to_vec::<f32>();
+        let ishape = ti.shape().to_vec(); let wshape = tw.shape().to_vec();
+        let (batch, in_ch, in_len) = (ishape[0], ishape[1], ishape[2]);
+        let (out_ch, _wch, k_len) = (wshape[0], wshape[1], wshape[2]);
+        let (st, pad) = (stride as usize, padding as usize);
+        let out_len = (in_len + 2*pad - k_len) / st + 1;
+        let mut result = vec![0.0f32; batch*out_ch*out_len];
+        for b in 0..batch { for oc in 0..out_ch { for ol in 0..out_len {
+            let mut sum = 0.0f32;
+            for ic in 0..in_ch { for ki in 0..k_len {
+                let pos = ol*st+ki;
+                if pos >= pad && pos < in_len+pad { sum += inp[b*in_ch*in_len+ic*in_len+(pos-pad)] * w[oc*in_ch*k_len+ic*k_len+ki]; }
+            }}
+            if !bias.is_null() { sum += unsafe { &*t(bias) }.to_vec::<f32>()[oc]; }
+            result[b*out_ch*out_len+oc*out_len+ol] = sum;
+        }}}
+        Ok(ffi_ops::make_tensor(MetalTensor::from_slice(&result, &[batch,out_ch,out_len], crate::DType::F32)) as *mut c_void)
+    }
+
+    fn tensor_kl_div_loss(&self, pred: *mut c_void, target: *mut c_void) -> BackendResult<*mut c_void> {
+        let (tp, tt) = unsafe { (&*t(pred), &*t(target)) };
+        let (p, q) = (tp.to_vec::<f32>(), tt.to_vec::<f32>());
+        let eps = 1e-7f32;
+        let sum: f32 = q.iter().zip(p.iter()).map(|(&qi, &pi)| if qi > eps { qi * ((qi+eps)/(pi+eps)).ln() } else { 0.0 }).sum();
+        Ok(ffi_ops::make_tensor(MetalTensor::from_slice(&[sum / q.len() as f32], &[1], crate::DType::F32)) as *mut c_void)
+    }
+
     fn tensor_fill_(&self, tensor: *mut c_void, value: f32) -> BackendResult<()> {
         let tt = unsafe { &*t(tensor) };
         let numel: usize = tt.shape().iter().product();

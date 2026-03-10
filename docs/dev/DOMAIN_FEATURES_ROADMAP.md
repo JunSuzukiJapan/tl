@@ -203,8 +203,8 @@ DOMAIN_FEATURES_ANALYSIS.md の分析結果に基づく実装計画。
 - [x] `adaptive_avg_pool2d(output_size)` — 適応的プーリング
   - [x] CPU/Metal 実装、CUDA stub
 
-- [ ] `conv1d(weight, bias?, padding, stride)` — 1D畳み込み
-  - [ ] 全バックエンド実装
+- [x] `conv1d(weight, bias, stride, padding)` — 1D畳み込み
+  - [x] CPU/Metal 実装、CUDA stub
 
 - [ ] `conv_transpose2d(weight, bias?, padding, stride, output_padding)` — 転置畳み込み
   - [ ] 全バックエンド実装
@@ -264,7 +264,8 @@ DOMAIN_FEATURES_ANALYSIS.md の分析結果に基づく実装計画。
   - [x] CPU/Metal: -mean(pred*target)
   - [x] FFI + TypeManager登録 + compile関数
 
-- [ ] `kl_div_loss(pred, target)` — KLダイバージェンス（低優先度）
+- [x] `kl_div_loss(pred, target)` — KLダイバージェンス
+  - [x] CPU/Metal: mean(q*log(q/p))
 
 ### 5.3 学習ユーティリティ（高優先度）
 
