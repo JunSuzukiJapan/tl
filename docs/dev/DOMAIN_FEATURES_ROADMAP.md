@@ -245,8 +245,10 @@ DOMAIN_FEATURES_ANALYSIS.md の分析結果に基づく実装計画。
   - [x] FFI + TypeManager登録
   - [x] テスト: mse_loss([3,3,3,3],[1,1,1,1]) = [4.0]
 
-- [ ] `bce_loss(pred, target)` — 二値クロスエントロピー
-  - [ ] 全バックエンド実装
+- [x] `bce_loss(pred, target)` — 二値クロスエントロピー
+  - [x] CPU/Metal: -mean(y*log(p)+(1-y)*log(1-p))
+  - [x] FFI + TypeManager登録
+  - [x] テスト: bce_loss(0.9,1.0)=[0.1054]
 
 - [x] `l1_loss(pred, target)` — L1損失
   - [x] CPU/Metal: mean(|pred-target|)

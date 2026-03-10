@@ -59,6 +59,7 @@ pub trait IDevice {
     // ========== 損失関数 ==========
     fn tensor_mse_loss(&self, pred: *mut c_void, target: *mut c_void) -> BackendResult<*mut c_void>;
     fn tensor_l1_loss(&self, pred: *mut c_void, target: *mut c_void) -> BackendResult<*mut c_void>;
+    fn tensor_bce_loss(&self, pred: *mut c_void, target: *mut c_void) -> BackendResult<*mut c_void>;
 
     // ========== インプレース操作 ==========
     fn tensor_fill_(&self, t: *mut c_void, value: f32) -> BackendResult<()>;

@@ -110,6 +110,7 @@ impl IDevice for CudaDeviceImpl {
     fn tensor_mish(&self, _t: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!("CUDA mish") }
     fn tensor_mse_loss(&self, _a: *mut c_void, _b: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!("CUDA mse_loss") }
     fn tensor_l1_loss(&self, _a: *mut c_void, _b: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!("CUDA l1_loss") }
+    fn tensor_bce_loss(&self, _a: *mut c_void, _b: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!("CUDA bce_loss") }
     fn tensor_fill_(&self, _t: *mut c_void, _value: f32) -> BackendResult<()> { unimplemented!("CUDA fill_") }
     fn tensor_broadcast_to(&self, _t: *mut c_void, _shape: &[usize]) -> BackendResult<*mut c_void> { unimplemented!("CUDA broadcast_to") }
     fn tensor_stack(&self, _a: *mut c_void, _b: *mut c_void, _dim: i64) -> BackendResult<*mut c_void> { unimplemented!("CUDA stack") }

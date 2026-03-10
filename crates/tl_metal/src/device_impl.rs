@@ -174,6 +174,18 @@ impl IDevice for MetalDeviceImpl {
         Ok(ffi_ops::make_tensor(result) as *mut c_void)
     }
 
+    fn tensor_bce_loss(&self, pred: *mut c_void, target: *mut c_void) -> BackendResult<*mut c_void> {
+        let (tp, tt) = unsafe { (&*t(pred), &*t(target)) };
+        let p = tp.to_vec::<f32>();
+        let y = tt.to_vec::<f32>();
+        let eps = 1e-7f32;
+        let sum: f32 = p.iter().zip(y.iter())
+            .map(|(&pi, &yi)| -(yi * (pi + eps).ln() + (1.0 - yi) * (1.0 - pi + eps).ln()))
+            .sum();
+        let loss = sum / p.len() as f32;
+        Ok(ffi_ops::make_tensor(MetalTensor::from_slice(&[loss], &[1], crate::DType::F32)) as *mut c_void)
+    }
+
     fn tensor_fill_(&self, tensor: *mut c_void, value: f32) -> BackendResult<()> {
         let tt = unsafe { &*t(tensor) };
         let numel: usize = tt.shape().iter().product();

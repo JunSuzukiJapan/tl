@@ -942,6 +942,7 @@ pub fn declare_runtime_functions<'ctx>(
     let loss_binary_type = void_ptr.fn_type(&[void_ptr.into(), void_ptr.into()], false);
     add_fn("tl_tensor_mse_loss", loss_binary_type);
     add_fn("tl_tensor_l1_loss", loss_binary_type);
+    add_fn("tl_tensor_bce_loss", loss_binary_type);
 
     // VarBuilder
     // tl_varbuilder_get(name: *const c_char, rank: usize, shape: *const usize) -> *mut OpaqueTensor
@@ -1704,6 +1705,7 @@ pub fn declare_runtime_functions<'ctx>(
     // [IDevice] loss functions → device_ffi
     if let Some(f) = module.get_function("tl_tensor_mse_loss") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_mse_loss as *const () as usize); }
     if let Some(f) = module.get_function("tl_tensor_l1_loss") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_l1_loss as *const () as usize); }
+    if let Some(f) = module.get_function("tl_tensor_bce_loss") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_bce_loss as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
     if let Some(f) = module.get_function("tl_tensor_sub_assign") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_sub_assign as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
