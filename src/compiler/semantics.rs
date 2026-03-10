@@ -685,6 +685,22 @@ impl SemanticAnalyzer {
                     "string" | "String" => return Type::String("String".to_string()),
                     "char" | "Char" => return Type::Char("Char".to_string()),
                     "void" => return Type::Void,
+                    "Tensor" => {
+                        if args.is_empty() {
+                            return Type::Tensor(Box::new(Type::F32), 0);
+                        } else {
+                            let resolved_args: Vec<Type> = args.iter().map(|a| self.resolve_user_type(a)).collect();
+                            return Type::Tensor(Box::new(resolved_args[0].clone()), 0);
+                        }
+                    }
+                    "GradTensor" => {
+                        if args.is_empty() {
+                            return Type::GradTensor(Box::new(Type::F32), 0);
+                        } else {
+                            let resolved_args: Vec<Type> = args.iter().map(|a| self.resolve_user_type(a)).collect();
+                            return Type::GradTensor(Box::new(resolved_args[0].clone()), 0);
+                        }
+                    }
                     _ => {}
                  }
             }
@@ -740,6 +756,15 @@ impl SemanticAnalyzer {
                         eprintln!("Warning: Invalid tensor element type: {:?}. Only numeric primitives and bool are allowed as tensor elements.", resolved_inner);
                     }
                     Type::TensorShaped(Box::new(resolved_inner), dims.clone())
+                }
+
+
+                Type::GradTensor(inner, r) => {
+                    let resolved_inner = self.resolve_user_type(inner);
+                    if !is_valid_tensor_element(&resolved_inner) {
+                        eprintln!("Warning: Invalid GradTensor element type: {:?}. Only numeric primitives and bool are allowed.", resolved_inner);
+                    }
+                    Type::GradTensor(Box::new(resolved_inner), *r)
                 }
 
 
@@ -5400,6 +5425,12 @@ impl SemanticAnalyzer {
             ExprKind::As(expr, target_type) => {
                 let source_type = self.check_expr(expr)?;
 
+                // Resolve the target type (e.g., Path(["GradTensor"]) -> GradTensor(F32, 0))
+                let resolved_target = self.resolve_user_type(target_type);
+                if *target_type != resolved_target {
+                    *target_type = resolved_target;
+                }
+
                 // Allow trivial cast
                 if source_type == *target_type {
                     return Ok(target_type.clone());
@@ -5439,6 +5470,20 @@ impl SemanticAnalyzer {
                     // Allow casting u8 struct (used in parser) to integer types for printing/manipulation
                     (Type::Struct(name, _), Type::I64) if name == "u8" => Ok(Type::I64),
                     (Type::Struct(name, _), Type::I32) if name == "u8" => Ok(Type::I32),
+                    // Tensor <-> GradTensor cast
+                    (Type::Tensor(inner, rank), Type::GradTensor(_, _)) => {
+                        Ok(Type::GradTensor(inner.clone(), *rank))
+                    }
+                    (Type::GradTensor(inner, rank), Type::Tensor(_, _)) => {
+                        Ok(Type::Tensor(inner.clone(), *rank))
+                    }
+                    // GradTensor rank-0 shorthand: e.g. `tensor as GradTensor`
+                    (Type::Tensor(inner, rank), Type::Struct(name, _)) if name == "GradTensor" => {
+                        Ok(Type::GradTensor(inner.clone(), *rank))
+                    }
+                    (Type::GradTensor(inner, rank), Type::Struct(name, _)) if name == "Tensor" => {
+                        Ok(Type::Tensor(inner.clone(), *rank))
+                    }
                     _ => self.err(
                         SemanticError::TypeMismatch {
                             expected: target_type.clone(),
@@ -5499,7 +5544,8 @@ impl SemanticAnalyzer {
 
                 // Re-derive type_ty after potential update (to ensure we use the one with Undefineds)
                 let type_ty = type_node.clone();
-                let type_name = type_ty.get_base_name();
+                let is_grad_tensor_static = type_ty.get_base_name() == "GradTensor";
+                let type_name = if is_grad_tensor_static { "Tensor".to_string() } else { type_ty.get_base_name() };
 
 
 
@@ -5592,7 +5638,15 @@ impl SemanticAnalyzer {
                                   return self.err(SemanticError::TypeMismatch { expected: expected.clone(), found: found.clone() }, Some(args[i].span.clone()));
                              }
                          }
-                         return Ok(ret_ty.clone());
+                         let final_ret = if is_grad_tensor_static {
+                             match &ret_ty {
+                                 Type::Tensor(inner, rank) => Type::GradTensor(inner.clone(), *rank),
+                                 _ => ret_ty.clone(),
+                             }
+                         } else {
+                             ret_ty.clone()
+                         };
+                         return Ok(final_ret);
                      }
 
                 // NOTE: Removed hardcoded Tensor filter - check_builtin_static_method handles all static methods
@@ -5771,6 +5825,7 @@ impl SemanticAnalyzer {
                 let type_name = match &obj_type {
                     Type::Struct(name, _) => name.clone(),
                     Type::Enum(name, _) => name.clone(),
+                    Type::GradTensor(_, _) => "Tensor".to_string(),
                     _ => obj_type.get_base_name(),
                 };
 

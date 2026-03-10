@@ -490,7 +490,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             Type::Usize => Ok(self.context.i64_type().into()), // usize as i64
             Type::Void => panic!("Void type encountered in get_llvm_type"),
             
-            Type::Tensor(_, _) | Type::TensorShaped(_, _) => {
+            Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::GradTensor(_, _) => {
                 Ok(self.context.ptr_type(AddressSpace::default()).into())
             }
             

@@ -117,6 +117,9 @@ pub enum Type {
     // Tensor type: Tensor<Type, Rank>
     Tensor(Box<Type>, usize),
 
+    // GradTensor type: GradTensor<Type, Rank> (with autograd tracking)
+    GradTensor(Box<Type>, usize),
+
     // Tensor with shape information for inference
     TensorShaped(Box<Type>, Vec<Dim>),
 
@@ -187,6 +190,7 @@ impl Type {
             Type::Usize => "Usize".to_string(),
             Type::Entity => "Entity".to_string(),
             Type::Tensor(_, _) => "Tensor".to_string(),
+            Type::GradTensor(_, _) => "GradTensor".to_string(),
             Type::TensorShaped(_, _) => "Tensor".to_string(),
             Type::Struct(n, _) => n.clone(),
             Type::Enum(n, _) => n.clone(),

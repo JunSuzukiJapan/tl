@@ -2368,6 +2368,34 @@ impl<'ctx> CodeGenerator<'ctx> {
                          let i = self.builder.build_float_to_unsigned_int(f, self.context.i8_type(), "cast_u8").map_err(|e| e.to_string())?;
                          Ok((i.into(), Type::U8))
                     }
+                    // Tensor -> GradTensor: enable_grad and return same ptr as GradTensor type
+                    (Type::Tensor(inner, rank), Type::GradTensor(_, _)) => {
+                        let enable_fn = self
+                            .module
+                            .get_function("tl_tensor_enable_grad")
+                            .ok_or("tl_tensor_enable_grad not found")?;
+                        self.builder
+                            .build_call(enable_fn, &[val.into()], "enable_grad")
+                            .map_err(|e| e.to_string())?;
+                        Ok((val, Type::GradTensor(inner.clone(), *rank)))
+                    }
+                    // GradTensor -> Tensor: detach (drops autograd, returns new ptr)
+                    (Type::GradTensor(inner, rank), Type::Tensor(_, _)) => {
+                        let detach_fn = self
+                            .module
+                            .get_function("tl_tensor_detach")
+                            .ok_or("tl_tensor_detach not found")?;
+                        let false_val = self.context.bool_type().const_int(0, false);
+                        let call = self
+                            .builder
+                            .build_call(detach_fn, &[val.into(), false_val.into()], "detach")
+                            .map_err(|e| e.to_string())?;
+                        let res = match call.try_as_basic_value() {
+                            ValueKind::Basic(v) => v,
+                            _ => return Err("Invalid return from detach".into()),
+                        };
+                        Ok((res, Type::Tensor(inner.clone(), *rank)))
+                    }
                     (Type::Tensor(_, _), Type::Tensor(inner_dst, _)) => match inner_dst.as_ref() {
                         Type::F32 => {
                             let cast_fn = self
@@ -2922,6 +2950,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     Type::String(_) => "String",
                     // Add other types as needed or implement a helper
                     Type::Tensor(_, _) => "Tensor",
+                    Type::GradTensor(_, _) => "GradTensor",
                     Type::Path(segments, _) => segments.last().map(|s| s.as_str()).unwrap_or("Unknown"),
                     _ => return Err(format!("Cannot call static method on type {:?}", type_ty)),
                 };
@@ -4370,7 +4399,27 @@ impl<'ctx> CodeGenerator<'ctx> {
         target_type: &Type,
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
         // Compatibility aliases for existing logic
-        let type_name = struct_name;
+        let is_grad_tensor_call = struct_name == "GradTensor";
+        let type_name = if is_grad_tensor_call { "Tensor" } else { struct_name };
+
+        // GradTensor factory: delegate to Tensor, then enable_grad and retype
+        if is_grad_tensor_call {
+            let (val, ty) = self.compile_static_method_call("Tensor", method, args, target_type)?;
+            // enable_grad on the newly created tensor
+            let enable_fn = self
+                .module
+                .get_function("tl_tensor_enable_grad")
+                .ok_or("tl_tensor_enable_grad not found")?;
+            self.builder
+                .build_call(enable_fn, &[val.into()], "enable_grad")
+                .map_err(|e| e.to_string())?;
+            // Convert Tensor type to GradTensor type
+            let grad_ty = match ty {
+                Type::Tensor(inner, rank) => Type::GradTensor(inner, rank),
+                other => other,
+            };
+            return Ok((val, grad_ty));
+        }
 
         // 0. Check if this is an Enum Variant initialization (priority check)
         //    This handles cases like Entry_i64_i64::Empty where the type_name is
@@ -6028,6 +6077,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             Type::Struct(n, _) => Some(n.clone()),
             Type::Enum(n, _) => Some(n.clone()),
             Type::Tensor(_, _) => Some("Tensor".to_string()),
+            Type::GradTensor(_, _) => Some("Tensor".to_string()),
             Type::String(_) => Some("String".to_string()),
             _ => None,
         };
@@ -6075,6 +6125,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             Type::Struct(name, _) => name.clone(),
             Type::Enum(name, _) => name.clone(),
             Type::Tensor(_, _) => "Tensor".to_string(),
+            Type::GradTensor(_, _) => "Tensor".to_string(),
             Type::F32 => "F32".to_string(),
             Type::F64 => "F64".to_string(),
             Type::I64 => "I64".to_string(),
