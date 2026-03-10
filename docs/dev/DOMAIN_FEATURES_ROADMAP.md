@@ -257,8 +257,9 @@ DOMAIN_FEATURES_ANALYSIS.md の分析結果に基づく実装計画。
   - [x] FFI + TypeManager登録
   - [x] テスト: l1_loss([3,3,3,3],[1,1,1,1]) = [2.0]
 
-- [ ] `nll_loss(pred, target)` — 負の対数尤度
-  - [ ] 全バックエンド実装
+- [x] `nll_loss(pred, target)` — 負の対数尤度
+  - [x] CPU/Metal: -mean(pred*target)
+  - [x] FFI + TypeManager登録 + compile関数
 
 - [ ] `kl_div_loss(pred, target)` — KLダイバージェンス（低優先度）
 

@@ -60,6 +60,7 @@ pub trait IDevice {
     fn tensor_mse_loss(&self, pred: *mut c_void, target: *mut c_void) -> BackendResult<*mut c_void>;
     fn tensor_l1_loss(&self, pred: *mut c_void, target: *mut c_void) -> BackendResult<*mut c_void>;
     fn tensor_bce_loss(&self, pred: *mut c_void, target: *mut c_void) -> BackendResult<*mut c_void>;
+    fn tensor_nll_loss(&self, pred: *mut c_void, target: *mut c_void) -> BackendResult<*mut c_void>;
     fn tensor_linear(&self, input: *mut c_void, weight: *mut c_void, bias: *mut c_void) -> BackendResult<*mut c_void>;
     fn tensor_hardswish(&self, t: *mut c_void) -> BackendResult<*mut c_void>;
     fn tensor_hardsigmoid(&self, t: *mut c_void) -> BackendResult<*mut c_void>;

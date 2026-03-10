@@ -364,6 +364,11 @@ pub extern "C" fn tl_device_tensor_l1_loss(a: *mut c_void, b: *mut c_void) -> *m
 pub extern "C" fn tl_device_tensor_bce_loss(a: *mut c_void, b: *mut c_void) -> *mut c_void {
     dispatch(|d| d.tensor_bce_loss(a, b))
 }
+/// @ffi_sig (Tensor*, Tensor*) -> Tensor*
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_device_tensor_nll_loss(a: *mut c_void, b: *mut c_void) -> *mut c_void {
+    dispatch(|d| d.tensor_nll_loss(a, b))
+}
 /// @ffi_sig (Tensor*, Tensor*, Tensor*) -> Tensor*
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_device_tensor_linear(input: *mut c_void, weight: *mut c_void, bias: *mut c_void) -> *mut c_void {

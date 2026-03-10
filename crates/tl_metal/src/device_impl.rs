@@ -186,6 +186,15 @@ impl IDevice for MetalDeviceImpl {
         Ok(ffi_ops::make_tensor(MetalTensor::from_slice(&[loss], &[1], crate::DType::F32)) as *mut c_void)
     }
 
+    fn tensor_nll_loss(&self, pred: *mut c_void, target: *mut c_void) -> BackendResult<*mut c_void> {
+        let (tp, tt) = unsafe { (&*t(pred), &*t(target)) };
+        let p = tp.to_vec::<f32>();
+        let y = tt.to_vec::<f32>();
+        let sum: f32 = p.iter().zip(y.iter()).map(|(&pi, &yi)| -pi * yi).sum();
+        let loss = sum / p.len() as f32;
+        Ok(ffi_ops::make_tensor(MetalTensor::from_slice(&[loss], &[1], crate::DType::F32)) as *mut c_void)
+    }
+
     fn tensor_linear(&self, input: *mut c_void, weight: *mut c_void, bias: *mut c_void) -> BackendResult<*mut c_void> {
         let (ti, tw) = unsafe { (&*t(input), &*t(weight)) };
         let result = ti.matmul_impl(&tw.transpose_impl(0, 1)?)?;

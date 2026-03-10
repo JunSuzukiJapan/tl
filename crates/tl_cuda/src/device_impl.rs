@@ -111,6 +111,7 @@ impl IDevice for CudaDeviceImpl {
     fn tensor_mse_loss(&self, _a: *mut c_void, _b: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!("CUDA mse_loss") }
     fn tensor_l1_loss(&self, _a: *mut c_void, _b: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!("CUDA l1_loss") }
     fn tensor_bce_loss(&self, _a: *mut c_void, _b: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!("CUDA bce_loss") }
+    fn tensor_nll_loss(&self, _a: *mut c_void, _b: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!("CUDA nll_loss") }
     fn tensor_linear(&self, _i: *mut c_void, _w: *mut c_void, _b: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!("CUDA linear") }
     fn tensor_hardswish(&self, _t: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!("CUDA hardswish") }
     fn tensor_hardsigmoid(&self, _t: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!("CUDA hardsigmoid") }

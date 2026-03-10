@@ -165,6 +165,7 @@ pub fn register_tensor_types(manager: &mut TypeManager) {
     tensor.register_evaluated_static_method("mse_loss", compile_tensor_mse_loss, vec![any_tensor.clone(), any_tensor.clone()], any_tensor.clone());
     tensor.register_evaluated_static_method("l1_loss", compile_tensor_l1_loss, vec![any_tensor.clone(), any_tensor.clone()], any_tensor.clone());
     tensor.register_evaluated_static_method("bce_loss", compile_tensor_bce_loss, vec![any_tensor.clone(), any_tensor.clone()], any_tensor.clone());
+    tensor.register_evaluated_static_method("nll_loss", compile_tensor_nll_loss, vec![any_tensor.clone(), any_tensor.clone()], any_tensor.clone());
 
     // linear(weight, bias) -> Tensor
     tensor.register_evaluated_instance_method("linear", compile_tensor_linear, vec![any_tensor.clone(), any_tensor.clone()], any_tensor.clone());
@@ -1979,5 +1980,17 @@ fn compile_tensor_hardsigmoid<'ctx>(
     let f = codegen.module.get_function("tl_tensor_hardsigmoid").ok_or("tl_tensor_hardsigmoid not found")?;
     let call = codegen.builder.build_call(f, &[obj.into()], "hsigmoid_res").map_err(|e| e.to_string())?;
     let v = codegen.check_tensor_result(call, "hardsigmoid_error")?;
+    Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
+}
+
+fn compile_tensor_nll_loss<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() < 2 { return Err("nll_loss requires (pred, target)".into()); }
+    let f = codegen.module.get_function("tl_tensor_nll_loss").ok_or("tl_tensor_nll_loss not found")?;
+    let call = codegen.builder.build_call(f, &[args[0].0.into(), args[1].0.into()], "nll_res").map_err(|e| e.to_string())?;
+    let v = codegen.check_tensor_result(call, "nll_error")?;
     Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
 }
