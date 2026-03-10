@@ -161,6 +161,10 @@ pub fn register_tensor_types(manager: &mut TypeManager) {
     tensor.register_evaluated_instance_method("elu", compile_tensor_elu, vec![Type::F64], any_tensor.clone());
     tensor.register_evaluated_instance_method("mish", compile_tensor_mish, vec![], any_tensor.clone());
 
+    // loss functions (static)
+    tensor.register_evaluated_static_method("mse_loss", compile_tensor_mse_loss, vec![any_tensor.clone(), any_tensor.clone()], any_tensor.clone());
+    tensor.register_evaluated_static_method("l1_loss", compile_tensor_l1_loss, vec![any_tensor.clone(), any_tensor.clone()], any_tensor.clone());
+
     tensor.register_evaluated_instance_method("clone", compile_tensor_clone, vec![], any_tensor.clone());
     tensor.register_evaluated_instance_method("shallow_clone", compile_tensor_shallow_clone, vec![], any_tensor.clone());
     tensor.register_evaluated_instance_method("grad", compile_tensor_grad, vec![], any_tensor.clone());
@@ -1894,5 +1898,29 @@ fn compile_tensor_mish<'ctx>(
     let f = codegen.module.get_function("tl_tensor_mish").ok_or("tl_tensor_mish not found")?;
     let call = codegen.builder.build_call(f, &[obj.into()], "mish_res").map_err(|e| e.to_string())?;
     let v = codegen.check_tensor_result(call, "mish_error")?;
+    Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
+}
+
+fn compile_tensor_mse_loss<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() < 2 { return Err("mse_loss requires (pred, target)".into()); }
+    let f = codegen.module.get_function("tl_tensor_mse_loss").ok_or("tl_tensor_mse_loss not found")?;
+    let call = codegen.builder.build_call(f, &[args[0].0.into(), args[1].0.into()], "mse_res").map_err(|e| e.to_string())?;
+    let v = codegen.check_tensor_result(call, "mse_error")?;
+    Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
+}
+
+fn compile_tensor_l1_loss<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() < 2 { return Err("l1_loss requires (pred, target)".into()); }
+    let f = codegen.module.get_function("tl_tensor_l1_loss").ok_or("tl_tensor_l1_loss not found")?;
+    let call = codegen.builder.build_call(f, &[args[0].0.into(), args[1].0.into()], "l1_res").map_err(|e| e.to_string())?;
+    let v = codegen.check_tensor_result(call, "l1_error")?;
     Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
 }

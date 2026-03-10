@@ -240,17 +240,18 @@ DOMAIN_FEATURES_ANALYSIS.md の分析結果に基づく実装計画。
 
 ### 5.2 損失関数（高〜中優先度）
 
-- [ ] `mse_loss(pred, target)` — 平均二乗誤差
-  - [ ] 全バックエンド: (pred - target)^2 の mean
-  - [ ] Autograd対応
-  - [ ] FFI + TypeManager登録
-  - [ ] テスト
+- [x] `mse_loss(pred, target)` — 平均二乗誤差
+  - [x] CPU/Metal: mean((pred-target)²)
+  - [x] FFI + TypeManager登録
+  - [x] テスト: mse_loss([3,3,3,3],[1,1,1,1]) = [4.0]
 
 - [ ] `bce_loss(pred, target)` — 二値クロスエントロピー
   - [ ] 全バックエンド実装
 
-- [ ] `l1_loss(pred, target)` — L1損失
-  - [ ] 全バックエンド: |pred - target| の mean
+- [x] `l1_loss(pred, target)` — L1損失
+  - [x] CPU/Metal: mean(|pred-target|)
+  - [x] FFI + TypeManager登録
+  - [x] テスト: l1_loss([3,3,3,3],[1,1,1,1]) = [2.0]
 
 - [ ] `nll_loss(pred, target)` — 負の対数尤度
   - [ ] 全バックエンド実装

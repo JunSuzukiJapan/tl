@@ -196,6 +196,24 @@ impl IDevice for CpuDevice {
         Ok(std::sync::Arc::into_raw(arc) as *mut c_void)
     }
 
+    fn tensor_mse_loss(&self, pred: *mut c_void, target: *mut c_void) -> BackendResult<*mut c_void> {
+        let (tp, tt) = unsafe { (&*t(pred), &*t(target)) };
+        let diff = tp.sub_impl(tt)?;
+        let sq = diff.mul_impl(&diff)?;
+        let result = sq.mean_impl(-1)?;
+        let arc = std::sync::Arc::new(std::cell::UnsafeCell::new(result));
+        Ok(std::sync::Arc::into_raw(arc) as *mut c_void)
+    }
+
+    fn tensor_l1_loss(&self, pred: *mut c_void, target: *mut c_void) -> BackendResult<*mut c_void> {
+        let (tp, tt) = unsafe { (&*t(pred), &*t(target)) };
+        let diff = tp.sub_impl(tt)?;
+        let abs_diff = diff.abs_impl()?;
+        let result = abs_diff.mean_impl(-1)?;
+        let arc = std::sync::Arc::new(std::cell::UnsafeCell::new(result));
+        Ok(std::sync::Arc::into_raw(arc) as *mut c_void)
+    }
+
     fn tensor_fill_(&self, tensor: *mut c_void, value: f32) -> BackendResult<()> {
         let tt = unsafe { &*t(tensor) };
         let numel: usize = tt.shape().iter().product();
