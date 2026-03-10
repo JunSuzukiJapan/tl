@@ -971,6 +971,13 @@ pub fn declare_runtime_functions<'ctx>(
     // kl_div_loss(pred, target) -> Tensor
     add_fn("tl_tensor_kl_div_loss", loss_binary_type);
 
+    // conv_transpose2d(input, weight, bias, stride, padding, output_padding) -> Tensor
+    let conv_transpose2d_type = void_ptr.fn_type(&[void_ptr.into(), void_ptr.into(), void_ptr.into(), i64_type.into(), i64_type.into(), i64_type.into()], false);
+    add_fn("tl_tensor_conv_transpose2d", conv_transpose2d_type);
+    // interpolate(input, output_h, output_w, mode) -> Tensor
+    let interpolate_type = void_ptr.fn_type(&[void_ptr.into(), i64_type.into(), i64_type.into(), i64_type.into()], false);
+    add_fn("tl_tensor_interpolate", interpolate_type);
+
     // VarBuilder
     // tl_varbuilder_get(name: *const c_char, rank: usize, shape: *const usize) -> *mut OpaqueTensor
     let varbuilder_get_type =
@@ -1743,6 +1750,8 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_tensor_instance_norm") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_instance_norm as *const () as usize); }
     if let Some(f) = module.get_function("tl_tensor_conv1d") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_conv1d as *const () as usize); }
     if let Some(f) = module.get_function("tl_tensor_kl_div_loss") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_kl_div_loss as *const () as usize); }
+    if let Some(f) = module.get_function("tl_tensor_conv_transpose2d") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_conv_transpose2d as *const () as usize); }
+    if let Some(f) = module.get_function("tl_tensor_interpolate") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_interpolate as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
     if let Some(f) = module.get_function("tl_tensor_sub_assign") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_sub_assign as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi

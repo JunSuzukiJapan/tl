@@ -206,11 +206,11 @@ DOMAIN_FEATURES_ANALYSIS.md の分析結果に基づく実装計画。
 - [x] `conv1d(weight, bias, stride, padding)` — 1D畳み込み
   - [x] CPU/Metal 実装、CUDA stub
 
-- [ ] `conv_transpose2d(weight, bias?, padding, stride, output_padding)` — 転置畳み込み
-  - [ ] 全バックエンド実装
+- [x] `conv_transpose2d(weight, bias, stride, padding, output_padding)` — 転置畳み込み
+  - [x] CPU/Metal 実装、CUDA stub
 
-- [ ] `interpolate(size, mode)` — リサイズ
-  - [ ] 全バックエンド: bilinear/nearest kernel
+- [x] `interpolate(output_h, output_w, mode?)` — リサイズ
+  - [x] CPU/Metal: nearest(mode=0) / bilinear(mode=1)
 
 - [x] `pad(padding, value?)` — パディング
   - [x] CPU/Metal 実装、CUDA stub

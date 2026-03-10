@@ -187,6 +187,12 @@ pub fn register_tensor_types(manager: &mut TypeManager) {
     // kl_div_loss
     tensor.register_evaluated_static_method("kl_div_loss", compile_tensor_kl_div_loss, vec![any_tensor.clone(), any_tensor.clone()], any_tensor.clone());
 
+    // conv_transpose2d(weight, bias, stride, padding, output_padding)
+    tensor.register_evaluated_instance_method("conv_transpose2d", compile_tensor_conv_transpose2d, vec![any_tensor.clone(), any_tensor.clone(), Type::I64, Type::I64, Type::I64], any_tensor.clone());
+    // interpolate(output_h, output_w, mode)
+    tensor.register_evaluated_instance_method("interpolate", compile_tensor_interpolate, vec![Type::I64, Type::I64, Type::I64], any_tensor.clone());
+    tensor.register_evaluated_instance_method("interpolate", compile_tensor_interpolate, vec![Type::I64, Type::I64], any_tensor.clone());
+
     tensor.register_evaluated_instance_method("clone", compile_tensor_clone, vec![], any_tensor.clone());
     tensor.register_evaluated_instance_method("shallow_clone", compile_tensor_shallow_clone, vec![], any_tensor.clone());
     tensor.register_evaluated_instance_method("grad", compile_tensor_grad, vec![], any_tensor.clone());
@@ -2084,5 +2090,35 @@ fn compile_tensor_kl_div_loss<'ctx>(
     let f = codegen.module.get_function("tl_tensor_kl_div_loss").ok_or("tl_tensor_kl_div_loss not found")?;
     let call = codegen.builder.build_call(f, &[args[0].0.into(), args[1].0.into()], "kl_res").map_err(|e| e.to_string())?;
     let v = codegen.check_tensor_result(call, "kl_error")?;
+    Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
+}
+
+fn compile_tensor_conv_transpose2d<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj: BasicValueEnum<'ctx>,
+    _obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() < 5 { return Err("conv_transpose2d requires (weight, bias, stride, padding, output_padding)".into()); }
+    let f = codegen.module.get_function("tl_tensor_conv_transpose2d").ok_or("tl_tensor_conv_transpose2d not found")?;
+    let call = codegen.builder.build_call(f, &[obj.into(), args[0].0.into(), args[1].0.into(), args[2].0.into(), args[3].0.into(), args[4].0.into()], "conv_t2d_res")
+        .map_err(|e| e.to_string())?;
+    let v = codegen.check_tensor_result(call, "conv_transpose2d_error")?;
+    Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
+}
+
+fn compile_tensor_interpolate<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj: BasicValueEnum<'ctx>,
+    _obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() < 2 { return Err("interpolate requires (output_h, output_w[, mode])".into()); }
+    let i64_type = codegen.context.i64_type();
+    let mode = if args.len() >= 3 { args[2].0.into_int_value() } else { i64_type.const_int(0, false) };
+    let f = codegen.module.get_function("tl_tensor_interpolate").ok_or("tl_tensor_interpolate not found")?;
+    let call = codegen.builder.build_call(f, &[obj.into(), args[0].0.into(), args[1].0.into(), mode.into()], "interp_res")
+        .map_err(|e| e.to_string())?;
+    let v = codegen.check_tensor_result(call, "interpolate_error")?;
     Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
 }

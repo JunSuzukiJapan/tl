@@ -414,6 +414,16 @@ pub extern "C" fn tl_device_tensor_conv1d(input: *mut c_void, weight: *mut c_voi
 pub extern "C" fn tl_device_tensor_kl_div_loss(a: *mut c_void, b: *mut c_void) -> *mut c_void {
     dispatch(|d| d.tensor_kl_div_loss(a, b))
 }
+/// @ffi_sig (Tensor*, Tensor*, Tensor*, i64, i64, i64) -> Tensor*
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_device_tensor_conv_transpose2d(input: *mut c_void, weight: *mut c_void, bias: *mut c_void, stride: i64, padding: i64, output_padding: i64) -> *mut c_void {
+    dispatch(|d| d.tensor_conv_transpose2d(input, weight, bias, stride, padding, output_padding))
+}
+/// @ffi_sig (Tensor*, i64, i64, i64) -> Tensor*
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_device_tensor_interpolate(input: *mut c_void, output_h: i64, output_w: i64, mode: i64) -> *mut c_void {
+    dispatch(|d| d.tensor_interpolate(input, output_h, output_w, mode))
+}
 /// @ffi_sig (Tensor*) -> Tensor*
 /// 入力テンソルと同じ形状のゼロテンソルを生成
 #[unsafe(no_mangle)]

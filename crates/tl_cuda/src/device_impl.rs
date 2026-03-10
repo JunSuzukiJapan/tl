@@ -122,6 +122,8 @@ impl IDevice for CudaDeviceImpl {
     fn tensor_dropout2d(&self, _i: *mut c_void, _p: f64, _t: bool) -> BackendResult<*mut c_void> { unimplemented!("CUDA dropout2d") }
     fn tensor_conv1d(&self, _i: *mut c_void, _w: *mut c_void, _b: *mut c_void, _s: i64, _p: i64) -> BackendResult<*mut c_void> { unimplemented!("CUDA conv1d") }
     fn tensor_kl_div_loss(&self, _a: *mut c_void, _b: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!("CUDA kl_div_loss") }
+    fn tensor_conv_transpose2d(&self, _i: *mut c_void, _w: *mut c_void, _b: *mut c_void, _s: i64, _p: i64, _o: i64) -> BackendResult<*mut c_void> { unimplemented!("CUDA conv_transpose2d") }
+    fn tensor_interpolate(&self, _i: *mut c_void, _h: i64, _w: i64, _m: i64) -> BackendResult<*mut c_void> { unimplemented!("CUDA interpolate") }
     fn tensor_fill_(&self, _t: *mut c_void, _value: f32) -> BackendResult<()> { unimplemented!("CUDA fill_") }
     fn tensor_broadcast_to(&self, _t: *mut c_void, _shape: &[usize]) -> BackendResult<*mut c_void> { unimplemented!("CUDA broadcast_to") }
     fn tensor_stack(&self, _a: *mut c_void, _b: *mut c_void, _dim: i64) -> BackendResult<*mut c_void> { unimplemented!("CUDA stack") }

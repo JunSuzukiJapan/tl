@@ -323,6 +323,59 @@ impl IDevice for MetalDeviceImpl {
         Ok(ffi_ops::make_tensor(MetalTensor::from_slice(&[sum / q.len() as f32], &[1], crate::DType::F32)) as *mut c_void)
     }
 
+    fn tensor_conv_transpose2d(&self, input: *mut c_void, weight: *mut c_void, bias: *mut c_void, stride: i64, padding: i64, output_padding: i64) -> BackendResult<*mut c_void> {
+        let (ti, tw) = unsafe { (&*t(input), &*t(weight)) };
+        let inp = ti.to_vec::<f32>(); let w = tw.to_vec::<f32>();
+        let ishape = ti.shape().to_vec(); let wshape = tw.shape().to_vec();
+        let (batch, in_ch, ih, iw) = (ishape[0], ishape[1], ishape[2], ishape[3]);
+        let (_, out_ch, kh, kw) = (wshape[0], wshape[1], wshape[2], wshape[3]);
+        let (st, pad, opad) = (stride as usize, padding as usize, output_padding as usize);
+        let oh = (ih - 1) * st - 2 * pad + kh + opad;
+        let ow = (iw - 1) * st - 2 * pad + kw + opad;
+        let mut result = vec![0.0f32; batch * out_ch * oh * ow];
+        for b in 0..batch { for ic in 0..in_ch { for iy in 0..ih { for ix in 0..iw {
+            let v = inp[b*in_ch*ih*iw + ic*ih*iw + iy*iw + ix];
+            for ky in 0..kh { for kx in 0..kw {
+                let oy = iy*st+ky; let ox = ix*st+kx;
+                if oy >= pad && ox >= pad && oy-pad < oh && ox-pad < ow {
+                    for oc in 0..out_ch {
+                        result[b*out_ch*oh*ow + oc*oh*ow + (oy-pad)*ow + (ox-pad)] += v * w[ic*out_ch*kh*kw + oc*kh*kw + ky*kw + kx];
+                    }
+                }
+            }}
+        }}}}
+        if !bias.is_null() {
+            let tb = unsafe { &*t(bias) }.to_vec::<f32>();
+            for b in 0..batch { for oc in 0..out_ch { for y in 0..oh { for x in 0..ow { result[b*out_ch*oh*ow+oc*oh*ow+y*ow+x] += tb[oc]; }}}}
+        }
+        Ok(ffi_ops::make_tensor(MetalTensor::from_slice(&result, &[batch,out_ch,oh,ow], crate::DType::F32)) as *mut c_void)
+    }
+
+    fn tensor_interpolate(&self, input: *mut c_void, output_h: i64, output_w: i64, mode: i64) -> BackendResult<*mut c_void> {
+        let ti = unsafe { &*t(input) };
+        let data = ti.to_vec::<f32>(); let shape = ti.shape().to_vec();
+        let (n, c, h, w) = (shape[0], shape[1], shape[2], shape[3]);
+        let (oh, ow) = (output_h as usize, output_w as usize);
+        let mut result = vec![0.0f32; n*c*oh*ow];
+        for bi in 0..n { for ci in 0..c { for oi in 0..oh { for oj in 0..ow {
+            let val = if mode == 0 {
+                let si = (oi*h)/oh; let sj = (oj*w)/ow;
+                data[bi*c*h*w+ci*h*w+si*w+sj]
+            } else {
+                let sy = oi as f32 * (h as f32-1.0) / (oh as f32-1.0).max(1.0);
+                let sx = oj as f32 * (w as f32-1.0) / (ow as f32-1.0).max(1.0);
+                let (y0, x0) = (sy.floor() as usize, sx.floor() as usize);
+                let (y1, x1) = ((y0+1).min(h-1), (x0+1).min(w-1));
+                let (fy, fx) = (sy-y0 as f32, sx-x0 as f32);
+                let base = bi*c*h*w+ci*h*w;
+                data[base+y0*w+x0]*(1.0-fy)*(1.0-fx)+data[base+y0*w+x1]*(1.0-fy)*fx+
+                data[base+y1*w+x0]*fy*(1.0-fx)+data[base+y1*w+x1]*fy*fx
+            };
+            result[bi*c*oh*ow+ci*oh*ow+oi*ow+oj] = val;
+        }}}}
+        Ok(ffi_ops::make_tensor(MetalTensor::from_slice(&result, &[n,c,oh,ow], crate::DType::F32)) as *mut c_void)
+    }
+
     fn tensor_fill_(&self, tensor: *mut c_void, value: f32) -> BackendResult<()> {
         let tt = unsafe { &*t(tensor) };
         let numel: usize = tt.shape().iter().product();
