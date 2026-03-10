@@ -10,7 +10,7 @@ use crate::OpaqueTensor;
 pub use crate::system::{
     tl_kv_cache_new, tl_kv_cache_free,
     tl_kv_cache_get_k, tl_kv_cache_get_v,
-    tl_kv_cache_update,
+    tl_kv_cache_update, tl_kv_cache_clear,
 };
 
 // tokenizer 関数を re-export（存在する関数のみ）
@@ -143,4 +143,13 @@ pub extern "C" fn tl_kvcache_update(ptr: *const i64, layer: i64, k: *mut OpaqueT
     if ptr.is_null() { return; }
     let handle = unsafe { *ptr };
     tl_kv_cache_update(handle, layer, k, v);
+}
+
+/// @ffi_sig (KVCache*) -> void
+/// KVCache 全レイヤーのキャッシュをクリア
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_kvcache_clear(ptr: *const i64) {
+    if ptr.is_null() { return; }
+    let handle = unsafe { *ptr };
+    tl_kv_cache_clear(handle);
 }

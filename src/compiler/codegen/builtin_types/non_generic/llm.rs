@@ -96,6 +96,13 @@ pub fn register_llm_types(manager: &mut TypeManager) {
         vec![Type::I64, tensor_type.clone(), tensor_type.clone()],
         Type::Void
     );
+    // KVCache.clear() -> Void
+    kv_cache.register_evaluated_instance_method(
+        "clear", 
+        compile_kv_cache_clear,
+        vec![],
+        Type::Void
+    );
 
     manager.register_type(kv_cache);
 
@@ -388,3 +395,16 @@ fn compile_kv_cache_get_v<'ctx>(
     Ok((res, Type::Tensor(Box::new(Type::F32), 2))) // Assuming 2D tensor
 }
 
+fn compile_kv_cache_clear<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    instance_val: BasicValueEnum<'ctx>,
+    _instance_ty: Type,
+    _args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if !instance_val.is_pointer_value() {
+         return Err("Instance not pointer in clear".into());
+    }
+    let fn_val = codegen.module.get_function("tl_kvcache_clear").ok_or("tl_kvcache_clear not found")?;
+    codegen.builder.build_call(fn_val, &[instance_val.into()], "").map_err(|e| e.to_string())?;
+    Ok((codegen.context.i64_type().const_int(0, false).into(), Type::Void))
+}

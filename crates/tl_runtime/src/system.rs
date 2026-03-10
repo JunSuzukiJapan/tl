@@ -506,6 +506,28 @@ pub extern "C" fn tl_kv_cache_update(
     cache.layers[idx] = (k_retained, v_retained);
 }
 
+#[unsafe(no_mangle)]
+/// @ffi_sig (i64) -> void
+/// KVCache 全レイヤーのキャッシュをクリア（テンソル解放 + None リセット）
+pub extern "C" fn tl_kv_cache_clear(cache_ptr: i64) {
+    if cache_ptr == 0 {
+        return;
+    }
+    let cache = unsafe { &mut *(cache_ptr as *mut OpaqueKVCache) };
+    for (k_opt, v_opt) in cache.layers.iter_mut() {
+        if let Some(k) = k_opt.take() {
+            if !k.is_null() {
+                crate::memory_ffi::tl_tensor_release_safe(k);
+            }
+        }
+        if let Some(v) = v_opt.take() {
+            if !v.is_null() {
+                crate::memory_ffi::tl_tensor_release_safe(v);
+            }
+        }
+    }
+}
+
 // ========== 追加 System 関数 ==========
 
 // tl_checkpoint と tl_trace_mem は memory_ffi.rs で定義済み

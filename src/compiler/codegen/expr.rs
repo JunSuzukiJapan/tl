@@ -1288,6 +1288,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         param_static.register_eval("add", compile_add_parameter);
         param_static.register_eval("register", compile_parameter);
         param_static.register_eval("update_all", compile_update_all_params);
+        param_static.register_eval("zero_grad", compile_clear_grads);
         param_static.register_eval("register_modules", compile_register_modules);
         param_static.register_uneval("checkpoint", compile_checkpoint);
         param_static.register_uneval("set_device", compile_set_device);
@@ -8663,6 +8664,18 @@ fn compile_update_all_params<'ctx>(
         codegen.context.i64_type().const_int(0, false).into(),
         Type::Void,
     ))
+}
+
+// Param::zero_grad() — clear all gradients
+fn compile_clear_grads<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    _args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let fn_val = codegen.module.get_function("tl_clear_grads")
+        .ok_or("tl_clear_grads not found")?;
+    codegen.builder.build_call(fn_val, &[], "").map_err(|e| e.to_string())?;
+    Ok((codegen.context.i64_type().const_int(0, false).into(), Type::Void))
 }
 
 fn compile_add_parameter<'ctx>(

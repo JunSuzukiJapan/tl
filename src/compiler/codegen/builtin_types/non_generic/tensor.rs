@@ -148,7 +148,9 @@ pub fn register_tensor_types(manager: &mut TypeManager) {
     tensor.register_evaluated_instance_method("leaky_relu", compile_tensor_leaky_relu, vec![Type::F32], any_tensor.clone());
     tensor.register_evaluated_instance_method("leaky_relu", compile_tensor_leaky_relu, vec![Type::F64], any_tensor.clone());
 
-    // batch_norm(running_mean, running_var, weight, bias, training, momentum, eps)
+    // batch_norm(running_mean, running_var, weight, bias, training, [momentum], [eps])
+    tensor.register_evaluated_instance_method("batch_norm", compile_tensor_batch_norm, vec![any_tensor.clone(), any_tensor.clone(), any_tensor.clone(), any_tensor.clone(), Type::Bool], any_tensor.clone());
+    tensor.register_evaluated_instance_method("batch_norm", compile_tensor_batch_norm, vec![any_tensor.clone(), any_tensor.clone(), any_tensor.clone(), any_tensor.clone(), Type::Bool, Type::F64, Type::F64], any_tensor.clone());
     // conv2d(weight, bias, stride, padding, dilation, groups)
     // max_pool2d / avg_pool2d (kernel_size, stride, padding)
     tensor.register_evaluated_instance_method("conv2d", compile_tensor_conv2d, vec![any_tensor.clone(), any_tensor.clone(), Type::I64, Type::I64, Type::I64, Type::I64], any_tensor.clone());
@@ -2236,5 +2238,48 @@ fn compile_tensor_dot<'ctx>(
     let f = codegen.module.get_function("tl_tensor_dot").ok_or("tl_tensor_dot not found")?;
     let call = codegen.builder.build_call(f, &[obj.into(), args[0].0.into()], "dot_res").map_err(|e| e.to_string())?;
     let v = codegen.check_tensor_result(call, "dot_error")?;
+    Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
+}
+
+// batch_norm(running_mean, running_var, weight, bias, training, momentum, eps) -> Tensor
+fn compile_tensor_batch_norm<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj: BasicValueEnum<'ctx>,
+    _obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    // args: running_mean, running_var, weight, bias, training, [momentum], [eps]
+    if args.len() < 5 { return Err("batch_norm requires at least (running_mean, running_var, weight, bias, training) arguments".into()); }
+    let f64_type = codegen.context.f64_type();
+    let momentum = if args.len() > 5 {
+        match args[5].1 {
+            Type::F64 => args[5].0.into_float_value(),
+            Type::F32 => codegen.builder.build_float_ext(args[5].0.into_float_value(), f64_type, "mom_ext").map_err(|e| e.to_string())?,
+            _ => f64_type.const_float(0.1),
+        }
+    } else {
+        f64_type.const_float(0.1)
+    };
+    let eps = if args.len() > 6 {
+        match args[6].1 {
+            Type::F64 => args[6].0.into_float_value(),
+            Type::F32 => codegen.builder.build_float_ext(args[6].0.into_float_value(), f64_type, "eps_ext").map_err(|e| e.to_string())?,
+            _ => f64_type.const_float(1e-5),
+        }
+    } else {
+        f64_type.const_float(1e-5)
+    };
+    let f = codegen.module.get_function("tl_tensor_batch_norm").ok_or("tl_tensor_batch_norm not found")?;
+    let call = codegen.builder.build_call(f, &[
+        obj.into(),         // input
+        args[0].0.into(),   // running_mean
+        args[1].0.into(),   // running_var
+        args[2].0.into(),   // weight
+        args[3].0.into(),   // bias
+        args[4].0.into(),   // training
+        momentum.into(),    // momentum
+        eps.into(),         // eps
+    ], "bn_res").map_err(|e| e.to_string())?;
+    let v = codegen.check_tensor_result(call, "batch_norm_error")?;
     Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
 }

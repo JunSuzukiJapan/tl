@@ -168,12 +168,12 @@ DOMAIN_FEATURES_ANALYSIS.md の分析結果に基づく実装計画。
   - [ ] tl_cuda: unimplemented!()
   - [x] テスト: 使用可能（既存パイプライン経由）
 
-- [ ] `batch_norm(weight, bias, running_mean, running_var, eps, training)` — BatchNorm
-  - [ ] tl_cpu: 実装
-  - [ ] tl_metal: バックエンドに実装パターンあり → TL API公開
+- [x] `batch_norm(weight, bias, running_mean, running_var, eps, training)` — BatchNorm
+  - [x] tl_cpu: 実装済み（`tl_cpu_tensor_batch_norm`）
+  - [x] tl_metal: バックエンドに実装パターンあり → TL API公開
   - [ ] tl_cuda: 実装
-  - [ ] FFI + TypeManager登録
-  - [ ] テスト
+  - [x] FFI + TypeManager登録
+  - [x] compile関数: `compile_tensor_batch_norm`
 
 ### 4.2 プーリング（高優先度）
 
@@ -269,9 +269,9 @@ DOMAIN_FEATURES_ANALYSIS.md の分析結果に基づく実装計画。
 
 ### 5.3 学習ユーティリティ（高優先度）
 
-- [ ] `Param::zero_grad()` — 勾配ゼロ化
-  - [ ] ランタイム: 全登録パラメータの勾配をクリア
-  - [ ] FFI + TypeManager登録
+- [x] `Param::zero_grad()` — 勾配ゼロ化
+  - [x] ランタイム: `tl_clear_grads` 既存
+  - [x] Param::zero_grad() として static_methods 登録
 
 - [ ] `no_grad { ... }` ブロック — 勾配計算無効化
   - [ ] コンパイラ: 新しい構文の追加（Parser/AST/Codegen）
@@ -345,9 +345,10 @@ DOMAIN_FEATURES_ANALYSIS.md の分析結果に基づく実装計画。
   - [x] CPU/Metal: sort → cumsum → mask → renormalize → argmax
   - [x] テスト: top_p(0.9) → [3.0]
 
-- [ ] `KVCache::clear()` — キャッシュクリア
-  - [ ] ランタイム実装
-  - [ ] FFI + TypeManager登録
+- [x] `KVCache::clear()` — キャッシュクリア
+  - [x] ランタイム: `tl_kv_cache_clear` + ラッパー `tl_kvcache_clear`
+  - [x] builtins LLVM宣言 + グローバルマッピング
+  - [x] TypeManager登録 + compile関数
 
 ### 7.2 中優先度
 
