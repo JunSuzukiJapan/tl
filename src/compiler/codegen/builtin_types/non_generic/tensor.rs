@@ -215,6 +215,8 @@ pub fn register_tensor_types(manager: &mut TypeManager) {
     tensor.register_evaluated_instance_method("shallow_clone", compile_tensor_shallow_clone, vec![], any_tensor.clone());
     tensor.register_evaluated_instance_method("grad", compile_tensor_grad, vec![], any_tensor.clone());
     tensor.register_evaluated_instance_method("to_i64", compile_tensor_to_i64, vec![], Type::Tensor(Box::new(Type::I64), 0));
+    tensor.register_evaluated_instance_method("to_f32", compile_tensor_to_f32, vec![], Type::Tensor(Box::new(Type::F32), 0));
+    tensor.register_evaluated_instance_method("to_vec", compile_tensor_to_vec_f32, vec![], Type::Struct("Vec".into(), vec![Type::F32]));
     tensor.register_evaluated_instance_method("cuda", compile_tensor_cuda, vec![], any_tensor.clone());
     tensor.register_evaluated_instance_method("cpu", compile_tensor_cpu, vec![], any_tensor.clone());
     tensor.register_evaluated_instance_method("item", compile_tensor_item, vec![], Type::F32);
@@ -777,6 +779,36 @@ fn compile_tensor_to_i64<'ctx>(
         _ => return Err("Invalid return from to_i64".into()),
     };
     Ok((res, Type::Tensor(Box::new(Type::I64), 0)))
+}
+
+fn compile_tensor_to_f32<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj: BasicValueEnum<'ctx>,
+    _obj_ty: Type,
+    _args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let fn_val = codegen.module.get_function("tl_tensor_to_f32").ok_or("tl_tensor_to_f32 not found")?;
+    let call = codegen.builder.build_call(fn_val, &[obj.into()], "to_f32_call").map_err(|e| e.to_string())?;
+    let res = match call.try_as_basic_value() {
+        ValueKind::Basic(v) => v,
+        _ => return Err("Invalid return from to_f32".into()),
+    };
+    Ok((res, Type::Tensor(Box::new(Type::F32), 0)))
+}
+
+fn compile_tensor_to_vec_f32<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj: BasicValueEnum<'ctx>,
+    _obj_ty: Type,
+    _args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let fn_val = codegen.module.get_function("tl_tensor_to_vec_f32").ok_or("tl_tensor_to_vec_f32 not found")?;
+    let call = codegen.builder.build_call(fn_val, &[obj.into()], "to_vec_call").map_err(|e| e.to_string())?;
+    let res = match call.try_as_basic_value() {
+        ValueKind::Basic(v) => v,
+        _ => return Err("Invalid return from to_vec_f32".into()),
+    };
+    Ok((res, Type::Struct("Vec".into(), vec![Type::F32])))
 }
 
 fn compile_tensor_cuda<'ctx>(

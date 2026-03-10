@@ -515,6 +515,28 @@ pub extern "C" fn tl_device_tensor_from_vec_f32(data_vec: *mut c_void, shape_vec
 
     dispatch(|d| d.tensor_new(data_jv.ptr, rank, shape_usize.as_ptr()))
 }
+
+/// @ffi_sig (Tensor*) -> Vec<f32>*
+/// テンソルの f32 データを TL の Vec<f32> 構造体として返す
+/// JitVec layout: { ptr: *mut f32, cap: i64, len: i64 }
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_device_tensor_to_vec_f32(t: *mut c_void) -> *mut c_void {
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
+    let data: Vec<f32> = read_runtime_tensor_to_f32_vec(t);
+    let len = data.len() as i64;
+    let cap = data.capacity() as i64;
+    let ptr = data.as_ptr() as *mut f32;
+    std::mem::forget(data); // Vec の所有権を放棄（JitVec が管理）
+
+    // Allocate JitVec struct on heap: { ptr: *mut f32, cap: i64, len: i64 }
+    #[repr(C)]
+    struct JitVecF32 { ptr: *mut f32, cap: i64, len: i64 }
+    let jv = Box::new(JitVecF32 { ptr, cap, len });
+    Box::into_raw(jv) as *mut c_void
+}
+
 // ========== メモリ管理 ==========
 /// @ffi_sig (Tensor*) -> Tensor*
 #[unsafe(no_mangle)]

@@ -87,19 +87,17 @@ DOMAIN_FEATURES_ANALYSIS.md の分析結果に基づく実装計画。
   - [x] FFI + TypeManager登録
   - [x] テスト
 
-- [ ] `to_dtype(dtype: String)` — 型変換
-  - [ ] tl_cpu: f32↔f64, f32↔i64 変換
-  - [ ] tl_metal: GPU cast kernel
-  - [ ] tl_cuda: GPU cast kernel
-  - [ ] FFI + TypeManager登録
-  - [ ] テスト
+- [x] `to_dtype` / `to_f32` / `to_i64` — 型変換
+  - [x] tl_cpu: 実装済み
+  - [x] tl_metal: 実装済み
+  - [ ] tl_cuda: 未実装
+  - [x] FFI + TypeManager登録 (`to_f32`, `to_i64`)
+  - [x] テスト
 
-- [ ] `to_vec() -> Vec<f32>` — テンソルからVecへの変換
-  - [ ] tl_cpu: データコピー
-  - [ ] tl_metal: GPU→CPU転送 + Vecラップ
-  - [ ] tl_cuda: GPU→CPU転送 + Vecラップ
-  - [ ] FFI + TypeManager登録
-  - [ ] テスト
+- [x] `to_vec() -> Vec<f32>` — テンソルからVecへの変換
+  - [x] ランタイム: `tl_device_tensor_to_vec_f32` 追加 (Vec<f32> への変換)
+  - [x] TypeManager登録 + compile関数
+  - [x] テスト
 
 - [x] `std(dim?)` / `var(dim?)` — 標準偏差・分散
   - [x] tl_cpu: `var_impl`, `std_impl`

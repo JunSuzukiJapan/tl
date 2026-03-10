@@ -867,6 +867,10 @@ pub fn declare_runtime_functions<'ctx>(
     let from_vec_f32_type = void_ptr.fn_type(&[void_ptr.into(), void_ptr.into()], false);
     add_fn("tl_tensor_from_vec_f32", from_vec_f32_type);
 
+    // tl_tensor_to_vec_f32(t: Tensor*) -> Vec<f32>*
+    let to_vec_f32_type = void_ptr.fn_type(&[void_ptr.into()], false);
+    add_fn("tl_tensor_to_vec_f32", to_vec_f32_type);
+
     // tl_tensor_linspace(start: f64, end: f64, steps: i64) -> *mut OpaqueTensor
     let linspace_type = void_ptr.fn_type(
         &[
@@ -1723,6 +1727,7 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_tensor_ones_like") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_ones_like as *const () as usize); }
     // [IDevice] from_vec_f32 → device_ffi
     if let Some(f) = module.get_function("tl_tensor_from_vec_f32") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_from_vec_f32 as *const () as usize); }
+    if let Some(f) = module.get_function("tl_tensor_to_vec_f32") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_to_vec_f32 as *const () as usize); }
     // [IDevice] linspace / rand / rand_like / randn_like → device_ffi
     if let Some(f) = module.get_function("tl_tensor_linspace") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_linspace as *const () as usize); }
     if let Some(f) = module.get_function("tl_tensor_rand") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_rand as *const () as usize); }
