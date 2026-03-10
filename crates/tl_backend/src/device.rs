@@ -64,6 +64,11 @@ pub trait IDevice {
     fn tensor_linear(&self, input: *mut c_void, weight: *mut c_void, bias: *mut c_void) -> BackendResult<*mut c_void>;
     fn tensor_hardswish(&self, t: *mut c_void) -> BackendResult<*mut c_void>;
     fn tensor_hardsigmoid(&self, t: *mut c_void) -> BackendResult<*mut c_void>;
+    fn tensor_group_norm(&self, input: *mut c_void, num_groups: i64, weight: *mut c_void, bias: *mut c_void, eps: f64) -> BackendResult<*mut c_void>;
+    fn tensor_adaptive_avg_pool2d(&self, input: *mut c_void, output_h: i64, output_w: i64) -> BackendResult<*mut c_void>;
+    fn tensor_pad(&self, input: *mut c_void, pad_left: i64, pad_right: i64, value: f32) -> BackendResult<*mut c_void>;
+    fn tensor_instance_norm(&self, input: *mut c_void, weight: *mut c_void, bias: *mut c_void, eps: f64) -> BackendResult<*mut c_void>;
+    fn tensor_dropout2d(&self, input: *mut c_void, p: f64, training: bool) -> BackendResult<*mut c_void>;
 
     // ========== インプレース操作 ==========
     fn tensor_fill_(&self, t: *mut c_void, value: f32) -> BackendResult<()>;

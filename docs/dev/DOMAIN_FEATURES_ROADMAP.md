@@ -197,11 +197,11 @@ DOMAIN_FEATURES_ANALYSIS.md の分析結果に基づく実装計画。
   - [x] FFI + TypeManager登録 + compile関数
   - [x] テスト: slope=0.01,0.1 確認済み
 
-- [ ] `group_norm(num_groups, weight, bias, eps)` — GroupNorm
-  - [ ] 全バックエンド実装
+- [x] `group_norm(num_groups, weight, bias, eps)` — GroupNorm
+  - [x] CPU/Metal 実装、CUDA stub
 
-- [ ] `adaptive_avg_pool2d(output_size)` — 適応的プーリング
-  - [ ] 全バックエンド実装
+- [x] `adaptive_avg_pool2d(output_size)` — 適応的プーリング
+  - [x] CPU/Metal 実装、CUDA stub
 
 - [ ] `conv1d(weight, bias?, padding, stride)` — 1D畳み込み
   - [ ] 全バックエンド実装
@@ -212,8 +212,9 @@ DOMAIN_FEATURES_ANALYSIS.md の分析結果に基づく実装計画。
 - [ ] `interpolate(size, mode)` — リサイズ
   - [ ] 全バックエンド: bilinear/nearest kernel
 
-- [ ] `pad(padding, value?)` — パディング
-  - [ ] 全バックエンド実装
+- [x] `pad(padding, value?)` — パディング
+  - [x] CPU/Metal 実装、CUDA stub
+  - [x] テスト: pad(2,1)=[0,0,1,2,3,0]
 
 ### 4.4 低優先度（活性化関数）
 
@@ -224,8 +225,10 @@ DOMAIN_FEATURES_ANALYSIS.md の分析結果に基づく実装計画。
 - [x] `hardswish()` / `hardsigmoid()` — モバイル向け活性化
   - [x] CPU/Metal 実装、CUDA stub
   - [x] テスト: hardswish([-6,-3,0,3,6])=[-0,-0,0,3,6]
-- [ ] `dropout2d(p, training)` — チャネル単位ドロップアウト
-- [ ] `instance_norm(...)` — InstanceNorm
+- [x] `dropout2d(p, training)` — チャネル単位ドロップアウト
+  - [x] CPU/Metal 実装、CUDA stub
+- [x] `instance_norm(...)` — InstanceNorm
+  - [x] group_norm(num_groups=channels) として実装
 
 ---
 

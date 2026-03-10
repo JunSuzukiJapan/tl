@@ -173,6 +173,15 @@ pub fn register_tensor_types(manager: &mut TypeManager) {
     tensor.register_evaluated_instance_method("hardswish", compile_tensor_hardswish, vec![], any_tensor.clone());
     tensor.register_evaluated_instance_method("hardsigmoid", compile_tensor_hardsigmoid, vec![], any_tensor.clone());
 
+    // group_norm(num_groups, weight, bias, eps)
+    tensor.register_evaluated_instance_method("group_norm", compile_tensor_group_norm, vec![Type::I64, any_tensor.clone(), any_tensor.clone(), Type::F64], any_tensor.clone());
+    // adaptive_avg_pool2d(output_h, output_w)
+    tensor.register_evaluated_instance_method("adaptive_avg_pool2d", compile_tensor_adaptive_avg_pool2d, vec![Type::I64, Type::I64], any_tensor.clone());
+    // pad(pad_left, pad_right, value)
+    tensor.register_evaluated_instance_method("pad", compile_tensor_pad, vec![Type::I64, Type::I64, Type::F32], any_tensor.clone());
+    tensor.register_evaluated_instance_method("pad", compile_tensor_pad, vec![Type::I64, Type::I64, Type::F64], any_tensor.clone());
+    tensor.register_evaluated_instance_method("pad", compile_tensor_pad, vec![Type::I64, Type::I64], any_tensor.clone());
+
     tensor.register_evaluated_instance_method("clone", compile_tensor_clone, vec![], any_tensor.clone());
     tensor.register_evaluated_instance_method("shallow_clone", compile_tensor_shallow_clone, vec![], any_tensor.clone());
     tensor.register_evaluated_instance_method("grad", compile_tensor_grad, vec![], any_tensor.clone());
@@ -1992,5 +2001,57 @@ fn compile_tensor_nll_loss<'ctx>(
     let f = codegen.module.get_function("tl_tensor_nll_loss").ok_or("tl_tensor_nll_loss not found")?;
     let call = codegen.builder.build_call(f, &[args[0].0.into(), args[1].0.into()], "nll_res").map_err(|e| e.to_string())?;
     let v = codegen.check_tensor_result(call, "nll_error")?;
+    Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
+}
+
+fn compile_tensor_group_norm<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj: BasicValueEnum<'ctx>,
+    _obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() < 4 { return Err("group_norm requires (num_groups, weight, bias, eps)".into()); }
+    let f = codegen.module.get_function("tl_tensor_group_norm").ok_or("tl_tensor_group_norm not found")?;
+    let call = codegen.builder.build_call(f, &[obj.into(), args[0].0.into(), args[1].0.into(), args[2].0.into(), args[3].0.into()], "gnorm_res")
+        .map_err(|e| e.to_string())?;
+    let v = codegen.check_tensor_result(call, "gnorm_error")?;
+    Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
+}
+
+fn compile_tensor_adaptive_avg_pool2d<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj: BasicValueEnum<'ctx>,
+    _obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() < 2 { return Err("adaptive_avg_pool2d requires (output_h, output_w)".into()); }
+    let f = codegen.module.get_function("tl_tensor_adaptive_avg_pool2d").ok_or("tl_tensor_adaptive_avg_pool2d not found")?;
+    let call = codegen.builder.build_call(f, &[obj.into(), args[0].0.into(), args[1].0.into()], "apool_res")
+        .map_err(|e| e.to_string())?;
+    let v = codegen.check_tensor_result(call, "apool_error")?;
+    Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
+}
+
+fn compile_tensor_pad<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj: BasicValueEnum<'ctx>,
+    _obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() < 2 { return Err("pad requires (pad_left, pad_right[, value])".into()); }
+    let f32_type = codegen.context.f32_type();
+    let value = if args.len() >= 3 {
+        match args[2].1 {
+            Type::F32 => args[2].0.into_float_value(),
+            Type::F64 => codegen.builder.build_float_trunc(args[2].0.into_float_value(), f32_type, "vtrunc").map_err(|e| e.to_string())?,
+            _ => f32_type.const_float(0.0),
+        }
+    } else {
+        f32_type.const_float(0.0)
+    };
+    let f = codegen.module.get_function("tl_tensor_pad").ok_or("tl_tensor_pad not found")?;
+    let call = codegen.builder.build_call(f, &[obj.into(), args[0].0.into(), args[1].0.into(), value.into()], "pad_res")
+        .map_err(|e| e.to_string())?;
+    let v = codegen.check_tensor_result(call, "pad_error")?;
     Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
 }

@@ -952,6 +952,19 @@ pub fn declare_runtime_functions<'ctx>(
     add_fn("tl_tensor_hardswish", unary_type);
     add_fn("tl_tensor_hardsigmoid", unary_type);
 
+    // group_norm(input, num_groups, weight, bias, eps) -> Tensor
+    let group_norm_type = void_ptr.fn_type(&[void_ptr.into(), i64_type.into(), void_ptr.into(), void_ptr.into(), f64_type.into()], false);
+    add_fn("tl_tensor_group_norm", group_norm_type);
+    // adaptive_avg_pool2d(input, output_h, output_w) -> Tensor
+    let adaptive_pool_type = void_ptr.fn_type(&[void_ptr.into(), i64_type.into(), i64_type.into()], false);
+    add_fn("tl_tensor_adaptive_avg_pool2d", adaptive_pool_type);
+    // pad(input, pad_left, pad_right, value) -> Tensor
+    let pad_type = void_ptr.fn_type(&[void_ptr.into(), i64_type.into(), i64_type.into(), f32_type.into()], false);
+    add_fn("tl_tensor_pad", pad_type);
+    // instance_norm(input, weight, bias, eps) -> Tensor
+    let instance_norm_type = void_ptr.fn_type(&[void_ptr.into(), void_ptr.into(), void_ptr.into(), f64_type.into()], false);
+    add_fn("tl_tensor_instance_norm", instance_norm_type);
+
     // VarBuilder
     // tl_varbuilder_get(name: *const c_char, rank: usize, shape: *const usize) -> *mut OpaqueTensor
     let varbuilder_get_type =
@@ -1718,6 +1731,10 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_tensor_linear") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_linear as *const () as usize); }
     if let Some(f) = module.get_function("tl_tensor_hardswish") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_hardswish as *const () as usize); }
     if let Some(f) = module.get_function("tl_tensor_hardsigmoid") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_hardsigmoid as *const () as usize); }
+    if let Some(f) = module.get_function("tl_tensor_group_norm") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_group_norm as *const () as usize); }
+    if let Some(f) = module.get_function("tl_tensor_adaptive_avg_pool2d") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_adaptive_avg_pool2d as *const () as usize); }
+    if let Some(f) = module.get_function("tl_tensor_pad") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_pad as *const () as usize); }
+    if let Some(f) = module.get_function("tl_tensor_instance_norm") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_instance_norm as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
     if let Some(f) = module.get_function("tl_tensor_sub_assign") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_sub_assign as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi

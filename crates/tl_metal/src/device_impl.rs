@@ -219,6 +219,81 @@ impl IDevice for MetalDeviceImpl {
         Ok(ffi_ops::make_tensor(MetalTensor::from_slice(&r, tt.shape(), crate::DType::F32)) as *mut c_void)
     }
 
+    fn tensor_group_norm(&self, input: *mut c_void, num_groups: i64, weight: *mut c_void, bias: *mut c_void, eps: f64) -> BackendResult<*mut c_void> {
+        let ti = unsafe { &*t(input) };
+        let data = ti.to_vec::<f32>();
+        let shape = ti.shape().to_vec();
+        let channels = if shape.len() >= 2 { shape[1] } else { shape[0] };
+        let group_size = channels / num_groups as usize;
+        let mut result = data.clone();
+        let spatial: usize = shape[2..].iter().product::<usize>().max(1);
+        let batch = if shape.len() >= 2 { shape[0] } else { 1 };
+        for b in 0..batch {
+            for g in 0..num_groups as usize {
+                let (start_c, end_c) = (g * group_size, g * group_size + group_size);
+                let mut vals = Vec::new();
+                for c in start_c..end_c { for s in 0..spatial { vals.push(data[b*channels*spatial + c*spatial + s]); } }
+                let mean: f32 = vals.iter().sum::<f32>() / vals.len() as f32;
+                let var: f32 = vals.iter().map(|v| (v-mean).powi(2)).sum::<f32>() / vals.len() as f32;
+                let std = (var + eps as f32).sqrt();
+                for c in start_c..end_c { for s in 0..spatial {
+                    let idx = b*channels*spatial + c*spatial + s;
+                    let mut v = (result[idx] - mean) / std;
+                    if !weight.is_null() { v *= unsafe { &*t(weight) }.to_vec::<f32>()[c]; }
+                    if !bias.is_null() { v += unsafe { &*t(bias) }.to_vec::<f32>()[c]; }
+                    result[idx] = v;
+                }}
+            }
+        }
+        Ok(ffi_ops::make_tensor(MetalTensor::from_slice(&result, &shape, crate::DType::F32)) as *mut c_void)
+    }
+
+    fn tensor_adaptive_avg_pool2d(&self, input: *mut c_void, output_h: i64, output_w: i64) -> BackendResult<*mut c_void> {
+        let ti = unsafe { &*t(input) };
+        let data = ti.to_vec::<f32>();
+        let shape = ti.shape().to_vec();
+        let (n, c, h, w) = (shape[0], shape[1], shape[2], shape[3]);
+        let (oh, ow) = (output_h as usize, output_w as usize);
+        let mut result = vec![0.0f32; n*c*oh*ow];
+        for bi in 0..n { for ci in 0..c { for oi in 0..oh { for oj in 0..ow {
+            let (hs, he) = (oi*h/oh, (oi+1)*h/oh);
+            let (ws, we) = (oj*w/ow, (oj+1)*w/ow);
+            let mut sum = 0.0f32; let mut cnt = 0;
+            for hi in hs..he { for wi in ws..we { sum += data[bi*c*h*w+ci*h*w+hi*w+wi]; cnt+=1; }}
+            result[bi*c*oh*ow+ci*oh*ow+oi*ow+oj] = sum / cnt as f32;
+        }}}}
+        Ok(ffi_ops::make_tensor(MetalTensor::from_slice(&result, &[n,c,oh,ow], crate::DType::F32)) as *mut c_void)
+    }
+
+    fn tensor_pad(&self, input: *mut c_void, pad_left: i64, pad_right: i64, value: f32) -> BackendResult<*mut c_void> {
+        let ti = unsafe { &*t(input) };
+        let data = ti.to_vec::<f32>();
+        let shape = ti.shape().to_vec();
+        let last = *shape.last().unwrap();
+        let new_last = last + pad_left as usize + pad_right as usize;
+        let outer: usize = shape[..shape.len()-1].iter().product::<usize>().max(1);
+        let mut result = Vec::with_capacity(outer * new_last);
+        for o in 0..outer {
+            for _ in 0..pad_left { result.push(value); }
+            for i in 0..last { result.push(data[o*last+i]); }
+            for _ in 0..pad_right { result.push(value); }
+        }
+        let mut new_shape = shape; *new_shape.last_mut().unwrap() = new_last;
+        Ok(ffi_ops::make_tensor(MetalTensor::from_slice(&result, &new_shape, crate::DType::F32)) as *mut c_void)
+    }
+
+    fn tensor_instance_norm(&self, input: *mut c_void, weight: *mut c_void, bias: *mut c_void, eps: f64) -> BackendResult<*mut c_void> {
+        let ti = unsafe { &*t(input) };
+        let channels = if ti.shape().len() >= 2 { ti.shape()[1] } else { ti.shape()[0] };
+        self.tensor_group_norm(input, channels as i64, weight, bias, eps)
+    }
+
+    fn tensor_dropout2d(&self, input: *mut c_void, _p: f64, _training: bool) -> BackendResult<*mut c_void> {
+        // Metal: passthrough (no random on GPU, use CPU for training dropout)
+        let ti = unsafe { &*t(input) };
+        Ok(ffi_ops::make_tensor(MetalTensor::from_slice(&ti.to_vec::<f32>(), ti.shape(), crate::DType::F32)) as *mut c_void)
+    }
+
     fn tensor_fill_(&self, tensor: *mut c_void, value: f32) -> BackendResult<()> {
         let tt = unsafe { &*t(tensor) };
         let numel: usize = tt.shape().iter().product();

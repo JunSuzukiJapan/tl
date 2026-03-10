@@ -384,6 +384,26 @@ pub extern "C" fn tl_device_tensor_hardswish(t: *mut c_void) -> *mut c_void {
 pub extern "C" fn tl_device_tensor_hardsigmoid(t: *mut c_void) -> *mut c_void {
     dispatch(|d| d.tensor_hardsigmoid(t))
 }
+/// @ffi_sig (Tensor*, i64, Tensor*, Tensor*, f64) -> Tensor*
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_device_tensor_group_norm(input: *mut c_void, num_groups: i64, weight: *mut c_void, bias: *mut c_void, eps: f64) -> *mut c_void {
+    dispatch(|d| d.tensor_group_norm(input, num_groups, weight, bias, eps))
+}
+/// @ffi_sig (Tensor*, i64, i64) -> Tensor*
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_device_tensor_adaptive_avg_pool2d(input: *mut c_void, output_h: i64, output_w: i64) -> *mut c_void {
+    dispatch(|d| d.tensor_adaptive_avg_pool2d(input, output_h, output_w))
+}
+/// @ffi_sig (Tensor*, i64, i64, f32) -> Tensor*
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_device_tensor_pad(input: *mut c_void, pad_left: i64, pad_right: i64, value: f32) -> *mut c_void {
+    dispatch(|d| d.tensor_pad(input, pad_left, pad_right, value))
+}
+/// @ffi_sig (Tensor*, Tensor*, Tensor*, f64) -> Tensor*
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_device_tensor_instance_norm(input: *mut c_void, weight: *mut c_void, bias: *mut c_void, eps: f64) -> *mut c_void {
+    dispatch(|d| d.tensor_instance_norm(input, weight, bias, eps))
+}
 /// @ffi_sig (Tensor*) -> Tensor*
 /// 入力テンソルと同じ形状のゼロテンソルを生成
 #[unsafe(no_mangle)]
