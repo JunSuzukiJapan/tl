@@ -114,13 +114,21 @@ pub enum Type {
     Usize,
     Entity, // Logic Entity
 
-    // Tensor type: Tensor<Type, Rank>
-    // NOTE: Tensor には勾配情報を持たせてはいけない。
-    //       勾配(grad)を使う場合は、GradTensor 型を使うこと。
+    // ───────────────────────────────────────────────────────────────────────
+    // 【設計原則】勾配追跡の型レベル分離
+    //
+    // TLでは勾配の有無を型システムで静的に区別する:
+    //   - Tensor    = 勾配なし（推論用）
+    //   - GradTensor = 勾配あり（学習用）
+    //
+    // この設計により、PyTorchの no_grad のようなランタイムフラグは不要。
+    // 勾配の有無はコンパイル時に決定されるため、実行時に切り替えることはない。
+    // ───────────────────────────────────────────────────────────────────────
+
+    /// 勾配を追跡しないテンソル（推論・データ処理用）
     Tensor(Box<Type>, usize),
 
-    // GradTensor type: GradTensor<Type, Rank> (with autograd tracking)
-    // 勾配追跡付きテンソル。freeze/unfreeze, clip_grad_value, clip_grad_norm 等のメソッドはこの型専用。
+    /// 勾配追跡付きテンソル（学習用）。freeze/unfreeze, clip_grad_value 等はこの型専用。
     GradTensor(Box<Type>, usize),
 
     // Tensor with shape information for inference

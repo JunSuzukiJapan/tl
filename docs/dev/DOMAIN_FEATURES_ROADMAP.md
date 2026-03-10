@@ -4,6 +4,12 @@
 > **実装を開始する前に、必ず [MEMORY_MANAGEMENT_STRATEGY.md](MEMORY_MANAGEMENT_STRATEGY.md) を読むこと。**
 > TLのメモリ管理はARCレジストリとプール制御に基づいており、新しいテンソル操作やNN層を追加する際にはこの戦略に従う必要がある。
 
+> [!IMPORTANT]
+> **勾配追跡は型レベルで分離されている。**
+> - `Tensor` = 勾配なし（推論用）、`GradTensor` = 勾配あり（学習用）
+> - PyTorchの `no_grad` のようなランタイムフラグは**不要かつ禁止**
+> - 詳細: [.agent/DESIGN_PRINCIPLES.md](../../.agent/DESIGN_PRINCIPLES.md)
+
 DOMAIN_FEATURES_ANALYSIS.md の分析結果に基づく実装計画。
 セクション6（ドキュメント乖離）は修正済みのため除外。
 既に実装済みの機能（squeeze/unsqueeze/flatten/permute/contiguous/cat/gather/比較演算子/dropout/shape/ndim/save/to_i64等）も除外。
