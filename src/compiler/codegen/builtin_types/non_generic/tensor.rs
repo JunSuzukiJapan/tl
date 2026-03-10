@@ -98,6 +98,10 @@ pub fn register_tensor_types(manager: &mut TypeManager) {
     tensor.register_evaluated_instance_method("std", compile_tensor_std_impl, vec![Type::I64], any_tensor.clone());
     tensor.register_evaluated_instance_method("std", compile_tensor_std_impl, vec![Type::I64, Type::Bool], any_tensor.clone());
 
+    tensor.register_evaluated_instance_method("prod", compile_tensor_prod_impl, vec![], any_tensor.clone());
+    tensor.register_evaluated_instance_method("prod", compile_tensor_prod_impl, vec![Type::I64], any_tensor.clone());
+    tensor.register_evaluated_instance_method("prod", compile_tensor_prod_impl, vec![Type::I64, Type::Bool], any_tensor.clone());
+
     tensor.register_evaluated_instance_method("argmax", compile_tensor_argmax_impl, vec![Type::I64], any_tensor.clone());
     tensor.register_evaluated_instance_method("argmin", compile_tensor_argmin_impl, vec![Type::I64], any_tensor.clone());
 
@@ -110,6 +114,11 @@ pub fn register_tensor_types(manager: &mut TypeManager) {
     // masked_fill(mask, value) -> Tensor
     tensor.register_evaluated_instance_method("masked_fill", compile_tensor_masked_fill, vec![Type::Tensor(Box::new(Type::F32), 0), Type::F32], any_tensor.clone());
     tensor.register_evaluated_instance_method("masked_fill", compile_tensor_masked_fill, vec![Type::Tensor(Box::new(Type::F32), 0), Type::F64], any_tensor.clone());
+
+    // fill_(value) -> void (in-place)
+    tensor.register_evaluated_instance_method("fill_", compile_tensor_fill_, vec![Type::F32], Type::Void);
+    tensor.register_evaluated_instance_method("fill_", compile_tensor_fill_, vec![Type::F64], Type::Void);
+
     tensor.register_evaluated_instance_method("clone", compile_tensor_clone, vec![], any_tensor.clone());
     tensor.register_evaluated_instance_method("shallow_clone", compile_tensor_shallow_clone, vec![], any_tensor.clone());
     tensor.register_evaluated_instance_method("grad", compile_tensor_grad, vec![], any_tensor.clone());
@@ -757,6 +766,9 @@ fn compile_tensor_var_impl<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<
 }
 fn compile_tensor_std_impl<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
     compile_tensor_reduce_generic(c, o, t, a, "std")
+}
+fn compile_tensor_prod_impl<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    compile_tensor_reduce_generic(c, o, t, a, "prod")
 }
 fn compile_tensor_sum_impl<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
     compile_tensor_reduce_generic(c, o, t, a, "sum")
@@ -1571,4 +1583,22 @@ fn compile_tensor_masked_fill<'ctx>(
     let call = codegen.builder.build_call(f, &[obj.into(), mask_val.into(), f32_val.into()], "mfill_res").map_err(|e| e.to_string())?;
     let v = codegen.check_tensor_result(call, "masked_fill_error")?;
     Ok((v, obj_ty))
+}
+
+fn compile_tensor_fill_<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj: BasicValueEnum<'ctx>,
+    _obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.is_empty() { return Err("fill_ requires a value argument".into()); }
+    let f32_type = codegen.context.f32_type();
+    let f32_val = match args[0].1 {
+        Type::F32 => args[0].0.into_float_value(),
+        Type::F64 => codegen.builder.build_float_trunc(args[0].0.into_float_value(), f32_type, "ftrunc").map_err(|e| e.to_string())?,
+        _ => return Err("fill_ value must be f32 or f64".into()),
+    };
+    let f = codegen.module.get_function("tl_tensor_fill_").ok_or("tl_tensor_fill_ not found")?;
+    codegen.builder.build_call(f, &[obj.into(), f32_val.into()], "").map_err(|e| e.to_string())?;
+    Ok((codegen.context.i64_type().const_int(0, false).into(), Type::Void))
 }

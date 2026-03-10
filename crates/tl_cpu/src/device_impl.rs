@@ -74,7 +74,6 @@ impl IDevice for CpuDevice {
     }
 
     fn tensor_var(&self, tensor: *mut c_void, dim: i32) -> BackendResult<*mut c_void> {
-        use crate::tensor::CpuTensor as CT;
         let tt = unsafe { &*t(tensor) };
         let mean = tt.mean_impl(dim)?;
         let diff = tt.sub_impl(&mean)?;
@@ -91,6 +90,28 @@ impl IDevice for CpuDevice {
         unsafe { let _ = std::sync::Arc::from_raw(var_ptr as *const std::cell::UnsafeCell<crate::tensor::CpuTensor>); }
         let arc = std::sync::Arc::new(std::cell::UnsafeCell::new(result));
         Ok(std::sync::Arc::into_raw(arc) as *mut c_void)
+    }
+
+    fn tensor_prod(&self, tensor: *mut c_void, dim: i32) -> BackendResult<*mut c_void> {
+        let tt = unsafe { &*t(tensor) };
+        // prod = exp(sum(log(abs(x)))) with sign tracking
+        // Simpler: use log-sum-exp approach: prod = exp(sum(log(x)))
+        let log_t = tt.log_impl()?;
+        let sum_log = log_t.sum_impl(dim)?;
+        let result = sum_log.exp_impl()?;
+        let arc = std::sync::Arc::new(std::cell::UnsafeCell::new(result));
+        Ok(std::sync::Arc::into_raw(arc) as *mut c_void)
+    }
+
+    fn tensor_fill_(&self, tensor: *mut c_void, value: f32) -> BackendResult<()> {
+        let tt = unsafe { &*t(tensor) };
+        let numel: usize = tt.shape().iter().product();
+        let filled = crate::tensor::CpuTensor::from_slice(&vec![value; numel], tt.shape(), crate::DType::F32);
+        unsafe {
+            let dst = &mut *(tensor as *mut crate::tensor::CpuTensor);
+            *dst = filled;
+        }
+        Ok(())
     }
 
     // ========== メモリ管理 ==========

@@ -84,6 +84,26 @@ impl IDevice for MetalDeviceImpl {
         Ok(ffi_ops::make_tensor(result) as *mut c_void)
     }
 
+    fn tensor_prod(&self, tensor: *mut c_void, dim: i32) -> BackendResult<*mut c_void> {
+        let tt = unsafe { &*t(tensor) };
+        let log_t = tt.log_impl()?;
+        let sum_log = log_t.sum_impl(dim)?;
+        let result = sum_log.exp_impl()?;
+        Ok(ffi_ops::make_tensor(result) as *mut c_void)
+    }
+
+    fn tensor_fill_(&self, tensor: *mut c_void, value: f32) -> BackendResult<()> {
+        let tt = unsafe { &*t(tensor) };
+        let numel: usize = tt.shape().iter().product();
+        // Create filled tensor and copy data
+        let filled = MetalTensor::from_slice(&vec![value; numel], tt.shape(), crate::DType::F32);
+        unsafe {
+            let dst = &mut *(tensor as *mut MetalTensor);
+            *dst = filled;
+        }
+        Ok(())
+    }
+
     // ========== メモリ管理 ==========
     #[inline] fn tensor_clone(&self, a: *mut c_void) -> BackendResult<*mut c_void> { v(ffi::tl_metal_clone(t(a))) }
     #[inline] fn tensor_shallow_clone(&self, a: *mut c_void) -> BackendResult<*mut c_void> { v(ffi::tl_metal_shallow_clone(t(a))) }

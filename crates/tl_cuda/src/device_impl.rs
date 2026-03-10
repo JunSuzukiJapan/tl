@@ -98,6 +98,8 @@ impl IDevice for CudaDeviceImpl {
     fn tensor_to_vec_f32(&self, _t: *mut c_void) -> BackendResult<(*mut f32, usize)> { unimplemented!("CUDA to_vec_f32") }
     fn tensor_var(&self, _t: *mut c_void, _dim: i32) -> BackendResult<*mut c_void> { unimplemented!("CUDA var") }
     fn tensor_std(&self, _t: *mut c_void, _dim: i32) -> BackendResult<*mut c_void> { unimplemented!("CUDA std") }
+    fn tensor_prod(&self, _t: *mut c_void, _dim: i32) -> BackendResult<*mut c_void> { unimplemented!("CUDA prod") }
+    fn tensor_fill_(&self, _t: *mut c_void, _value: f32) -> BackendResult<()> { unimplemented!("CUDA fill_") }
     // ========== メモリ管理 ==========
     fn tensor_clone(&self, t: *mut c_void) -> BackendResult<*mut c_void> {
         Ok(v(crate::ffi::tl_cuda_clone(p(t))))

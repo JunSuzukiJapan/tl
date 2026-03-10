@@ -275,6 +275,21 @@ pub extern "C" fn tl_device_tensor_var(t: *mut c_void, dim: i32) -> *mut c_void 
 pub extern "C" fn tl_device_tensor_std(t: *mut c_void, dim: i32) -> *mut c_void {
     dispatch(|d| d.tensor_std(t, dim))
 }
+/// @ffi_sig (Tensor*, i64, bool) -> Tensor*
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_device_tensor_prod_dim(t: *mut c_void, dim: i64, _keepdim: bool) -> *mut c_void {
+    dispatch(|d| d.tensor_prod(t, dim as i32))
+}
+/// @ffi_sig (Tensor*) -> Tensor*
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_device_tensor_prod(t: *mut c_void) -> *mut c_void {
+    dispatch(|d| d.tensor_prod(t, -1))
+}
+/// @ffi_sig (Tensor*, f32) -> void
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_device_tensor_fill_(t: *mut c_void, value: f32) {
+    dispatch(|d| d.tensor_fill_(t, value))
+}
 /// @ffi_sig (Tensor*) -> Tensor*
 /// 入力テンソルと同じ形状のゼロテンソルを生成
 #[unsafe(no_mangle)]

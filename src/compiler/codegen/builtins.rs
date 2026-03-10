@@ -902,6 +902,14 @@ pub fn declare_runtime_functions<'ctx>(
     add_fn("tl_tensor_var", unary_type);
     add_fn("tl_tensor_std", unary_type);
 
+    // tl_tensor_prod_dim / tl_tensor_prod (same sigs as var/std)
+    add_fn("tl_tensor_prod_dim", reduce_dim_type);
+    add_fn("tl_tensor_prod", unary_type);
+
+    // tl_tensor_fill_(t: void*, value: f32) -> void
+    let fill_type = context.void_type().fn_type(&[void_ptr.into(), f32_type.into()], false);
+    add_fn("tl_tensor_fill_", fill_type);
+
     // VarBuilder
     // tl_varbuilder_get(name: *const c_char, rank: usize, shape: *const usize) -> *mut OpaqueTensor
     let varbuilder_get_type =
@@ -1643,6 +1651,10 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_tensor_std_dim") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_std_dim as *const () as usize); }
     if let Some(f) = module.get_function("tl_tensor_var") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_var as *const () as usize); }
     if let Some(f) = module.get_function("tl_tensor_std") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_std as *const () as usize); }
+    // [IDevice] prod / fill_ → device_ffi
+    if let Some(f) = module.get_function("tl_tensor_prod_dim") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_prod_dim as *const () as usize); }
+    if let Some(f) = module.get_function("tl_tensor_prod") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_prod as *const () as usize); }
+    if let Some(f) = module.get_function("tl_tensor_fill_") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_fill_ as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
     if let Some(f) = module.get_function("tl_tensor_sub_assign") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_sub_assign as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi

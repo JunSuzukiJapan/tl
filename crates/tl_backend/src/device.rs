@@ -43,6 +43,10 @@ pub trait IDevice {
     // ========== リダクション ==========
     fn tensor_var(&self, t: *mut c_void, dim: i32) -> BackendResult<*mut c_void>;
     fn tensor_std(&self, t: *mut c_void, dim: i32) -> BackendResult<*mut c_void>;
+    fn tensor_prod(&self, t: *mut c_void, dim: i32) -> BackendResult<*mut c_void>;
+
+    // ========== インプレース操作 ==========
+    fn tensor_fill_(&self, t: *mut c_void, value: f32) -> BackendResult<()>;
 
     // ========== メモリ管理 ==========
     fn tensor_clone(&self, t: *mut c_void) -> BackendResult<*mut c_void>;

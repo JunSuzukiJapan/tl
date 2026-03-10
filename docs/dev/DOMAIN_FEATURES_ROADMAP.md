@@ -114,12 +114,12 @@ DOMAIN_FEATURES_ANALYSIS.md の分析結果に基づく実装計画。
   - [ ] 全バックエンド: element-wise kernel
   - [ ] FFI + TypeManager登録
 
-- [ ] `fill_(value)` — インプレース埋め込み
-  - [ ] 全バックエンド実装
+- [x] `fill_(value)` — インプレース埋め込み
+  - [x] CPU/Metal 実装、CUDA unimplemented!()
 
-- [ ] `prod(dim?)` — 全要素の積
-  - [ ] 全バックエンド: reduction kernel
-  - [ ] FFI + TypeManager登録
+- [x] `prod(dim?)` — 全要素の積
+  - [x] CPU/Metal: reduction kernel (exp(sum(log)))
+  - [x] FFI + TypeManager登録
 
 - [ ] `cumsum(dim)` — 累積和
   - [ ] 全バックエンド: parallel prefix sum
