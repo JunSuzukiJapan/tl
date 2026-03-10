@@ -46,6 +46,14 @@ impl IDevice for CpuDevice {
     #[inline] fn tensor_linspace(&self, start: f64, end: f64, steps: usize) -> BackendResult<*mut c_void> { check(ffi::tl_cpu_tensor_linspace(start, end, steps)) }
     #[inline] fn tensor_rand(&self, rank: usize, shape: *const usize, req_grad: bool) -> BackendResult<*mut c_void> { check(ffi::tl_cpu_tensor_rand(rank as i64, shape, req_grad)) }
 
+    // ========== 要素操作 ==========
+    fn tensor_where_cond(&self, cond: *mut c_void, x: *mut c_void, y: *mut c_void) -> BackendResult<*mut c_void> {
+        let (tc, tx, ty) = unsafe { (&*t(cond), &*t(x), &*t(y)) };
+        let result = CpuTensor::where_cond(tc, tx, ty)?;
+        let arc = std::sync::Arc::new(std::cell::UnsafeCell::new(result));
+        Ok(std::sync::Arc::into_raw(arc) as *mut c_void)
+    }
+
     // ========== メモリ管理 ==========
     #[inline] fn tensor_clone(&self, a: *mut c_void) -> BackendResult<*mut c_void> { check(ffi::tl_cpu_tensor_clone(t(a))) }
     #[inline] fn tensor_shallow_clone(&self, a: *mut c_void) -> BackendResult<*mut c_void> { check(ffi::tl_cpu_tensor_shallow_clone(t(a))) }

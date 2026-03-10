@@ -88,6 +88,12 @@ impl IDevice for CudaDeviceImpl {
     fn tensor_rand(&self, rank: usize, shape: *const usize, req_grad: bool) -> BackendResult<*mut c_void> {
         Ok(v(ffi_ops::tl_cuda_rand(rank as i64, shape, req_grad)))
     }
+    // ========== 要素操作 ==========
+    fn tensor_where_cond(&self, cond: *mut c_void, x: *mut c_void, y: *mut c_void) -> BackendResult<*mut c_void> {
+        let (tc, tx, ty) = unsafe { (&*p(cond), &*p(x), &*p(y)) };
+        let result = CudaTensor::where_cond_impl(tc, tx, ty)?;
+        Ok(v(ffi_ops::make_tensor(result)))
+    }
     // ========== メモリ管理 ==========
     fn tensor_clone(&self, t: *mut c_void) -> BackendResult<*mut c_void> {
         Ok(v(crate::ffi::tl_cuda_clone(p(t))))

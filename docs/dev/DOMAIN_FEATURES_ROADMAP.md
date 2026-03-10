@@ -75,10 +75,10 @@ DOMAIN_FEATURES_ANALYSIS.md の分析結果に基づく実装計画。
 
 ### 2.1 高優先度
 
-- [ ] `where_cond(condition, x, y)` — TL APIとして公開
-  - [ ] バックエンド: 実装済み（全バックエンドに`where_cond_impl`あり）
-  - [ ] TypeManager: インスタンスメソッドまたはグローバル関数として登録
-  - [ ] テスト
+- [x] `where_cond(condition, x, y)` — TL APIとして公開
+  - [x] バックエンド: 実装済み（全バックエンドに`where_cond_impl`あり）
+  - [x] TypeManager: evaluated 静的メソッドとして登録
+  - [x] テスト
 
 - [ ] `masked_fill(mask, value)` — マスク付き値埋め
   - [ ] tl_cpu: `masked_fill_impl`

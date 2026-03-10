@@ -57,6 +57,9 @@ pub fn register_tensor_types(manager: &mut TypeManager) {
     // ones_like(t) -> Tensor (same shape as t, filled with ones)
     tensor.register_evaluated_static_method("ones_like", compile_tensor_ones_like, vec![Type::Tensor(Box::new(Type::F32), 0)], Type::Tensor(Box::new(Type::F32), 0));
 
+    // where_cond(cond, x, y) -> Tensor
+    tensor.register_evaluated_static_method("where_cond", compile_tensor_where_cond, vec![Type::Tensor(Box::new(Type::F32), 0), Type::Tensor(Box::new(Type::F32), 0), Type::Tensor(Box::new(Type::F32), 0)], Type::Tensor(Box::new(Type::F32), 0));
+
     // from_vec(data: Vec<f32>, shape: Vec<i64>) -> Tensor
     tensor.register_evaluated_static_method("from_vec", compile_from_vec_f32, vec![Type::Struct("Vec".into(), vec![Type::F32]), Type::Struct("Vec".into(), vec![Type::I64])], Type::Tensor(Box::new(Type::F32), 0));
 
@@ -1515,5 +1518,17 @@ fn compile_tensor_randn_like<'ctx>(
     let f = codegen.module.get_function("tl_tensor_randn_like").ok_or("tl_tensor_randn_like not found")?;
     let call = codegen.builder.build_call(f, &[args[0].0.into()], "randn_like_res").map_err(|e| e.to_string())?;
     let v = codegen.check_tensor_result(call, "randn_like_error")?;
+    Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
+}
+
+fn compile_tensor_where_cond<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() < 3 { return Err("Tensor::where_cond requires (cond, x, y) arguments".into()); }
+    let f = codegen.module.get_function("tl_tensor_where_cond").ok_or("tl_tensor_where_cond not found")?;
+    let call = codegen.builder.build_call(f, &[args[0].0.into(), args[1].0.into(), args[2].0.into()], "where_res").map_err(|e| e.to_string())?;
+    let v = codegen.check_tensor_result(call, "where_error")?;
     Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
 }

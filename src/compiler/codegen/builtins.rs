@@ -885,6 +885,10 @@ pub fn declare_runtime_functions<'ctx>(
     add_fn("tl_tensor_rand_like", unary_type);
     add_fn("tl_tensor_randn_like", unary_type);
 
+    // tl_tensor_where_cond(cond, x, y) -> Tensor*
+    let ternary_type = void_ptr.fn_type(&[void_ptr.into(), void_ptr.into(), void_ptr.into()], false);
+    add_fn("tl_tensor_where_cond", ternary_type);
+
     // VarBuilder
     // tl_varbuilder_get(name: *const c_char, rank: usize, shape: *const usize) -> *mut OpaqueTensor
     let varbuilder_get_type =
@@ -1618,6 +1622,8 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_tensor_rand") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_rand as *const () as usize); }
     if let Some(f) = module.get_function("tl_tensor_rand_like") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_rand_like as *const () as usize); }
     if let Some(f) = module.get_function("tl_tensor_randn_like") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_randn_like as *const () as usize); }
+    // [IDevice] where_cond → device_ffi
+    if let Some(f) = module.get_function("tl_tensor_where_cond") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_where_cond as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
     if let Some(f) = module.get_function("tl_tensor_sub_assign") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_sub_assign as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi

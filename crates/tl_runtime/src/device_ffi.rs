@@ -241,6 +241,12 @@ pub extern "C" fn tl_device_tensor_randn_like(t: *mut c_void) -> *mut c_void {
     dispatch(|d| d.tensor_free(shape_t));
     result
 }
+/// @ffi_sig (Tensor*, Tensor*, Tensor*) -> Tensor*
+/// condition テンソルに基づいて x, y を選択
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_device_tensor_where_cond(cond: *mut c_void, x: *mut c_void, y: *mut c_void) -> *mut c_void {
+    dispatch(|d| d.tensor_where_cond(cond, x, y))
+}
 /// @ffi_sig (Tensor*) -> Tensor*
 /// 入力テンソルと同じ形状のゼロテンソルを生成
 #[unsafe(no_mangle)]

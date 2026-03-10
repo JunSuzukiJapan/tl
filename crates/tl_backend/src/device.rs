@@ -33,6 +33,9 @@ pub trait IDevice {
     fn tensor_linspace(&self, start: f64, end: f64, steps: usize) -> BackendResult<*mut c_void>;
     fn tensor_rand(&self, rank: usize, shape: *const usize, req_grad: bool) -> BackendResult<*mut c_void>;
 
+    // ========== 要素操作 ==========
+    fn tensor_where_cond(&self, cond: *mut c_void, x: *mut c_void, y: *mut c_void) -> BackendResult<*mut c_void>;
+
     // ========== メモリ管理 ==========
     fn tensor_clone(&self, t: *mut c_void) -> BackendResult<*mut c_void>;
     fn tensor_shallow_clone(&self, t: *mut c_void) -> BackendResult<*mut c_void>;
