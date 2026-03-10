@@ -500,10 +500,6 @@ pub fn declare_runtime_functions<'ctx>(
     let clear_grads_type = void_type.fn_type(&[], false);
     add_fn("tl_clear_grads", clear_grads_type);
 
-    // tl_set_grad_enabled(enabled: bool) -> void  (no_grad ブロック用)
-    let set_grad_enabled_type = void_type.fn_type(&[context.bool_type().into()], false);
-    add_fn("tl_set_grad_enabled", set_grad_enabled_type);
-
     // tl_tensor_set_f32_md(t: *mut, indices: *const i64, rank: usize, val: f32) -> *mut
     let set_md_type = void_ptr.fn_type(
         &[
@@ -529,8 +525,6 @@ pub fn declare_runtime_functions<'ctx>(
 
     // [IDevice] tl_clear_grads → device_ffi
     if let Some(f) = module.get_function("tl_clear_grads") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_clear_grads as *const () as usize); }
-    // tl_set_grad_enabled → system.rs
-    if let Some(f) = module.get_function("tl_set_grad_enabled") { execution_engine.add_global_mapping(&f, runtime::tl_set_grad_enabled as *const () as usize); }
     if let Some(f) = module.get_function("tl_file_exists") {
         execution_engine.add_global_mapping(&f, runtime::tl_file_exists as *const () as usize);
     }

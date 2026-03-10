@@ -1135,12 +1135,6 @@ fn parse_loop_stmt(input: Input) -> IResult<Input, Stmt, ParserError> {
     Ok((input, Spanned::new(StmtKind::Loop { body }, crate::compiler::error::Span::default())))
 }
 
-fn parse_no_grad_stmt(input: Input) -> IResult<Input, Stmt, ParserError> {
-    let (input, _) = satisfy_token(|t| matches!(t, Token::Identifier(s) if s == "no_grad"))(input)?;
-    let (input, body) = parse_block_stmts(input)?;
-    Ok((input, Spanned::new(StmtKind::NoGrad { body }, crate::compiler::error::Span::default())))
-}
-
 fn parse_for_stmt(input: Input) -> IResult<Input, Stmt, ParserError> {
     let (input, _) = expect_token(Token::For)(input)?;
     let (input, loop_var) = identifier(input)?;
@@ -1186,7 +1180,6 @@ pub fn parse_stmt(input: Input) -> IResult<Input, Stmt, ParserError> {
         parse_while_stmt,
         parse_for_stmt,
         parse_loop_stmt,
-        parse_no_grad_stmt,
         parse_break_stmt,
         parse_continue_stmt,
         parse_match_stmt, // Match statement must come before parse_assign_stmt

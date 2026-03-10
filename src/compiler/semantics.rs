@@ -2124,14 +2124,6 @@ impl SemanticAnalyzer {
                 self.loop_depth -= 1;
                 Ok(())
             }
-            StmtKind::NoGrad { body } => {
-                self.enter_scope();
-                for stmt in body {
-                    self.check_stmt(stmt)?;
-                }
-                self.exit_scope();
-                Ok(())
-            }
             StmtKind::Use { path, alias, items } => {
                 // Relations map now uses Vec<String> path segments as keys.
                 // Use path segments directly for lookup.

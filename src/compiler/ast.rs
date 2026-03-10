@@ -434,10 +434,6 @@ pub enum StmtKind {
     Loop {
         body: Vec<Stmt>,
     },
-    /// `no_grad { ... }` — 勾配計算を一時的に無効化するブロック
-    NoGrad {
-        body: Vec<Stmt>,
-    },
 }
 
 #[derive(Debug, Clone, PartialEq)]

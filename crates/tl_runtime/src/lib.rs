@@ -111,7 +111,6 @@ pub use system::{
     tl_set_device, tl_varbuilder_get, tl_varbuilder_get_from_tensor, tl_varbuilder_grad,
     tl_add_parameter, tl_register_parameter, tl_save_all_params, tl_load_all_params,
     tl_update_all_params, tl_clear_grads,
-    tl_set_grad_enabled, tl_is_grad_enabled,
     tl_qtensor_free, tl_qtensor_matmul,
     tl_metal_sync, tl_report_runtime_error, tl_handle_runtime_error,
 };
