@@ -881,6 +881,9 @@ impl<'ctx> CodeGenerator<'ctx> {
             StmtKind::Loop { body } => {
                 self.transform_method_body_enum_inits(body);
             }
+            StmtKind::NoGrad { body } => {
+                self.transform_method_body_enum_inits(body);
+            }
             StmtKind::Assign { value, .. } => {
                 self.transform_expr_enum_inits(value);
             }

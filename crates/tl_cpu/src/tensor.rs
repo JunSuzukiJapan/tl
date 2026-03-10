@@ -281,6 +281,61 @@ impl CpuTensor {
         self.autograd.as_ref().map_or(false, |a| a.requires_grad)
     }
 
+    pub fn set_requires_grad(&mut self, req_grad: bool) {
+        if req_grad {
+            if self.autograd.is_none() {
+                self.autograd = Some(Box::new(AutogradMeta {
+                    grad: None,
+                    grad_fn: None,
+                    requires_grad: true,
+                }));
+            } else {
+                if let Some(ref mut meta) = self.autograd {
+                    meta.requires_grad = true;
+                }
+            }
+        } else {
+            if let Some(ref mut meta) = self.autograd {
+                meta.requires_grad = false;
+                meta.grad = None;       // 勾配計算を無効化したなら勾配データも消す
+                meta.grad_fn = None;    // グラフからも切り離す
+            }
+        }
+    }
+
+    pub fn clip_grad_value(&mut self, min: f32, max: f32) -> tl_backend::BackendResult<()> {
+        if let Some(ref mut meta) = self.autograd {
+            if let Some(ref mut g) = meta.grad {
+                let clamped: Vec<f32> = g.data_f32.iter()
+                    .map(|&x| if x < min { min } else if x > max { max } else { x })
+                    .collect();
+                g.data_f32 = clamped;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn clip_grad_norm(&mut self, max_norm: f32, norm_type: f32) -> tl_backend::BackendResult<f32> {
+        let mut total_norm = 0.0f32;
+        if let Some(ref mut meta) = self.autograd {
+            if let Some(ref mut g) = meta.grad {
+                if norm_type == std::f32::INFINITY {
+                    total_norm = g.data_f32.iter().fold(0.0f32, |max, &x| max.max(x.abs()));
+                } else {
+                    let sum: f32 = g.data_f32.iter().map(|&x| x.abs().powf(norm_type)).sum();
+                    total_norm = sum.powf(1.0 / norm_type);
+                }
+                
+                let clip_coef = max_norm / (total_norm + 1e-6);
+                if clip_coef < 1.0 {
+                    let scaled: Vec<f32> = g.data_f32.iter().map(|&x| x * clip_coef).collect();
+                    g.data_f32 = scaled;
+                }
+            }
+        }
+        Ok(total_norm)
+    }
+
     pub fn enable_grad(&mut self) {
         if self.autograd.is_none() {
             self.autograd = Some(Box::new(AutogradMeta {

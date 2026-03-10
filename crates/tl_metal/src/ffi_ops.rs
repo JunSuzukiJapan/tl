@@ -1434,6 +1434,35 @@ pub fn tl_metal_free(t: *mut OpaqueTensor) {
     }
 }
 
+// ========== Autograd 拡張 ==========
+
+#[no_mangle]
+pub fn tl_metal_set_requires_grad(t: *mut OpaqueTensor, req_grad: bool) {
+    if t.is_null() { return; }
+    unsafe {
+        (&mut *t).set_requires_grad(req_grad);
+    }
+}
+
+#[no_mangle]
+pub fn tl_metal_clip_grad_value(t: *mut OpaqueTensor, min: f64, max: f64) {
+    if t.is_null() { return; }
+    unsafe {
+        let _ = (&mut *t).clip_grad_value(min as f32, max as f32);
+    }
+}
+
+#[no_mangle]
+pub fn tl_metal_clip_grad_norm(t: *mut OpaqueTensor, max_norm: f64, norm_type: f64) -> f64 {
+    if t.is_null() { return 0.0; }
+    unsafe {
+        match (&mut *t).clip_grad_norm(max_norm as f32, norm_type as f32) {
+            Ok(norm) => norm as f64,
+            Err(_) => 0.0,
+        }
+    }
+}
+
 // ========== 後方互換用エイリアス ==========
 
 // ========== テンソル情報取得 ==========

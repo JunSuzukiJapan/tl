@@ -635,6 +635,24 @@ impl IDevice for CpuDevice {
         Ok(())
     }
 
+    fn tensor_set_requires_grad(&self, tensor: *mut c_void, req_grad: bool) -> BackendResult<()> {
+        let tt = unsafe { &mut *t(tensor) };
+        tt.set_requires_grad(req_grad);
+        Ok(())
+    }
+
+    fn tensor_clip_grad_value(&self, tensor: *mut c_void, min: f64, max: f64) -> BackendResult<()> {
+        let tt = unsafe { &mut *t(tensor) };
+        tt.clip_grad_value(min as f32, max as f32)?;
+        Ok(())
+    }
+
+    fn tensor_clip_grad_norm(&self, tensor: *mut c_void, max_norm: f64, norm_type: f64) -> BackendResult<f64> {
+        let tt = unsafe { &mut *t(tensor) };
+        let norm = tt.clip_grad_norm(max_norm as f32, norm_type as f32)?;
+        Ok(norm as f64)
+    }
+
     fn tensor_broadcast_to(&self, tensor: *mut c_void, shape: &[usize]) -> BackendResult<*mut c_void> {
         let tt = unsafe { &*t(tensor) };
         let result = tt.broadcast_to(shape)?;

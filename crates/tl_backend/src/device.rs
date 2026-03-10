@@ -191,7 +191,10 @@ pub trait IDevice {
     fn tensor_grad(&self, t: *mut c_void) -> BackendResult<*mut c_void>;
     fn tensor_detach(&self, t: *mut c_void, req_grad: bool) -> BackendResult<*mut c_void>;
     fn tensor_enable_grad(&self, t: *mut c_void) -> BackendResult<()>;
+    fn tensor_set_requires_grad(&self, t: *mut c_void, req_grad: bool) -> BackendResult<()>;
     fn clear_grads(&self) -> BackendResult<()>;
+    fn tensor_clip_grad_value(&self, t: *mut c_void, min: f64, max: f64) -> BackendResult<()>;
+    fn tensor_clip_grad_norm(&self, t: *mut c_void, max_norm: f64, norm_type: f64) -> BackendResult<f64>;
 
     // ========== 形状操作 ==========
     fn tensor_reshape_new(&self, t: *mut c_void, new_shape: *mut c_void) -> BackendResult<*mut c_void>;

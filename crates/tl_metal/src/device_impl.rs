@@ -636,6 +636,9 @@ impl IDevice for MetalDeviceImpl {
     #[inline] fn tensor_grad(&self, a: *mut c_void) -> BackendResult<*mut c_void> { v(ffi_ops::tl_metal_grad(t(a))) }
     #[inline] fn tensor_detach(&self, a: *mut c_void, _req_grad: bool) -> BackendResult<*mut c_void> { v(ffi_ops::tl_metal_detach(t(a))) }
     #[inline] fn tensor_enable_grad(&self, a: *mut c_void) -> BackendResult<()> { ffi_ops::tl_metal_enable_grad(t(a)); Ok(()) }
+    #[inline] fn tensor_set_requires_grad(&self, a: *mut c_void, req_grad: bool) -> BackendResult<()> { ffi_ops::tl_metal_set_requires_grad(t(a), req_grad); Ok(()) }
+    #[inline] fn tensor_clip_grad_value(&self, a: *mut c_void, min: f64, max: f64) -> BackendResult<()> { ffi_ops::tl_metal_clip_grad_value(t(a), min, max); Ok(()) }
+    #[inline] fn tensor_clip_grad_norm(&self, a: *mut c_void, max_norm: f64, norm_type: f64) -> BackendResult<f64> { Ok(ffi_ops::tl_metal_clip_grad_norm(t(a), max_norm, norm_type)) }
     #[inline] fn clear_grads(&self) -> BackendResult<()> {
         // 各 for iteration 終了時にコマンドストリームを同期し、
         // Metal ドライバにメモリ回収の機会を与える。

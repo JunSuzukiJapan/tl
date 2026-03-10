@@ -286,10 +286,11 @@ DOMAIN_FEATURES_ANALYSIS.md の分析結果に基づく実装計画。
 
 - [ ] `Param::parameters() -> Vec<Tensor>` — 全パラメータ取得
 
-- [ ] `Param::freeze()` / `unfreeze()` — パラメータ凍結
+- [x] `Param::freeze()` / `unfreeze()` — パラメータ凍結
+  - [x] GradTensor のインスタンスメソッドとして実装済み (`GradTensor::freeze()` / `unfreeze()`)
 
-- [ ] 勾配クリッピング (`clip_grad_norm`, `clip_grad_value`)
-  - [ ] ランタイム実装
+- [x] 勾配クリッピング (`clip_grad_norm`, `clip_grad_value`)
+  - [x] GradTensor のインスタンスメソッドとして実装済み
 
 ---
 

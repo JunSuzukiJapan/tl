@@ -136,6 +136,26 @@ pub extern "C" fn tl_clear_grads() {
     // No-op: デバッグカウンタは削除済み
 }
 
+// ========== no_grad ブロック用: 勾配計算の有効/無効を切り替え ==========
+
+thread_local! {
+    static GRAD_ENABLED: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+}
+
+#[unsafe(no_mangle)]
+/// @ffi_sig (bool) -> void
+/// no_grad { ... } ブロックで使用。false で勾配計算を無効化し、true で復元する。
+pub extern "C" fn tl_set_grad_enabled(enabled: bool) {
+    GRAD_ENABLED.with(|g| g.set(enabled));
+}
+
+#[unsafe(no_mangle)]
+/// @ffi_sig () -> bool
+/// 現在の勾配計算の有効/無効状態を返す。
+pub extern "C" fn tl_is_grad_enabled() -> bool {
+    GRAD_ENABLED.with(|g| g.get())
+}
+
 /// QTensor 解放
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_qtensor_free(ptr: usize) {

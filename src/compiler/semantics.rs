@@ -2124,6 +2124,14 @@ impl SemanticAnalyzer {
                 self.loop_depth -= 1;
                 Ok(())
             }
+            StmtKind::NoGrad { body } => {
+                self.enter_scope();
+                for stmt in body {
+                    self.check_stmt(stmt)?;
+                }
+                self.exit_scope();
+                Ok(())
+            }
             StmtKind::Use { path, alias, items } => {
                 // Relations map now uses Vec<String> path segments as keys.
                 // Use path segments directly for lookup.
@@ -4222,7 +4230,12 @@ impl SemanticAnalyzer {
                         );
                     }
                     let t0 = self.check_expr(&mut args[0])?;
-                    return Ok(t0);
+                    let rank = match t0 {
+                        Type::Tensor(_, r) => r,
+                        Type::GradTensor(_, r) => r,
+                        _ => 0,
+                    };
+                    return Ok(Type::GradTensor(Box::new(Type::F32), rank));
                 } else if name == "backward" {
                     if args.len() != 1 {
                         return self.err(
@@ -5825,9 +5838,22 @@ impl SemanticAnalyzer {
                 let type_name = match &obj_type {
                     Type::Struct(name, _) => name.clone(),
                     Type::Enum(name, _) => name.clone(),
-                    Type::GradTensor(_, _) => "Tensor".to_string(),
+                    Type::GradTensor(_, _) => "Tensor".to_string(), // Tensorのメソッド定義を再利用する
                     _ => obj_type.get_base_name(),
                 };
+
+                // Limit specific GradTensor methods to only be called on GradTensor type instances
+                match method_name.as_str() {
+                    "freeze" | "unfreeze" | "clip_grad_value" | "clip_grad_norm" => {
+                        if !matches!(obj_type, Type::GradTensor(_, _)) {
+                            return self.err(
+                                SemanticError::MethodNotFound { type_name: "Tensor".into(), method_name: method_name.clone() },
+                                Some(expr.span.clone())
+                            );
+                        }
+                    }
+                    _ => {}
+                }
 
                 // Check AST methods first, then TypeManager
                 let method_data = if let Some(methods) = self.methods.get(&type_name) {

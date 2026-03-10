@@ -785,6 +785,32 @@ pub extern "C" fn tl_device_tensor_scale(a: *mut c_void, s: f32) -> *mut c_void 
     dispatch(|d| d.tensor_scale(a, s))
 }
 
+// ========== Autograd 拡張 ==========
+/// @ffi_sig (Tensor*, bool) -> void
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_device_tensor_set_requires_grad(t: *mut c_void, req_grad: bool) {
+    let _ = dispatch(|d| { d.tensor_set_requires_grad(t, req_grad); Ok(std::ptr::null_mut()) });
+}
+
+/// @ffi_sig (Tensor*, f64, f64) -> void
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_device_tensor_clip_grad_value(t: *mut c_void, min: f64, max: f64) {
+    let _ = dispatch(|d| { d.tensor_clip_grad_value(t, min, max); Ok(std::ptr::null_mut()) });
+}
+
+/// @ffi_sig (Tensor*, f64, f64) -> f64
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_device_tensor_clip_grad_norm(t: *mut c_void, max_norm: f64, norm_type: f64) -> f64 {
+    let mut norm = 0.0f64;
+    let _ = dispatch(|d| {
+        if let Ok(n) = d.tensor_clip_grad_norm(t, max_norm, norm_type) {
+            norm = n;
+        }
+        Ok(std::ptr::null_mut())
+    });
+    norm
+}
+
 // ========== インプレース演算 ==========
 /// @ffi_sig (Tensor*, Tensor*) -> void
 #[unsafe(no_mangle)]

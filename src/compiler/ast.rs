@@ -115,9 +115,12 @@ pub enum Type {
     Entity, // Logic Entity
 
     // Tensor type: Tensor<Type, Rank>
+    // NOTE: Tensor には勾配情報を持たせてはいけない。
+    //       勾配(grad)を使う場合は、GradTensor 型を使うこと。
     Tensor(Box<Type>, usize),
 
     // GradTensor type: GradTensor<Type, Rank> (with autograd tracking)
+    // 勾配追跡付きテンソル。freeze/unfreeze, clip_grad_value, clip_grad_norm 等のメソッドはこの型専用。
     GradTensor(Box<Type>, usize),
 
     // Tensor with shape information for inference
@@ -429,6 +432,10 @@ pub enum StmtKind {
     Break,
     Continue,
     Loop {
+        body: Vec<Stmt>,
+    },
+    /// `no_grad { ... }` — 勾配計算を一時的に無効化するブロック
+    NoGrad {
         body: Vec<Stmt>,
     },
 }

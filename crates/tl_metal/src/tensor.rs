@@ -268,6 +268,63 @@ impl MetalTensor {
         self.autograd.as_ref().map_or(false, |a| a.requires_grad)
     }
 
+    pub fn set_requires_grad(&mut self, req_grad: bool) {
+        if req_grad {
+            if self.autograd.is_none() {
+                self.autograd = Some(Box::new(AutogradMeta {
+                    grad: None,
+                    grad_fn: None,
+                    requires_grad: true,
+                }));
+            } else {
+                if let Some(ref mut meta) = self.autograd {
+                    meta.requires_grad = true;
+                }
+            }
+        } else {
+            if let Some(ref mut meta) = self.autograd {
+                meta.requires_grad = false;
+                meta.grad = None;       // 勾配データも消す
+                meta.grad_fn = None;    // グラフからも切り離す
+            }
+        }
+    }
+
+    pub fn clip_grad_value(&mut self, min: f32, max: f32) -> BackendResult<()> {
+        if let Some(ref mut meta) = self.autograd {
+            if let Some(ref mut g) = meta.grad {
+                // MetalTensor is immutable, so we must clone data, clamp it, and replace.
+                let mut data = g.to_vec::<f32>();
+                for x in data.iter_mut() {
+                    if *x < min { *x = min; } else if *x > max { *x = max; }
+                }
+                *g = MetalTensor::from_slice(&data, g.shape(), g.dtype());
+            }
+        }
+        Ok(())
+    }
+
+    pub fn clip_grad_norm(&mut self, max_norm: f32, norm_type: f32) -> BackendResult<f32> {
+        let mut total_norm = 0.0f32;
+        if let Some(ref mut meta) = self.autograd {
+            if let Some(ref mut g) = meta.grad {
+                let data = g.to_vec::<f32>();
+                if norm_type == std::f32::INFINITY {
+                    total_norm = data.iter().fold(0.0f32, |max, &x| max.max(x.abs()));
+                } else {
+                    let sum: f32 = data.iter().map(|&x| x.abs().powf(norm_type)).sum();
+                    total_norm = sum.powf(1.0 / norm_type);
+                }
+                let clip_coef = max_norm / (total_norm + 1e-6);
+                if clip_coef < 1.0 {
+                    let scaled: Vec<f32> = data.iter().map(|&x| x * clip_coef).collect();
+                    *g = MetalTensor::from_slice(&scaled, g.shape(), g.dtype());
+                }
+            }
+        }
+        Ok(total_norm)
+    }
+
     /// requires_grad を有効化
     pub fn enable_grad(&mut self) {
         if self.autograd.is_none() {

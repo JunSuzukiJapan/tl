@@ -6,6 +6,11 @@ use inkwell::values::{BasicValueEnum, ValueKind, BasicValue};
 
 
 
+/// Tensor 型の組み込みメソッドを TypeManager に登録する。
+///
+/// NOTE: Tensor は勾配情報を持たない。勾配(grad)を扱う場合は GradTensor 型を使うこと。
+///       freeze / unfreeze / clip_grad_value / clip_grad_norm などの勾配操作メソッドは
+///       GradTensor 上でのみ呼び出せる（semantics.rs 側で型チェックされる）。
 pub fn register_tensor_types(manager: &mut TypeManager) {
     let mut tensor = CodeGenType::new("Tensor");
     
@@ -213,7 +218,7 @@ pub fn register_tensor_types(manager: &mut TypeManager) {
 
     tensor.register_evaluated_instance_method("clone", compile_tensor_clone, vec![], any_tensor.clone());
     tensor.register_evaluated_instance_method("shallow_clone", compile_tensor_shallow_clone, vec![], any_tensor.clone());
-    tensor.register_evaluated_instance_method("grad", compile_tensor_grad, vec![], any_tensor.clone());
+    tensor.register_evaluated_instance_method("grad", compile_tensor_grad, vec![], Type::GradTensor(Box::new(Type::F32), 0));
     tensor.register_evaluated_instance_method("to_i64", compile_tensor_to_i64, vec![], Type::Tensor(Box::new(Type::I64), 0));
     tensor.register_evaluated_instance_method("to_f32", compile_tensor_to_f32, vec![], Type::Tensor(Box::new(Type::F32), 0));
     tensor.register_evaluated_instance_method("to_vec", compile_tensor_to_vec_f32, vec![], Type::Struct("Vec".into(), vec![Type::F32]));
@@ -249,11 +254,24 @@ pub fn register_tensor_types(manager: &mut TypeManager) {
     // Compound assignment
     tensor.register_evaluated_instance_method("add_assign", compile_tensor_add_assign, vec![any_tensor.clone()], Type::Void);
     tensor.register_evaluated_instance_method("sub_assign", compile_tensor_sub_assign, vec![any_tensor.clone()], Type::Void);
+    tensor.register_evaluated_instance_method("mul_assign", compile_tensor_mul_assign, vec![any_tensor.clone()], Type::Void);
+    tensor.register_evaluated_instance_method("div_assign", compile_tensor_div_assign, vec![any_tensor.clone()], Type::Void);
+
+    // GradTensor methods
+    tensor.register_evaluated_instance_method("freeze", compile_tensor_freeze, vec![], Type::Void);
+    tensor.register_evaluated_instance_method("unfreeze", compile_tensor_unfreeze, vec![], Type::Void);
+    tensor.register_evaluated_instance_method("clip_grad_value", compile_tensor_clip_grad_value, vec![Type::F32, Type::F32], Type::Void);
+    tensor.register_evaluated_instance_method("clip_grad_norm", compile_tensor_clip_grad_norm, vec![Type::F32, Type::F32], Type::F32);
+    tensor.register_evaluated_instance_method("sub_assign", compile_tensor_sub_assign, vec![any_tensor.clone()], Type::Void);
 
     // ===== Additional methods from check_builtin_method (signature-only) =====
     // Autograd
     tensor.register_instance_signature("backward", vec![], Type::Void);
     tensor.register_instance_signature("enable_grad", vec![], any_tensor.clone());
+    tensor.register_instance_signature("freeze", vec![], Type::Void);
+    tensor.register_instance_signature("unfreeze", vec![], Type::Void);
+    tensor.register_instance_signature("clip_grad_value", vec![Type::F32, Type::F32], Type::Void);
+    tensor.register_instance_signature("clip_grad_norm", vec![Type::F32, Type::F32], Type::F32);
     
     // Activation / ops - 1 arg
     tensor.register_instance_signature("softmax", vec![Type::I64], any_tensor.clone());
@@ -433,6 +451,123 @@ fn compile_tensor_sub_assign<'ctx>(
 }
 
 
+fn compile_tensor_mul_assign<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj_val: BasicValueEnum<'ctx>,
+    _obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 1 {
+        return Err("mul_assign requires 1 argument".into());
+    }
+    let (rhs_val, rhs_ty) = args[0].clone();
+
+    if matches!(rhs_ty, Type::Tensor(_, _)) {
+        let fn_val = codegen.module.get_function("tl_tensor_mul_assign").unwrap();
+        codegen
+            .builder
+            .build_call(fn_val, &[obj_val.into(), rhs_val.into()], "assign_res")
+            .map_err(|e| e.to_string())?;
+    } else if matches!(rhs_ty, Type::F32 | Type::F64 | Type::I64 | Type::I32) {
+        let scalar_f32 = match rhs_ty {
+            Type::F32 => rhs_val.into_float_value(),
+            Type::F64 => codegen
+                .builder
+                .build_float_cast(
+                    rhs_val.into_float_value(),
+                    codegen.context.f32_type(),
+                    "f64_to_f32",
+                )
+                .map_err(|e| e.to_string())?,
+            Type::I64 | Type::I32 => codegen
+                .builder
+                .build_signed_int_to_float(
+                    rhs_val.into_int_value(),
+                    codegen.context.f32_type(),
+                    "int_to_f32",
+                )
+                .map_err(|e| e.to_string())?,
+            _ => return Err(format!("mul_assign scalar: unsupported type {:?}", rhs_ty)),
+        };
+        let fn_val = codegen
+            .module
+            .get_function("tl_tensor_mul_assign_scalar_f32")
+            .unwrap();
+        codegen
+            .builder
+            .build_call(fn_val, &[obj_val.into(), scalar_f32.into()], "assign_res")
+            .map_err(|e| e.to_string())?;
+    } else {
+        return Err(format!(
+            "mul_assign requires Tensor or scalar argument, got {:?}",
+            rhs_ty
+        ));
+    }
+
+    Ok((
+        codegen.context.i64_type().const_int(0, false).into(),
+        Type::Void,
+    ))
+}
+
+fn compile_tensor_div_assign<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj_val: BasicValueEnum<'ctx>,
+    _obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 1 {
+        return Err("div_assign requires 1 argument".into());
+    }
+    let (rhs_val, rhs_ty) = args[0].clone();
+
+    if matches!(rhs_ty, Type::Tensor(_, _)) {
+        let fn_val = codegen.module.get_function("tl_tensor_div_assign").unwrap();
+        codegen
+            .builder
+            .build_call(fn_val, &[obj_val.into(), rhs_val.into()], "assign_res")
+            .map_err(|e| e.to_string())?;
+    } else if matches!(rhs_ty, Type::F32 | Type::F64 | Type::I64 | Type::I32) {
+        let scalar_f32 = match rhs_ty {
+            Type::F32 => rhs_val.into_float_value(),
+            Type::F64 => codegen
+                .builder
+                .build_float_cast(
+                    rhs_val.into_float_value(),
+                    codegen.context.f32_type(),
+                    "f64_to_f32",
+                )
+                .map_err(|e| e.to_string())?,
+            Type::I64 | Type::I32 => codegen
+                .builder
+                .build_signed_int_to_float(
+                    rhs_val.into_int_value(),
+                    codegen.context.f32_type(),
+                    "int_to_f32",
+                )
+                .map_err(|e| e.to_string())?,
+            _ => return Err(format!("div_assign scalar: unsupported type {:?}", rhs_ty)),
+        };
+        let fn_val = codegen
+            .module
+            .get_function("tl_tensor_div_assign_scalar_f32")
+            .unwrap();
+        codegen
+            .builder
+            .build_call(fn_val, &[obj_val.into(), scalar_f32.into()], "assign_res")
+            .map_err(|e| e.to_string())?;
+    } else {
+        return Err(format!(
+            "div_assign requires Tensor or scalar argument, got {:?}",
+            rhs_ty
+        ));
+    }
+
+    Ok((
+        codegen.context.i64_type().const_int(0, false).into(),
+        Type::Void,
+    ))
+}
 
 fn compile_tensor_shape<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
@@ -2314,4 +2449,66 @@ fn compile_tensor_batch_norm<'ctx>(
     ], "bn_res").map_err(|e| e.to_string())?;
     let v = codegen.check_tensor_result(call, "batch_norm_error")?;
     Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
+}
+
+fn compile_tensor_freeze<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj: BasicValueEnum<'ctx>,
+    _obj_ty: Type,
+    _args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let fn_val = codegen.module.get_function("tl_device_tensor_set_requires_grad").ok_or("tl_device_tensor_set_requires_grad not found")?;
+    codegen.builder.build_call(fn_val, &[obj.into(), codegen.context.bool_type().const_int(0, false).into()], "freeze_call").map_err(|e| e.to_string())?;
+    Ok((codegen.context.i64_type().const_zero().into(), Type::Void))
+}
+
+fn compile_tensor_unfreeze<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj: BasicValueEnum<'ctx>,
+    _obj_ty: Type,
+    _args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let fn_val = codegen.module.get_function("tl_device_tensor_set_requires_grad").ok_or("tl_device_tensor_set_requires_grad not found")?;
+    codegen.builder.build_call(fn_val, &[obj.into(), codegen.context.bool_type().const_int(1, false).into()], "unfreeze_call").map_err(|e| e.to_string())?;
+    Ok((codegen.context.i64_type().const_zero().into(), Type::Void))
+}
+
+fn compile_tensor_clip_grad_value<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj: BasicValueEnum<'ctx>,
+    _obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 2 { return Err("clip_grad_value requires 2 arguments (min, max)".into()); }
+    let fn_val = codegen.module.get_function("tl_device_tensor_clip_grad_value").ok_or("tl_device_tensor_clip_grad_value not found")?;
+    
+    let f64_type = codegen.context.f64_type();
+    let min_val = codegen.builder.build_float_ext(args[0].0.into_float_value(), f64_type, "min_ext").map_err(|e| e.to_string())?;
+    let max_val = codegen.builder.build_float_ext(args[1].0.into_float_value(), f64_type, "max_ext").map_err(|e| e.to_string())?;
+
+    codegen.builder.build_call(fn_val, &[obj.into(), min_val.into(), max_val.into()], "clip_val_call").map_err(|e| e.to_string())?;
+    Ok((codegen.context.i64_type().const_zero().into(), Type::Void))
+}
+
+fn compile_tensor_clip_grad_norm<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj: BasicValueEnum<'ctx>,
+    _obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 2 { return Err("clip_grad_norm requires 2 arguments (max_norm, norm_type)".into()); }
+    let fn_val = codegen.module.get_function("tl_device_tensor_clip_grad_norm").ok_or("tl_device_tensor_clip_grad_norm not found")?;
+    
+    let f64_type = codegen.context.f64_type();
+    let max_norm = codegen.builder.build_float_ext(args[0].0.into_float_value(), f64_type, "norm_ext").map_err(|e| e.to_string())?;
+    let norm_type = codegen.builder.build_float_ext(args[1].0.into_float_value(), f64_type, "type_ext").map_err(|e| e.to_string())?;
+
+    let call = codegen.builder.build_call(fn_val, &[obj.into(), max_norm.into(), norm_type.into()], "clip_norm_call").map_err(|e| e.to_string())?;
+    let ret_f64 = match call.try_as_basic_value() {
+        ValueKind::Basic(v) => v.into_float_value(),
+        _ => return Err("Invalid return from clip_grad_norm".into()),
+    };
+    let ret_f32 = codegen.builder.build_float_trunc(ret_f64, codegen.context.f32_type(), "norm_trunc").map_err(|e| e.to_string())?;
+    
+    Ok((ret_f32.into(), Type::F32))
 }

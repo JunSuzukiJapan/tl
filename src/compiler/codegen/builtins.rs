@@ -500,6 +500,10 @@ pub fn declare_runtime_functions<'ctx>(
     let clear_grads_type = void_type.fn_type(&[], false);
     add_fn("tl_clear_grads", clear_grads_type);
 
+    // tl_set_grad_enabled(enabled: bool) -> void  (no_grad ブロック用)
+    let set_grad_enabled_type = void_type.fn_type(&[context.bool_type().into()], false);
+    add_fn("tl_set_grad_enabled", set_grad_enabled_type);
+
     // tl_tensor_set_f32_md(t: *mut, indices: *const i64, rank: usize, val: f32) -> *mut
     let set_md_type = void_ptr.fn_type(
         &[
@@ -525,6 +529,8 @@ pub fn declare_runtime_functions<'ctx>(
 
     // [IDevice] tl_clear_grads → device_ffi
     if let Some(f) = module.get_function("tl_clear_grads") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_clear_grads as *const () as usize); }
+    // tl_set_grad_enabled → system.rs
+    if let Some(f) = module.get_function("tl_set_grad_enabled") { execution_engine.add_global_mapping(&f, runtime::tl_set_grad_enabled as *const () as usize); }
     if let Some(f) = module.get_function("tl_file_exists") {
         execution_engine.add_global_mapping(&f, runtime::tl_file_exists as *const () as usize);
     }
@@ -686,6 +692,18 @@ pub fn declare_runtime_functions<'ctx>(
     let i8_ptr = context.ptr_type(AddressSpace::default());
     let register_type = void_type.fn_type(&[i8_ptr.into(), void_ptr.into()], false);
     add_fn("tl_register_tensor", register_type);
+
+    // tl_device_tensor_set_requires_grad(t: *mut Tensor, req_grad: bool) -> void
+    let set_req_grad_type = void_type.fn_type(&[void_ptr.into(), context.bool_type().into()], false);
+    add_fn("tl_device_tensor_set_requires_grad", set_req_grad_type);
+
+    // tl_device_tensor_clip_grad_value(t: *mut Tensor, min: f64, max: f64) -> void
+    let clip_grad_value_type = void_type.fn_type(&[void_ptr.into(), context.f64_type().into(), context.f64_type().into()], false);
+    add_fn("tl_device_tensor_clip_grad_value", clip_grad_value_type);
+
+    // tl_device_tensor_clip_grad_norm(t: *mut Tensor, max_norm: f64, norm_type: f64) -> f64
+    let clip_grad_norm_type = context.f64_type().fn_type(&[void_ptr.into(), context.f64_type().into(), context.f64_type().into()], false);
+    add_fn("tl_device_tensor_clip_grad_norm", clip_grad_norm_type);
 
     // strcmp(s1: *const i8, s2: *const i8) -> i32
     let strcmp_type = context

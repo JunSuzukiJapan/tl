@@ -2464,6 +2464,36 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
                 Ok(())
             }
+            StmtKind::NoGrad { body } => {
+                // no_grad { ... } ブロック: 勾配計算を一時的に無効化
+                // tl_set_grad_enabled(false) → body → tl_set_grad_enabled(true)
+                let set_grad_fn = self.module.get_function("tl_set_grad_enabled")
+                    .ok_or("tl_set_grad_enabled not found")?;
+                let bool_type = self.context.bool_type();
+
+                // 勾配を無効化
+                self.builder.build_call(
+                    set_grad_fn,
+                    &[bool_type.const_int(0, false).into()],
+                    "no_grad_off",
+                ).map_err(|e| e.to_string())?;
+
+                // body をコンパイル
+                self.enter_scope();
+                for stmt in body {
+                    self.compile_stmt(stmt)?;
+                }
+                self.exit_scope();
+
+                // 勾配を再有効化
+                self.builder.build_call(
+                    set_grad_fn,
+                    &[bool_type.const_int(1, false).into()],
+                    "no_grad_on",
+                ).map_err(|e| e.to_string())?;
+
+                Ok(())
+            }
             StmtKind::Expr(expr) => {
                 let (val, ty) = self.compile_expr(expr)?;
 
@@ -3810,6 +3840,7 @@ fn stmt_trace_tag(stmt: &Stmt) -> &'static str {
         StmtKind::For { .. } => "For",
         StmtKind::While { .. } => "While",
         StmtKind::Loop { .. } => "Loop",
+        StmtKind::NoGrad { .. } => "NoGrad",
         StmtKind::Return(_) => "Return",
         StmtKind::Break => "Break",
         StmtKind::Continue => "Continue",
