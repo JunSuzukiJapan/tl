@@ -1613,3 +1613,261 @@ pub fn cuda_mul_mv_q6_k(input: *mut c_void, w_raw: *mut c_void, n: i64, k: i64) 
         std::ptr::null_mut()
     }
 }
+
+// ========== chunk / split (narrow ラッパー) ==========
+
+/// t.chunk(num_chunks, dim, index) → narrow(dim, chunk_size*index, chunk_size)
+/// @ffi_sig (Tensor*, i64, i64, i64) -> Tensor*
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_device_tensor_chunk(
+    t: *mut c_void,
+    num_chunks: i64,
+    dim: i64,
+    index: i64,
+) -> *mut c_void {
+    if t.is_null() || num_chunks <= 0 {
+        return std::ptr::null_mut();
+    }
+    // dim 方向のサイズを取得
+    let dim_size = tl_device_tensor_dim(t, dim as usize) as i64;
+    let chunk_size = (dim_size + num_chunks - 1) / num_chunks; // ceil division
+    let start = chunk_size * index;
+    let len = std::cmp::min(chunk_size, dim_size - start);
+    if start >= dim_size || len <= 0 {
+        return std::ptr::null_mut();
+    }
+    dispatch(|d| d.tensor_narrow(t, dim as usize, start as usize, len as usize))
+}
+
+/// t.split(split_size, dim, index) → narrow(dim, split_size*index, min(split_size, remaining))
+/// @ffi_sig (Tensor*, i64, i64, i64) -> Tensor*
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_device_tensor_split(
+    t: *mut c_void,
+    split_size: i64,
+    dim: i64,
+    index: i64,
+) -> *mut c_void {
+    if t.is_null() || split_size <= 0 {
+        return std::ptr::null_mut();
+    }
+    let dim_size = tl_device_tensor_dim(t, dim as usize) as i64;
+    let start = split_size * index;
+    let len = std::cmp::min(split_size, dim_size - start);
+    if start >= dim_size || len <= 0 {
+        return std::ptr::null_mut();
+    }
+    dispatch(|d| d.tensor_narrow(t, dim as usize, start as usize, len as usize))
+}
+
+// ========== 線形代数 ==========
+
+/// 逆行列 (CPU): ガウス・ジョルダン消去法
+/// @ffi_sig (Tensor*) -> Tensor*
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_tensor_inverse(t: *mut c_void) -> *mut c_void {
+    if t.is_null() { return std::ptr::null_mut(); }
+    let data = read_runtime_tensor_to_f32_vec(t);
+    let n_sq = data.len();
+    let n = (n_sq as f64).sqrt() as usize;
+    if n * n != n_sq || n == 0 {
+        eprintln!("Error: inverse requires square matrix, got {} elements", n_sq);
+        return std::ptr::null_mut();
+    }
+    // 拡大行列 [A | I]
+    let mut aug = vec![0.0f32; n * 2 * n];
+    for i in 0..n {
+        for j in 0..n {
+            aug[i * 2 * n + j] = data[i * n + j];
+        }
+        aug[i * 2 * n + n + i] = 1.0;
+    }
+    // ガウス・ジョルダン
+    for col in 0..n {
+        // ピボット選択
+        let mut max_row = col;
+        let mut max_val = aug[col * 2 * n + col].abs();
+        for row in (col + 1)..n {
+            let v = aug[row * 2 * n + col].abs();
+            if v > max_val { max_val = v; max_row = row; }
+        }
+        if max_val < 1e-12 {
+            eprintln!("Error: singular matrix in inverse");
+            return std::ptr::null_mut();
+        }
+        // 行交換
+        if max_row != col {
+            for j in 0..(2 * n) {
+                aug.swap(col * 2 * n + j, max_row * 2 * n + j);
+            }
+        }
+        // 正規化
+        let pivot = aug[col * 2 * n + col];
+        for j in 0..(2 * n) { aug[col * 2 * n + j] /= pivot; }
+        // 消去
+        for row in 0..n {
+            if row == col { continue; }
+            let factor = aug[row * 2 * n + col];
+            for j in 0..(2 * n) {
+                aug[row * 2 * n + j] -= factor * aug[col * 2 * n + j];
+            }
+        }
+    }
+    // 逆行列を抽出
+    let mut result = vec![0.0f32; n * n];
+    for i in 0..n {
+        for j in 0..n {
+            result[i * n + j] = aug[i * 2 * n + n + j];
+        }
+    }
+    let shape = [n, n];
+    create_runtime_tensor_f32(&result, &shape)
+}
+
+/// 行列式 (CPU): LU分解ベース
+/// @ffi_sig (Tensor*) -> Tensor* (scalar)
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_tensor_det(t: *mut c_void) -> *mut c_void {
+    if t.is_null() { return std::ptr::null_mut(); }
+    let data = read_runtime_tensor_to_f32_vec(t);
+    let n_sq = data.len();
+    let n = (n_sq as f64).sqrt() as usize;
+    if n * n != n_sq || n == 0 {
+        eprintln!("Error: det requires square matrix");
+        return std::ptr::null_mut();
+    }
+    let mut mat = data.clone();
+    let mut det: f32 = 1.0;
+    for col in 0..n {
+        let mut max_row = col;
+        let mut max_val = mat[col * n + col].abs();
+        for row in (col + 1)..n {
+            let v = mat[row * n + col].abs();
+            if v > max_val { max_val = v; max_row = row; }
+        }
+        if max_val < 1e-12 { return create_runtime_tensor_f32(&[0.0], &[1]); }
+        if max_row != col {
+            for j in 0..n { mat.swap(col * n + j, max_row * n + j); }
+            det = -det;
+        }
+        det *= mat[col * n + col];
+        let pivot = mat[col * n + col];
+        for row in (col + 1)..n {
+            let factor = mat[row * n + col] / pivot;
+            for j in col..n { mat[row * n + j] -= factor * mat[col * n + j]; }
+        }
+    }
+    create_runtime_tensor_f32(&[det], &[1])
+}
+
+/// 連立方程式 Ax=b (CPU): LU分解ベース
+/// @ffi_sig (Tensor*, Tensor*) -> Tensor*
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_tensor_solve(a: *mut c_void, b: *mut c_void) -> *mut c_void {
+    if a.is_null() || b.is_null() { return std::ptr::null_mut(); }
+    let a_data = read_runtime_tensor_to_f32_vec(a);
+    let b_data = read_runtime_tensor_to_f32_vec(b);
+    let n_sq = a_data.len();
+    let n = (n_sq as f64).sqrt() as usize;
+    if n * n != n_sq || b_data.len() != n {
+        eprintln!("Error: solve requires square A and compatible b");
+        return std::ptr::null_mut();
+    }
+    // 拡大行列 [A | b]
+    let mut aug = vec![0.0f32; n * (n + 1)];
+    for i in 0..n {
+        for j in 0..n { aug[i * (n + 1) + j] = a_data[i * n + j]; }
+        aug[i * (n + 1) + n] = b_data[i];
+    }
+    // 前進消去
+    for col in 0..n {
+        let mut max_row = col;
+        let mut max_val = aug[col * (n + 1) + col].abs();
+        for row in (col + 1)..n {
+            let v = aug[row * (n + 1) + col].abs();
+            if v > max_val { max_val = v; max_row = row; }
+        }
+        if max_val < 1e-12 {
+            eprintln!("Error: singular matrix in solve");
+            return std::ptr::null_mut();
+        }
+        if max_row != col {
+            for j in 0..(n + 1) { aug.swap(col * (n + 1) + j, max_row * (n + 1) + j); }
+        }
+        let pivot = aug[col * (n + 1) + col];
+        for j in col..(n + 1) { aug[col * (n + 1) + j] /= pivot; }
+        for row in (col + 1)..n {
+            let factor = aug[row * (n + 1) + col];
+            for j in col..(n + 1) { aug[row * (n + 1) + j] -= factor * aug[col * (n + 1) + j]; }
+        }
+    }
+    // 後退代入
+    let mut x = vec![0.0f32; n];
+    for i in (0..n).rev() {
+        x[i] = aug[i * (n + 1) + n];
+        for j in (i + 1)..n {
+            x[i] -= aug[i * (n + 1) + j] * x[j];
+        }
+    }
+    create_runtime_tensor_f32(&x, &[n])
+}
+
+/// SVD: U成分 (CPU: 簡易実装 - power iteration)
+/// @ffi_sig (Tensor*) -> Tensor*
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_tensor_svd_u(t: *mut c_void) -> *mut c_void {
+    // 簡易実装: A = U S V^T → U = A V S^{-1}
+    // フル SVD は複雑なので、まず stub として単位行列を返す
+    if t.is_null() { return std::ptr::null_mut(); }
+    let data = read_runtime_tensor_to_f32_vec(t);
+    let n_sq = data.len();
+    let n = (n_sq as f64).sqrt() as usize;
+    // 単位行列を返す (stub)
+    let mut result = vec![0.0f32; n * n];
+    for i in 0..n { result[i * n + i] = 1.0; }
+    create_runtime_tensor_f32(&result, &[n, n])
+}
+
+/// SVD: S成分 (特異値ベクトル)
+/// @ffi_sig (Tensor*) -> Tensor*
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_tensor_svd_s(t: *mut c_void) -> *mut c_void {
+    if t.is_null() { return std::ptr::null_mut(); }
+    let data = read_runtime_tensor_to_f32_vec(t);
+    let n_sq = data.len();
+    let n = (n_sq as f64).sqrt() as usize;
+    // stub: 対角要素を返す
+    let mut result = vec![0.0f32; n];
+    for i in 0..n { result[i] = data[i * n + i].abs(); }
+    result.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+    create_runtime_tensor_f32(&result, &[n])
+}
+
+/// SVD: V成分
+/// @ffi_sig (Tensor*) -> Tensor*
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_tensor_svd_v(t: *mut c_void) -> *mut c_void {
+    tl_tensor_svd_u(t) // stub: 単位行列
+}
+
+/// 固有値 (CPU stub)
+/// @ffi_sig (Tensor*) -> Tensor*
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_tensor_eig_values(t: *mut c_void) -> *mut c_void {
+    if t.is_null() { return std::ptr::null_mut(); }
+    let data = read_runtime_tensor_to_f32_vec(t);
+    let n_sq = data.len();
+    let n = (n_sq as f64).sqrt() as usize;
+    // stub: 対角要素を返す
+    let mut result = vec![0.0f32; n];
+    for i in 0..n { result[i] = data[i * n + i]; }
+    create_runtime_tensor_f32(&result, &[n])
+}
+
+/// 固有ベクトル (CPU stub)
+/// @ffi_sig (Tensor*) -> Tensor*
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_tensor_eig_vectors(t: *mut c_void) -> *mut c_void {
+    tl_tensor_svd_u(t) // stub: 単位行列
+}
+

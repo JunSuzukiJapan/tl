@@ -3249,4 +3249,94 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_debug_print_ptr") {
         execution_engine.add_global_mapping(&f, tl_debug_print_ptr as *const () as usize);
     }
+
+    // ========== chunk / split ==========
+    let chunk_type = void_ptr.fn_type(&[void_ptr.into(), i64_type.into(), i64_type.into(), i64_type.into()], false);
+    add_fn("tl_device_tensor_chunk", chunk_type);
+    add_fn("tl_device_tensor_split", chunk_type);
+    if let Some(f) = module.get_function("tl_device_tensor_chunk") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_chunk as *const () as usize); }
+    if let Some(f) = module.get_function("tl_device_tensor_split") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_split as *const () as usize); }
+
+    // ========== 線形代数 ==========
+    let unary_linalg = void_ptr.fn_type(&[void_ptr.into()], false);
+    add_fn("tl_tensor_inverse", unary_linalg);
+    add_fn("tl_tensor_det", unary_linalg);
+    add_fn("tl_tensor_svd_u", unary_linalg);
+    add_fn("tl_tensor_svd_s", unary_linalg);
+    add_fn("tl_tensor_svd_v", unary_linalg);
+    add_fn("tl_tensor_eig_values", unary_linalg);
+    add_fn("tl_tensor_eig_vectors", unary_linalg);
+    let binary_linalg = void_ptr.fn_type(&[void_ptr.into(), void_ptr.into()], false);
+    add_fn("tl_tensor_solve", binary_linalg);
+    if let Some(f) = module.get_function("tl_tensor_inverse") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_tensor_inverse as *const () as usize); }
+    if let Some(f) = module.get_function("tl_tensor_det") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_tensor_det as *const () as usize); }
+    if let Some(f) = module.get_function("tl_tensor_svd_u") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_tensor_svd_u as *const () as usize); }
+    if let Some(f) = module.get_function("tl_tensor_svd_s") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_tensor_svd_s as *const () as usize); }
+    if let Some(f) = module.get_function("tl_tensor_svd_v") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_tensor_svd_v as *const () as usize); }
+    if let Some(f) = module.get_function("tl_tensor_eig_values") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_tensor_eig_values as *const () as usize); }
+    if let Some(f) = module.get_function("tl_tensor_eig_vectors") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_tensor_eig_vectors as *const () as usize); }
+    if let Some(f) = module.get_function("tl_tensor_solve") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_tensor_solve as *const () as usize); }
+
+    // ========== オプティマイザ ==========
+    // tl_adam_step(param, grad, m, v, step, lr, beta1, beta2, eps, weight_decay)
+    let adam_type = void_type.fn_type(&[
+        void_ptr.into(), void_ptr.into(), void_ptr.into(), void_ptr.into(),
+        i64_type.into(), f32_type.into(), f32_type.into(), f32_type.into(),
+        f32_type.into(), f32_type.into(),
+    ], false);
+    add_fn("tl_adam_step", adam_type);
+    if let Some(f) = module.get_function("tl_adam_step") { execution_engine.add_global_mapping(&f, runtime::tl_adam_step as *const () as usize); }
+
+    // tl_sgd_step(param, grad, velocity, lr, momentum, weight_decay, dampening, nesterov)
+    let sgd_type = void_type.fn_type(&[
+        void_ptr.into(), void_ptr.into(), void_ptr.into(),
+        f32_type.into(), f32_type.into(), f32_type.into(), f32_type.into(),
+        context.bool_type().into(),
+    ], false);
+    add_fn("tl_sgd_step", sgd_type);
+    if let Some(f) = module.get_function("tl_sgd_step") { execution_engine.add_global_mapping(&f, runtime::tl_sgd_step as *const () as usize); }
+
+    // 学習率スケジューラ
+    let lr_sched_type = f32_type.fn_type(&[f32_type.into(), i64_type.into(), i64_type.into(), f32_type.into()], false);
+    add_fn("tl_lr_cosine_annealing", lr_sched_type);
+    add_fn("tl_lr_step", lr_sched_type);
+    if let Some(f) = module.get_function("tl_lr_cosine_annealing") { execution_engine.add_global_mapping(&f, runtime::tl_lr_cosine_annealing as *const () as usize); }
+    if let Some(f) = module.get_function("tl_lr_step") { execution_engine.add_global_mapping(&f, runtime::tl_lr_step as *const () as usize); }
+
+    // ========== Image ==========
+    let img_load_type = void_ptr.fn_type(&[void_ptr.into()], false);
+    add_fn("tl_image_load_rgb", img_load_type);
+    let img_resize_type = void_ptr.fn_type(&[void_ptr.into(), i64_type.into(), i64_type.into()], false);
+    add_fn("tl_image_resize", img_resize_type);
+    let img_save_type = void_type.fn_type(&[void_ptr.into(), void_ptr.into()], false);
+    add_fn("tl_image_save", img_save_type);
+    let img_norm_type = void_ptr.fn_type(&[void_ptr.into(), void_ptr.into(), void_ptr.into()], false);
+    add_fn("tl_image_normalize", img_norm_type);
+    let img_crop_type = void_ptr.fn_type(&[void_ptr.into(), i64_type.into(), i64_type.into(), i64_type.into(), i64_type.into()], false);
+    add_fn("tl_image_crop", img_crop_type);
+    if let Some(f) = module.get_function("tl_image_load_rgb") { execution_engine.add_global_mapping(&f, runtime::tl_image_load_rgb as *const () as usize); }
+    if let Some(f) = module.get_function("tl_image_resize") { execution_engine.add_global_mapping(&f, runtime::tl_image_resize as *const () as usize); }
+    if let Some(f) = module.get_function("tl_image_save") { execution_engine.add_global_mapping(&f, runtime::tl_image_save as *const () as usize); }
+    if let Some(f) = module.get_function("tl_image_normalize") { execution_engine.add_global_mapping(&f, runtime::tl_image_normalize as *const () as usize); }
+    if let Some(f) = module.get_function("tl_image_crop") { execution_engine.add_global_mapping(&f, runtime::tl_image_crop as *const () as usize); }
+
+    // ========== Data (CSV / JSON / DataLoader) ==========
+    let csv_load_type = void_ptr.fn_type(&[void_ptr.into()], false);
+    add_fn("tl_csv_load", csv_load_type);
+    let json_load_type = void_ptr.fn_type(&[void_ptr.into()], false);
+    add_fn("tl_json_load", json_load_type);
+    let dl_new_type = i64_type.fn_type(&[void_ptr.into(), void_ptr.into(), i64_type.into(), context.bool_type().into()], false);
+    add_fn("tl_dataloader_new", dl_new_type);
+    let dl_len_type = i64_type.fn_type(&[i64_type.into()], false);
+    add_fn("tl_dataloader_len", dl_len_type);
+    let dl_reset_type = void_type.fn_type(&[i64_type.into()], false);
+    add_fn("tl_dataloader_reset", dl_reset_type);
+    add_fn("tl_dataloader_free", dl_reset_type);
+    if let Some(f) = module.get_function("tl_csv_load") { execution_engine.add_global_mapping(&f, runtime::tl_csv_load as *const () as usize); }
+    if let Some(f) = module.get_function("tl_json_load") { execution_engine.add_global_mapping(&f, runtime::tl_json_load as *const () as usize); }
+    if let Some(f) = module.get_function("tl_dataloader_new") { execution_engine.add_global_mapping(&f, runtime::tl_dataloader_new as *const () as usize); }
+    if let Some(f) = module.get_function("tl_dataloader_len") { execution_engine.add_global_mapping(&f, runtime::tl_dataloader_len as *const () as usize); }
+    if let Some(f) = module.get_function("tl_dataloader_reset") { execution_engine.add_global_mapping(&f, runtime::tl_dataloader_reset as *const () as usize); }
+    if let Some(f) = module.get_function("tl_dataloader_free") { execution_engine.add_global_mapping(&f, runtime::tl_dataloader_free as *const () as usize); }
 }
+

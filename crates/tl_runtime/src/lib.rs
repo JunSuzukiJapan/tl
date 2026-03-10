@@ -23,6 +23,8 @@ pub mod math_ffi;
 pub mod tokenizer;
 pub mod quantized;
 pub mod gguf;
+pub mod image_ffi;
+pub mod data_ffi;
 // autograd_registry は MetalTensor 統合により廃止
 
 // ========== Stub Modules (Legacy Compatibility) ==========
@@ -113,6 +115,19 @@ pub use system::{
     tl_update_all_params, tl_clear_grads,
     tl_qtensor_free, tl_qtensor_matmul,
     tl_metal_sync, tl_report_runtime_error, tl_handle_runtime_error,
+    tl_adam_step, tl_sgd_step, tl_lr_cosine_annealing, tl_lr_step,
+};
+
+// ========== Image Exports ==========
+pub use image_ffi::{
+    tl_image_load_rgb, tl_image_resize, tl_image_save,
+    tl_image_normalize, tl_image_crop,
+};
+
+// ========== Data Exports ==========
+pub use data_ffi::{
+    tl_csv_load, tl_json_load,
+    tl_dataloader_new, tl_dataloader_len, tl_dataloader_reset, tl_dataloader_free,
 };
 
 // ========== Memory Exports ==========

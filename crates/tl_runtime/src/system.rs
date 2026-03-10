@@ -609,3 +609,154 @@ pub extern "C" fn tl_handle_runtime_error(msg: *mut StringStruct) {
 // tl_log_alloc と tl_log_free は memory_ffi.rs で定義済み
 
 // tl_query は knowledge_base.rs で定義済み
+
+// ========== オプティマイザ ==========
+
+/// Adam optimizer step:
+/// param = param - lr * m_hat / (sqrt(v_hat) + eps)
+/// m = beta1 * m + (1 - beta1) * grad
+/// v = beta2 * v + (1 - beta2) * grad^2
+/// weight_decay > 0 の場合は AdamW: param -= lr * weight_decay * param
+/// @ffi_sig (Tensor*, Tensor*, Tensor*, Tensor*, i64, f32, f32, f32, f32, f32) -> void
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_adam_step(
+    param: *mut crate::OpaqueTensor,
+    grad: *mut crate::OpaqueTensor,
+    m: *mut crate::OpaqueTensor,
+    v: *mut crate::OpaqueTensor,
+    step: i64,
+    lr: f32,
+    beta1: f32,
+    beta2: f32,
+    eps: f32,
+    weight_decay: f32,
+) {
+    if param.is_null() || grad.is_null() || m.is_null() || v.is_null() {
+        return;
+    }
+    use std::ffi::c_void;
+    let param_ptr = param as *mut c_void;
+    let grad_ptr = grad as *mut c_void;
+    let m_ptr = m as *mut c_void;
+    let v_ptr = v as *mut c_void;
+
+    let param_data = crate::device_ffi::read_runtime_tensor_to_f32_vec(param_ptr);
+    let grad_data = crate::device_ffi::read_runtime_tensor_to_f32_vec(grad_ptr);
+    let mut m_data = crate::device_ffi::read_runtime_tensor_to_f32_vec(m_ptr);
+    let mut v_data = crate::device_ffi::read_runtime_tensor_to_f32_vec(v_ptr);
+
+    let t = step as f32 + 1.0;
+    let bc1 = 1.0 - beta1.powf(t);
+    let bc2 = 1.0 - beta2.powf(t);
+
+    let n = param_data.len().min(grad_data.len()).min(m_data.len()).min(v_data.len());
+    let mut new_param = param_data[..n].to_vec();
+
+    // AdamW: weight decay は直接 param に適用
+    if weight_decay > 0.0 {
+        for i in 0..n {
+            new_param[i] -= lr * weight_decay * new_param[i];
+        }
+    }
+
+    for i in 0..n {
+        m_data[i] = beta1 * m_data[i] + (1.0 - beta1) * grad_data[i];
+        v_data[i] = beta2 * v_data[i] + (1.0 - beta2) * grad_data[i] * grad_data[i];
+        let m_hat = m_data[i] / bc1;
+        let v_hat = v_data[i] / bc2;
+        new_param[i] -= lr * m_hat / (v_hat.sqrt() + eps);
+    }
+
+    // m, v のデータを更新 (インプレース)
+    let shape_len = n;
+    let new_m_tensor = crate::device_ffi::create_runtime_tensor_f32(&m_data, &[shape_len]);
+    let new_v_tensor = crate::device_ffi::create_runtime_tensor_f32(&v_data, &[shape_len]);
+    let new_param_tensor = crate::device_ffi::create_runtime_tensor_f32(&new_param, &[shape_len]);
+
+    crate::device_ffi::tl_device_tensor_replace_data(param_ptr, new_param_tensor);
+    crate::device_ffi::tl_device_tensor_replace_data(m_ptr, new_m_tensor);
+    crate::device_ffi::tl_device_tensor_replace_data(v_ptr, new_v_tensor);
+
+    // 一時テンソルを解放
+    crate::device_ffi::tl_device_tensor_free(new_param_tensor);
+    crate::device_ffi::tl_device_tensor_free(new_m_tensor);
+    crate::device_ffi::tl_device_tensor_free(new_v_tensor);
+}
+
+/// SGD with momentum:
+/// velocity = momentum * velocity + grad + weight_decay * param
+/// param = param - lr * velocity (or nesterov variant)
+/// @ffi_sig (Tensor*, Tensor*, Tensor*, f32, f32, f32, f32, bool) -> void
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_sgd_step(
+    param: *mut crate::OpaqueTensor,
+    grad: *mut crate::OpaqueTensor,
+    velocity: *mut crate::OpaqueTensor,
+    lr: f32,
+    momentum: f32,
+    weight_decay: f32,
+    dampening: f32,
+    nesterov: bool,
+) {
+    if param.is_null() || grad.is_null() || velocity.is_null() {
+        return;
+    }
+    use std::ffi::c_void;
+    let param_ptr = param as *mut c_void;
+    let grad_ptr = grad as *mut c_void;
+    let vel_ptr = velocity as *mut c_void;
+
+    let param_data = crate::device_ffi::read_runtime_tensor_to_f32_vec(param_ptr);
+    let grad_data = crate::device_ffi::read_runtime_tensor_to_f32_vec(grad_ptr);
+    let mut vel_data = crate::device_ffi::read_runtime_tensor_to_f32_vec(vel_ptr);
+
+    let n = param_data.len().min(grad_data.len()).min(vel_data.len());
+    let mut new_param = param_data[..n].to_vec();
+
+    for i in 0..n {
+        let mut g = grad_data[i];
+        if weight_decay > 0.0 {
+            g += weight_decay * param_data[i];
+        }
+        vel_data[i] = momentum * vel_data[i] + (1.0 - dampening) * g;
+        if nesterov {
+            new_param[i] -= lr * (g + momentum * vel_data[i]);
+        } else {
+            new_param[i] -= lr * vel_data[i];
+        }
+    }
+
+    let shape_len = n;
+    let new_param_tensor = crate::device_ffi::create_runtime_tensor_f32(&new_param, &[shape_len]);
+    let new_vel_tensor = crate::device_ffi::create_runtime_tensor_f32(&vel_data, &[shape_len]);
+
+    crate::device_ffi::tl_device_tensor_replace_data(param_ptr, new_param_tensor);
+    crate::device_ffi::tl_device_tensor_replace_data(vel_ptr, new_vel_tensor);
+
+    crate::device_ffi::tl_device_tensor_free(new_param_tensor);
+    crate::device_ffi::tl_device_tensor_free(new_vel_tensor);
+}
+
+// ========== 学習率スケジューラ ==========
+
+/// Cosine Annealing: lr = min_lr + 0.5 * (base_lr - min_lr) * (1 + cos(π * step / total))
+/// @ffi_sig (f32, i64, i64, f32) -> f32
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_lr_cosine_annealing(base_lr: f32, step: i64, total_steps: i64, min_lr: f32) -> f32 {
+    if total_steps <= 0 {
+        return base_lr;
+    }
+    let progress = (step as f32) / (total_steps as f32);
+    min_lr + 0.5 * (base_lr - min_lr) * (1.0 + (std::f32::consts::PI * progress).cos())
+}
+
+/// Step LR: lr = base_lr * gamma^(step / step_size)
+/// @ffi_sig (f32, i64, i64, f32) -> f32
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_lr_step(base_lr: f32, step: i64, step_size: i64, gamma: f32) -> f32 {
+    if step_size <= 0 {
+        return base_lr;
+    }
+    base_lr * gamma.powf((step / step_size) as f32)
+}
+

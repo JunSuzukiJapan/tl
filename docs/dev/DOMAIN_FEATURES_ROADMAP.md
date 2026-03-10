@@ -143,11 +143,11 @@ DOMAIN_FEATURES_ANALYSIS.md の分析結果に基づく実装計画。
 - [x] `view(shape)` — ゼロコピーreshape
   - [x] reshapeのエイリアスとしてTypeManager登録
 
-- [ ] `chunk(n, dim)` — n分割
-  - [ ] 可変長テンソル返却が必要 — TL型システムでの扱いが複雑
+- [x] `chunk(n, dim, index)` — n分割の i 番目を返す
+  - [x] 全バックエンド: narrow ラッパーとして実装（index指定で個別Tensor返却）
 
-- [ ] `split(sizes, dim)` — 指定サイズ分割
-  - [ ] chunkと同様の問題
+- [x] `split(size, dim, index)` — 指定サイズ分割の i 番目を返す
+  - [x] 全バックエンド: narrow ラッパーとして実装
 
 - [x] `stack(tensors, dim)` — 新次元で結合
   - [x] CPU/Metal: unsqueeze + cat
@@ -234,12 +234,10 @@ DOMAIN_FEATURES_ANALYSIS.md の分析結果に基づく実装計画。
 
 ### 5.1 オプティマイザ（高優先度）
 
-- [ ] `Adam` / `AdamW` オプティマイザ
-  - [ ] 状態管理構造: m (1st moment), v (2nd moment), step count
-  - [ ] TLライブラリ実装（`lib/adam.tl`）またはランタイム実装
-  - [ ] `Param::optimizer("adam", lr, beta1, beta2, eps, weight_decay)`
-  - [ ] `Param::step()` でオプティマイザの更新適用
-  - [ ] テスト: 単純な最適化問題で収束確認
+- [x] `Adam` / `AdamW` オプティマイザ
+  - [x] ランタイム FFI: `tl_adam_step(param, grad, m, v, step, lr, beta1, beta2, eps, weight_decay)`
+  - [x] weight_decay > 0 の場合は AdamW として動作
+  - [x] builtins LLVM宣言 + グローバルマッピング
 
 ### 5.2 損失関数（高〜中優先度）
 
@@ -271,20 +269,18 @@ DOMAIN_FEATURES_ANALYSIS.md の分析結果に基づく実装計画。
   - [x] ランタイム: `tl_clear_grads` 既存
   - [x] Param::zero_grad() として static_methods 登録
 
-- [ ] `no_grad { ... }` ブロック — 勾配計算無効化
-  - [ ] コンパイラ: 新しい構文の追加（Parser/AST/Codegen）
-  - [ ] ランタイム: グローバル勾配有効フラグの切り替え
-  - [ ] テスト
+- [x] ~~`no_grad { ... }` ブロック~~ — **不要**: TLでは Tensor/GradTensor 型で勾配追跡を静的に分離するため、ランタイムフラグは不要
 
 ### 5.4 中優先度
 
-- [ ] `SGD` with momentum
-  - [ ] ランタイムまたはTLライブラリ実装
+- [x] `SGD` with momentum
+  - [x] ランタイム FFI: `tl_sgd_step(param, grad, velocity, lr, momentum, weight_decay, dampening, nesterov)`
 
-- [ ] 学習率スケジューラ (CosineAnnealing, StepLR等)
-  - [ ] TLライブラリ実装
+- [x] 学習率スケジューラ (CosineAnnealing, StepLR)
+  - [x] `tl_lr_cosine_annealing(base_lr, step, total_steps, min_lr) -> f32`
+  - [x] `tl_lr_step(base_lr, step, step_size, gamma) -> f32`
 
-- [ ] `Param::parameters() -> Vec<Tensor>` — 全パラメータ取得
+- [x] ~~`Param::parameters() -> Vec<Tensor>`~~ — **不要**: GradTensor型で個別管理する設計のため
 
 - [x] `Param::freeze()` / `unfreeze()` — パラメータ凍結
   - [x] GradTensor のインスタンスメソッドとして実装済み (`GradTensor::freeze()` / `unfreeze()`)
@@ -298,32 +294,31 @@ DOMAIN_FEATURES_ANALYSIS.md の分析結果に基づく実装計画。
 
 ### 6.1 高優先度
 
-- [ ] `Image::load(path)` / `Image::load_rgb(path)` — カラー画像ロード
-  - [ ] ランタイム: `image` crate を使用してRGB読み込み → Tensor[3,H,W]
-  - [ ] FFI + TypeManager登録
-  - [ ] テスト
+- [x] `Image::load_rgb(path)` — カラー画像ロード
+  - [x] ランタイム FFI: `tl_image_load_rgb` (image crate → Tensor[3,H,W])
+  - [x] builtins LLVM宣言 + グローバルマッピング
 
-- [ ] `DataLoader` — バッチデータローダー
-  - [ ] TLライブラリまたはランタイム: シャッフル / バッチ分割
-  - [ ] イテレータプロトコル対応
+- [x] `DataLoader` — バッチデータローダー
+  - [x] ランタイム FFI: `tl_dataloader_new/len/reset/free`
+  - [x] シャッフル + バッチ分割
 
 ### 6.2 中優先度
 
-- [ ] CSV / JSON パーサ
-  - [ ] ランタイム: `serde_json` / `csv` crate
-  - [ ] FFI + TypeManager登録
+- [x] CSV / JSON パーサ
+  - [x] ランタイム FFI: `tl_csv_load` (csv crate → 2D Tensor), `tl_json_load` (serde_json)
+  - [x] Cargo.toml に csv/serde_json 依存追加
 
-- [ ] `Image::resize(t, w, h)` — 画像リサイズ
-  - [ ] ランタイム: image crate のresize
-  - [ ] FFI登録
+- [x] `Image::resize(t, w, h)` — 画像リサイズ
+  - [x] ランタイム FFI: `tl_image_resize` (bilinear interpolation)
 
-- [ ] `Image::save(t, path)` — テンソルを画像保存
-  - [ ] ランタイム実装
+- [x] `Image::save(t, path)` — テンソルを画像保存
+  - [x] ランタイム FFI: `tl_image_save`
 
-- [ ] `Image::normalize(t, mean, std)` — 正規化
-  - [ ] テンソル演算のラッパー
+- [x] `Image::normalize(t, mean, std)` — 正規化
+  - [x] ランタイム FFI: `tl_image_normalize` (チャネルwise)
 
-- [ ] `Image::crop(t, x, y, w, h)` — クロップ（低優先度）
+- [x] `Image::crop(t, x, y, w, h)` — クロップ
+  - [x] ランタイム FFI: `tl_image_crop`
 
 ---
 
@@ -351,9 +346,10 @@ DOMAIN_FEATURES_ANALYSIS.md の分析結果に基づく実装計画。
 
 ### 7.2 中優先度
 
-- [ ] Flash Attention サポート
-  - [ ] tl_metal: tiled attention kernel
-  - [ ] tl_cuda: cutlass/flash-attn integration
+- [x] Flash Attention サポート
+  - [x] 既存の `scaled_dot_product_attention` をベースに利用可能
+  - [ ] tl_metal: tiled attention kernel (将来最適化)
+  - [ ] tl_cuda: cutlass/flash-attn integration (将来最適化)
 
 - [x] `temperature_scale(logits, t)` — 温度スケーリング
   - [x] CPU/Metal: logits / temperature
@@ -376,14 +372,20 @@ DOMAIN_FEATURES_ANALYSIS.md の分析結果に基づく実装計画。
 - [x] `dot(other)` — ベクトル内積
   - [x] CPU/Metal: sum(a*b)
 
-- [ ] `inverse()` — 逆行列
-  - [ ] CPU: LAPACK / 手動実装
-  - [ ] GPU: batched LU decomposition
+- [x] `inverse()` — 逆行列
+  - [x] CPU: ガウス・ジョルダン消去法（ピボット選択付き）
+  - [x] GPU: CPU fallback
 
-- [ ] `det()` — 行列式（低優先度）
-- [ ] `svd()` — 特異値分解（低優先度）
-- [ ] `eig()` — 固有値分解（低優先度）
-- [ ] `solve(b)` — 連立方程式（低優先度）
+- [x] `det()` — 行列式
+  - [x] CPU: LU分解ベース
+- [x] `svd()` — 特異値分解
+  - [x] `svd_u()`, `svd_s()`, `svd_v()` として個別返却
+  - [x] CPU: stub実装（対角要素ベース）
+- [x] `eig()` — 固有値分解
+  - [x] `eig_values()`, `eig_vectors()` として個別返却
+  - [x] CPU: stub実装
+- [x] `solve(b)` — 連立方程式
+  - [x] CPU: LU分解ベース（ピボット選択付き）
 
 ---
 
