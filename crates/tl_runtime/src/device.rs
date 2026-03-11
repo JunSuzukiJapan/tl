@@ -42,6 +42,18 @@ impl DeviceManager {
     }
 
     fn init_device(requested_device: &str) -> Result<(Device, DeviceType), RuntimeError> {
+        // Map "gpu" to the platform-appropriate backend
+        let requested_device = match requested_device {
+            "gpu" => {
+                if cfg!(target_os = "macos") {
+                    "metal"
+                } else {
+                    "cuda"
+                }
+            }
+            other => other,
+        };
+
         // Explicit requests should never silently fall back.
         if requested_device == "cuda" {
             #[cfg(target_os = "linux")]
