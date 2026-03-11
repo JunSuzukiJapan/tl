@@ -938,7 +938,7 @@ pub fn declare_runtime_functions<'ctx>(
     add_fn("tl_tensor_logical_or", logical_binary_type);
     add_fn("tl_tensor_logical_not", unary_type);
 
-    // expand / stack
+    // expand / stack / chunk / split
     // expand uses same sig as reshape_dims: (void*, ptr, i64) -> void*
     let expand_type = void_ptr.fn_type(&[void_ptr.into(), context.ptr_type(inkwell::AddressSpace::default()).into(), i64_type.into()], false);
     add_fn("tl_tensor_expand", expand_type);
@@ -947,6 +947,10 @@ pub fn declare_runtime_functions<'ctx>(
     add_fn("tl_tensor_expand_new", expand_new_type);
     let stack_type = void_ptr.fn_type(&[void_ptr.into(), void_ptr.into(), i64_type.into()], false);
     add_fn("tl_tensor_stack", stack_type);
+    // chunk(t, num_chunks, dim, index) -> Tensor*  / split(t, split_size, dim, index) -> Tensor*
+    let chunk_split_type = void_ptr.fn_type(&[void_ptr.into(), i64_type.into(), i64_type.into(), i64_type.into()], false);
+    add_fn("tl_tensor_chunk", chunk_split_type);
+    add_fn("tl_tensor_split", chunk_split_type);
 
     // leaky_relu(t, slope) -> Tensor
     let leaky_relu_type = void_ptr.fn_type(&[void_ptr.into(), f32_type.into()], false);
@@ -1771,6 +1775,8 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_tensor_expand") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_expand as *const () as usize); }
     if let Some(f) = module.get_function("tl_tensor_expand_new") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_expand_new as *const () as usize); }
     if let Some(f) = module.get_function("tl_tensor_stack") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_stack as *const () as usize); }
+    if let Some(f) = module.get_function("tl_tensor_chunk") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_chunk as *const () as usize); }
+    if let Some(f) = module.get_function("tl_tensor_split") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_split as *const () as usize); }
     if let Some(f) = module.get_function("tl_tensor_leaky_relu") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_leaky_relu as *const () as usize); }
     if let Some(f) = module.get_function("tl_tensor_elu") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_elu as *const () as usize); }
     if let Some(f) = module.get_function("tl_tensor_mish") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_mish as *const () as usize); }

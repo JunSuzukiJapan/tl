@@ -216,6 +216,26 @@ pub fn register_tensor_types(manager: &mut TypeManager) {
     // dot(other)
     tensor.register_evaluated_instance_method("dot", compile_tensor_dot, vec![any_tensor.clone()], any_tensor.clone());
 
+    // instance_norm(weight, bias, eps)
+    tensor.register_evaluated_instance_method("instance_norm", compile_tensor_instance_norm, vec![any_tensor.clone(), any_tensor.clone(), Type::F64], any_tensor.clone());
+    tensor.register_evaluated_instance_method("instance_norm", compile_tensor_instance_norm, vec![any_tensor.clone(), any_tensor.clone(), Type::F32], any_tensor.clone());
+    tensor.register_evaluated_instance_method("instance_norm", compile_tensor_instance_norm, vec![any_tensor.clone(), any_tensor.clone()], any_tensor.clone());
+
+    // chunk(num_chunks, dim, index) -> Tensor
+    tensor.register_evaluated_instance_method("chunk", compile_tensor_chunk, vec![Type::I64, Type::I64, Type::I64], any_tensor.clone());
+    // split(split_size, dim, index) -> Tensor
+    tensor.register_evaluated_instance_method("split", compile_tensor_split, vec![Type::I64, Type::I64, Type::I64], any_tensor.clone());
+
+    // Linear algebra
+    tensor.register_evaluated_instance_method("inverse", compile_tensor_inverse, vec![], any_tensor.clone());
+    tensor.register_evaluated_instance_method("det", compile_tensor_det, vec![], any_tensor.clone());
+    tensor.register_evaluated_instance_method("svd_u", compile_tensor_svd_u, vec![], any_tensor.clone());
+    tensor.register_evaluated_instance_method("svd_s", compile_tensor_svd_s, vec![], any_tensor.clone());
+    tensor.register_evaluated_instance_method("svd_v", compile_tensor_svd_v, vec![], any_tensor.clone());
+    tensor.register_evaluated_instance_method("eig_values", compile_tensor_eig_values, vec![], any_tensor.clone());
+    tensor.register_evaluated_instance_method("eig_vectors", compile_tensor_eig_vectors, vec![], any_tensor.clone());
+    tensor.register_evaluated_instance_method("solve", compile_tensor_solve, vec![any_tensor.clone()], any_tensor.clone());
+
     tensor.register_evaluated_instance_method("clone", compile_tensor_clone, vec![], any_tensor.clone());
     tensor.register_evaluated_instance_method("shallow_clone", compile_tensor_shallow_clone, vec![], any_tensor.clone());
     tensor.register_evaluated_instance_method("grad", compile_tensor_grad, vec![], Type::GradTensor(Box::new(Type::F32), 0));
@@ -2030,8 +2050,14 @@ fn compile_tensor_layer_norm<'ctx>(
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
     if args.len() < 3 { return Err("layer_norm requires (weight, bias, eps) arguments".into()); }
+    let f64_type = codegen.context.f64_type();
+    let eps_val = match args[2].1 {
+        Type::F64 => args[2].0.into_float_value(),
+        Type::F32 => codegen.builder.build_float_ext(args[2].0.into_float_value(), f64_type, "eps_ext").map_err(|e| e.to_string())?,
+        _ => f64_type.const_float(1e-5),
+    };
     let f = codegen.module.get_function("tl_tensor_layer_norm").ok_or("tl_tensor_layer_norm not found")?;
-    let call = codegen.builder.build_call(f, &[obj.into(), args[0].0.into(), args[1].0.into(), args[2].0.into()], "ln_res").map_err(|e| e.to_string())?;
+    let call = codegen.builder.build_call(f, &[obj.into(), args[0].0.into(), args[1].0.into(), eps_val.into()], "ln_res").map_err(|e| e.to_string())?;
     let v = codegen.check_tensor_result(call, "layer_norm_error")?;
     Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
 }
@@ -2226,8 +2252,14 @@ fn compile_tensor_group_norm<'ctx>(
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
     if args.len() < 4 { return Err("group_norm requires (num_groups, weight, bias, eps)".into()); }
+    let f64_type = codegen.context.f64_type();
+    let eps_val = match args[3].1 {
+        Type::F64 => args[3].0.into_float_value(),
+        Type::F32 => codegen.builder.build_float_ext(args[3].0.into_float_value(), f64_type, "eps_ext").map_err(|e| e.to_string())?,
+        _ => f64_type.const_float(1e-5),
+    };
     let f = codegen.module.get_function("tl_tensor_group_norm").ok_or("tl_tensor_group_norm not found")?;
-    let call = codegen.builder.build_call(f, &[obj.into(), args[0].0.into(), args[1].0.into(), args[2].0.into(), args[3].0.into()], "gnorm_res")
+    let call = codegen.builder.build_call(f, &[obj.into(), args[0].0.into(), args[1].0.into(), args[2].0.into(), eps_val.into()], "gnorm_res")
         .map_err(|e| e.to_string())?;
     let v = codegen.check_tensor_result(call, "gnorm_error")?;
     Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
@@ -2530,4 +2562,101 @@ fn compile_tensor_clip_grad_norm<'ctx>(
     let ret_f32 = codegen.builder.build_float_trunc(ret_f64, codegen.context.f32_type(), "norm_trunc").map_err(|e| e.to_string())?;
     
     Ok((ret_f32.into(), Type::F32))
+}
+
+// instance_norm(weight, bias, eps?) -> Tensor
+fn compile_tensor_instance_norm<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj: BasicValueEnum<'ctx>,
+    _obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() < 2 { return Err("instance_norm requires at least (weight, bias)".into()); }
+    let f64_type = codegen.context.f64_type();
+    let eps_val = if args.len() >= 3 {
+        match args[2].1 {
+            Type::F64 => args[2].0.into_float_value(),
+            Type::F32 => codegen.builder.build_float_ext(args[2].0.into_float_value(), f64_type, "eps_ext").map_err(|e| e.to_string())?,
+            _ => f64_type.const_float(1e-5),
+        }
+    } else {
+        f64_type.const_float(1e-5)
+    };
+    let f = codegen.module.get_function("tl_tensor_instance_norm").ok_or("tl_tensor_instance_norm not found")?;
+    let call = codegen.builder.build_call(f, &[obj.into(), args[0].0.into(), args[1].0.into(), eps_val.into()], "inorm_res")
+        .map_err(|e| e.to_string())?;
+    let v = codegen.check_tensor_result(call, "instance_norm_error")?;
+    Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
+}
+
+// chunk(num_chunks, dim, index) -> Tensor
+fn compile_tensor_chunk<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj: BasicValueEnum<'ctx>,
+    _obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() < 3 { return Err("chunk requires (num_chunks, dim, index)".into()); }
+    let f = codegen.module.get_function("tl_tensor_chunk").ok_or("tl_tensor_chunk not found")?;
+    let call = codegen.builder.build_call(f, &[obj.into(), args[0].0.into(), args[1].0.into(), args[2].0.into()], "chunk_res")
+        .map_err(|e| e.to_string())?;
+    let v = codegen.check_tensor_result(call, "chunk_error")?;
+    Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
+}
+
+// split(split_size, dim, index) -> Tensor
+fn compile_tensor_split<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj: BasicValueEnum<'ctx>,
+    _obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() < 3 { return Err("split requires (split_size, dim, index)".into()); }
+    let f = codegen.module.get_function("tl_tensor_split").ok_or("tl_tensor_split not found")?;
+    let call = codegen.builder.build_call(f, &[obj.into(), args[0].0.into(), args[1].0.into(), args[2].0.into()], "split_res")
+        .map_err(|e| e.to_string())?;
+    let v = codegen.check_tensor_result(call, "split_error")?;
+    Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
+}
+
+// --- Linear Algebra compile functions ---
+
+macro_rules! compile_unary_linalg {
+    ($name:ident, $ffi_name:expr, $label:expr) => {
+        fn $name<'ctx>(
+            codegen: &mut CodeGenerator<'ctx>,
+            obj: BasicValueEnum<'ctx>,
+            _obj_ty: Type,
+            _args: Vec<(BasicValueEnum<'ctx>, Type)>,
+        ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+            let f = codegen.module.get_function($ffi_name).ok_or(concat!($ffi_name, " not found"))?;
+            let call = codegen.builder.build_call(f, &[obj.into()], $label)
+                .map_err(|e| e.to_string())?;
+            let v = codegen.check_tensor_result(call, concat!($label, "_error"))?;
+            Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
+        }
+    };
+}
+
+compile_unary_linalg!(compile_tensor_inverse, "tl_tensor_inverse", "inv_res");
+compile_unary_linalg!(compile_tensor_det, "tl_tensor_det", "det_res");
+compile_unary_linalg!(compile_tensor_svd_u, "tl_tensor_svd_u", "svdu_res");
+compile_unary_linalg!(compile_tensor_svd_s, "tl_tensor_svd_s", "svds_res");
+compile_unary_linalg!(compile_tensor_svd_v, "tl_tensor_svd_v", "svdv_res");
+compile_unary_linalg!(compile_tensor_eig_values, "tl_tensor_eig_values", "eigv_res");
+compile_unary_linalg!(compile_tensor_eig_vectors, "tl_tensor_eig_vectors", "eigvc_res");
+
+// solve(b) -> Tensor
+fn compile_tensor_solve<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj: BasicValueEnum<'ctx>,
+    _obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() < 1 { return Err("solve requires (b) argument".into()); }
+    let f = codegen.module.get_function("tl_tensor_solve").ok_or("tl_tensor_solve not found")?;
+    let call = codegen.builder.build_call(f, &[obj.into(), args[0].0.into()], "solve_res")
+        .map_err(|e| e.to_string())?;
+    let v = codegen.check_tensor_result(call, "solve_error")?;
+    Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
 }
