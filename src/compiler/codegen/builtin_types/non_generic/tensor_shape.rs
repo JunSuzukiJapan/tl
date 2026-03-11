@@ -1,6 +1,6 @@
 use crate::compiler::codegen::CodeGenerator;
 use crate::compiler::ast::Type;
-use inkwell::values::{BasicValueEnum, BasicValue, ValueKind};
+use inkwell::values::{BasicValueEnum, ValueKind};
 
 /// Tensor の shape 操作メソッドを compile する共通ヘルパー。
 /// パターン: tl_tensor_{op}(tensor, args...) -> tensor

@@ -1,6 +1,6 @@
 use crate::compiler::codegen::CodeGenerator;
 use crate::compiler::ast::Type;
-use inkwell::values::{BasicValueEnum, BasicValue, ValueKind};
+use inkwell::values::BasicValueEnum;
 
 /// Tensor の reduction / activation (1引数) メソッドの共通ヘルパー。
 /// パターン: tl_tensor_{op}(tensor, args...) -> tensor

@@ -1,6 +1,6 @@
 use crate::compiler::codegen::CodeGenerator;
 use crate::compiler::ast::Type;
-use inkwell::values::{BasicValueEnum, BasicValue, ValueKind};
+use inkwell::values::{BasicValueEnum, ValueKind};
 
 /// Map の get 系メソッドの共通ヘルパー
 fn compile_map_get_impl<'ctx>(

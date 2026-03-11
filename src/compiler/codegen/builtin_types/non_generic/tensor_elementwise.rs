@@ -1,6 +1,6 @@
 use crate::compiler::codegen::CodeGenerator;
 use crate::compiler::ast::Type;
-use inkwell::values::{BasicValueEnum, BasicValue};
+use inkwell::values::BasicValueEnum;
 
 /// Tensor の elementwise メソッドを compile する共通ヘルパー。
 /// パターン: tl_tensor_{op}(tensor) -> tensor

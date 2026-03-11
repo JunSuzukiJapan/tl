@@ -1,6 +1,6 @@
 use crate::compiler::codegen::CodeGenerator;
 use crate::compiler::ast::Type;
-use inkwell::values::{BasicValueEnum, BasicValue, ValueKind};
+use inkwell::values::{BasicValueEnum, ValueKind};
 
 /// LLM 専用メソッドの共通ヘルパー。
 /// パターン: tl_tensor_{op}(tensor, args...) -> tensor
@@ -88,7 +88,7 @@ pub fn compile_rms_norm<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ct
 }
 
 // ---- sample(temp, top_p) -> Tensor ----
-pub fn compile_sample<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+pub fn compile_sample<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
     // sample returns Tensor<f32, 1> but we keep obj_ty for now
     let fn_name = "tl_tensor_sample";
     let fn_val = c.module.get_function(fn_name).ok_or(format!("{} not found", fn_name))?;

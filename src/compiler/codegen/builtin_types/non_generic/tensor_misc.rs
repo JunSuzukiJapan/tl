@@ -1,6 +1,6 @@
 use crate::compiler::codegen::CodeGenerator;
 use crate::compiler::ast::Type;
-use inkwell::values::{BasicValueEnum, BasicValue, ValueKind};
+use inkwell::values::BasicValueEnum;
 
 /// print() -> Void
 pub fn compile_print<'ctx>(
