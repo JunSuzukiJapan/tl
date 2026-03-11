@@ -9,4 +9,6 @@ pub mod tensor_shape;
 pub mod tensor_reduce;
 pub mod tensor_llm;
 pub mod tensor_misc;
+pub mod string_methods;
+pub mod map_methods;
 pub mod param;

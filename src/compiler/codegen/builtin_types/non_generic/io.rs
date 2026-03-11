@@ -150,22 +150,16 @@ pub fn register_io_types(manager: &mut TypeManager) {
     let mut map = CodeGenType::new("Map");
     // Map::load(path: String) -> Map  (handled in expr.rs via tl_gguf_load)
     map.register_static_signature("load", vec![string_type.clone()], Type::Struct("Map".into(), vec![]));
-    // map.get(key: String) -> Tensor
-    map.register_instance_signature("get", vec![string_type.clone()], any_tensor.clone());
-    // map.get_1d(key: String) -> Tensor<F32, 1>
-    map.register_instance_signature("get_1d", vec![string_type.clone()], Type::Tensor(Box::new(Type::F32), 1));
-    // map.get_quantized(key: String) -> Tensor<I8, 2>
-    map.register_instance_signature("get_quantized", vec![string_type.clone()], Type::Tensor(Box::new(Type::I8), 2));
-    // map.set(key: String, value: Tensor) -> Void
-    map.register_instance_signature("set", vec![string_type.clone(), any_tensor.clone()], Type::Void);
-    // map.metadata() -> Map  
-    map.register_instance_signature("metadata", vec![], Type::Struct("Map".into(), vec![]));
-    // map.get_i64(key: String) -> i64
-    map.register_instance_signature("get_i64", vec![string_type.clone()], Type::I64);
-    // map.get_string(key: String) -> String
-    map.register_instance_signature("get_string", vec![string_type.clone()], string_type.clone());
-    // map.get_vec_string(key: String) -> Vec<String>
-    map.register_instance_signature("get_vec_string", vec![string_type.clone()], Type::Struct("Vec".into(), vec![string_type.clone()]));
+    // Instance methods (implemented in map_methods.rs)
+    use super::map_methods;
+    map.register_evaluated_instance_method("get", map_methods::compile_get, vec![string_type.clone()], any_tensor.clone());
+    map.register_evaluated_instance_method("get_1d", map_methods::compile_get_1d, vec![string_type.clone()], Type::Tensor(Box::new(Type::F32), 1));
+    map.register_evaluated_instance_method("get_quantized", map_methods::compile_get_quantized, vec![string_type.clone()], Type::Tensor(Box::new(Type::I8), 2));
+    map.register_evaluated_instance_method("set", map_methods::compile_set, vec![string_type.clone(), any_tensor.clone()], Type::Void);
+    map.register_evaluated_instance_method("metadata", map_methods::compile_metadata, vec![], Type::Struct("Map".into(), vec![]));
+    map.register_evaluated_instance_method("get_i64", map_methods::compile_get_i64, vec![string_type.clone()], Type::I64);
+    map.register_evaluated_instance_method("get_string", map_methods::compile_get_string, vec![string_type.clone()], string_type.clone());
+    map.register_evaluated_instance_method("get_vec_string", map_methods::compile_get_vec_string, vec![string_type.clone()], Type::Struct("Vec".into(), vec![string_type.clone()]));
     manager.register_type(map);
 }
 

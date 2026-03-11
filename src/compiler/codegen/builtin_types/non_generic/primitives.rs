@@ -9,13 +9,14 @@ pub fn register_primitive_types(manager: &mut TypeManager) {
     
     // ===== String =====
     let mut string = CodeGenType::new("String");
-    string.register_instance_signature("len", vec![], Type::I64);
-    string.register_instance_signature("contains", vec![string_type.clone()], Type::Bool);
-    string.register_instance_signature("concat", vec![string_type.clone()], string_type.clone());
-    string.register_instance_signature("char_at", vec![Type::I64], Type::Char("Char".to_string()));
-    string.register_instance_signature("to_i64", vec![], Type::I64);
-    string.register_instance_signature("print", vec![], Type::Void);
-    string.register_instance_signature("display", vec![], Type::Void);
+    use super::string_methods;
+    string.register_evaluated_instance_method("len", string_methods::compile_len, vec![], Type::I64);
+    string.register_evaluated_instance_method("contains", string_methods::compile_contains, vec![string_type.clone()], Type::Bool);
+    string.register_evaluated_instance_method("concat", string_methods::compile_concat, vec![string_type.clone()], string_type.clone());
+    string.register_evaluated_instance_method("char_at", string_methods::compile_char_at, vec![Type::I64], Type::Char("Char".to_string()));
+    string.register_evaluated_instance_method("to_i64", string_methods::compile_to_i64, vec![], Type::I64);
+    string.register_evaluated_instance_method("print", string_methods::compile_print, vec![], Type::Void);
+    string.register_evaluated_instance_method("display", string_methods::compile_display, vec![], Type::Void);
     manager.register_type(string);
 
     // ===== F32 =====
