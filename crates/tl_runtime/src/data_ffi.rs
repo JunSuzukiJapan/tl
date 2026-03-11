@@ -97,6 +97,7 @@ pub extern "C" fn tl_json_load(path: *mut StringStruct) -> *mut StringStruct {
 
 // ========== DataLoader ==========
 
+#[allow(dead_code)]
 struct DataLoaderState {
     data: *mut c_void,       // テンソルポインタ
     labels: *mut c_void,     // ラベルテンソルポインタ

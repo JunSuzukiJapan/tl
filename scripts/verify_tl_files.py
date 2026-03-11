@@ -662,6 +662,7 @@ def main():
     # Metal GPU プロセスの並列実行は Mac 全体のクラッシュを引き起こす。
     parser.add_argument("--static", action="store_true", help="静的コンパイルモードで実行 (JIT回避)")
     parser.add_argument("--clean", action="store_true", help="古いバイナリを削除して終了")
+    parser.add_argument("--no-build", action="store_true", help="自動ビルドをスキップ (既存バイナリをそのまま使用)")
     parser.add_argument("--cooldown", type=float, default=1.5, help="テスト間のクールダウン秒数 (デフォルト: 1.5)")
     parser.add_argument("--crash-cooldown", type=float, default=5.0, help="クラッシュ後のクールダウン秒数 (デフォルト: 5.0)")
     parser.add_argument("--max-crashes", type=int, default=5, help="連続クラッシュでの緊急停止閾値 (デフォルト: 5)")
@@ -683,6 +684,27 @@ def main():
         clean_binaries(project_root)
         sys.exit(0)
     
+    # ── 自動ビルド ──────────────────────────────────────
+    # 古いバイナリによるテスト失敗を防ぐため、テスト実行前に必ず再ビルドする。
+    # release バイナリが存在する場合は --release でビルドし、なければ debug でビルドする。
+    # --no-build フラグで省略可能。
+    if not args.no_build:
+        use_release = (project_root / "target" / "release" / "tl").exists()
+        profile = "--release" if use_release else ""
+        profile_label = "release" if use_release else "debug"
+        print(f"🔨 バイナリを再ビルド中 ({profile_label})...")
+        build_cmd = ["cargo", "build"] + ([profile] if profile else [])
+        build_result = subprocess.run(
+            build_cmd,
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+        )
+        if build_result.returncode != 0:
+            print(f"❌ cargo build 失敗:\n{build_result.stderr}")
+            sys.exit(1)
+        print(f"✅ ビルド完了 ({profile_label})\n")
+
     # TL バイナリのパス
     tl_binary = project_root / "target" / "release" / "tl"
     if not tl_binary.exists():

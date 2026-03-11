@@ -1,3 +1,4 @@
+#![allow(unexpected_cfgs)]
 #![cfg(feature = "metal")]
 use serial_test::serial;
 use tl_metal::ffi_ops::*;

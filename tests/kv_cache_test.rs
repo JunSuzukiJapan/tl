@@ -19,6 +19,7 @@ fn test_kv_cache_lifecycle() {
     tl_kv_cache_free(raw_ptr);
 }
 
+#[allow(unexpected_cfgs)]
 #[cfg(feature = "metal")]
 #[test]
 #[serial]

@@ -789,13 +789,13 @@ pub extern "C" fn tl_device_tensor_scale(a: *mut c_void, s: f32) -> *mut c_void 
 /// @ffi_sig (Tensor*, bool) -> void
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_device_tensor_set_requires_grad(t: *mut c_void, req_grad: bool) {
-    let _ = dispatch(|d| { d.tensor_set_requires_grad(t, req_grad); Ok(std::ptr::null_mut()) });
+    let _ = dispatch(|d| { let _ = d.tensor_set_requires_grad(t, req_grad); Ok(std::ptr::null_mut()) });
 }
 
 /// @ffi_sig (Tensor*, f64, f64) -> void
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_device_tensor_clip_grad_value(t: *mut c_void, min: f64, max: f64) {
-    let _ = dispatch(|d| { d.tensor_clip_grad_value(t, min, max); Ok(std::ptr::null_mut()) });
+    let _ = dispatch(|d| { let _ = d.tensor_clip_grad_value(t, min, max); Ok(std::ptr::null_mut()) });
 }
 
 /// @ffi_sig (Tensor*, f64, f64) -> f64

@@ -1923,12 +1923,17 @@ impl SemanticAnalyzer {
                         // Compound assignment: Check if numeric or tensor
                         let is_numeric =
                             matches!(lhs_type, Type::I64 | Type::I32 | Type::F32 | Type::F64);
-                        let is_tensor = matches!(lhs_type, Type::Tensor(_, _));
+                        let is_tensor = matches!(lhs_type, Type::Tensor(_, _) | Type::GradTensor(_, _));
 
                         if is_tensor {
                             let is_compat = match (&lhs_type, &val_type) {
                                 (Type::Tensor(inner, _), val) if **inner == *val => true,
                                 (Type::Tensor(_, _), Type::Tensor(_, _)) => true,
+                                (Type::GradTensor(inner, _), val) if **inner == *val => true,
+                                (Type::GradTensor(_, _), Type::GradTensor(_, _)) => true,
+                                // Tensor <-> GradTensor interop
+                                (Type::Tensor(_, _), Type::GradTensor(_, _)) => true,
+                                (Type::GradTensor(_, _), Type::Tensor(_, _)) => true,
                                 _ => false,
                             };
                             if !is_compat {
@@ -3556,6 +3561,63 @@ impl SemanticAnalyzer {
                         // Struct("Tensor") Mixed with Legacy Tensor (Support transition)
                         (Type::Struct(n, _), Type::Tensor(_, _)) if n == "Tensor" => Ok(left),
                         (Type::Tensor(_, _), Type::Struct(n, _)) if n == "Tensor" => Ok(right),
+
+                        // === GradTensor rules (mirror of Tensor rules) ===
+                        // GradTensor × scalar => GradTensor
+                        (Type::GradTensor(inner, _rank), val) if **inner == *val => Ok(result_ty),
+                        // scalar × GradTensor => GradTensor
+                        (val, Type::GradTensor(inner, _rank)) if **inner == *val => {
+                            if matches!(result_ty, Type::Bool) {
+                                Ok(Type::Bool)
+                            } else {
+                                Ok(right)
+                            }
+                        }
+                        // GradTensor × GradTensor => GradTensor
+                        (Type::GradTensor(inner1, rank1), Type::GradTensor(inner2, rank2))
+                            if inner1 == inner2 =>
+                        {
+                            if matches!(result_ty, Type::Bool) {
+                                Ok(Type::Bool)
+                            } else {
+                                if *rank1 == 0 || *rank2 == 0 {
+                                    Ok(Type::GradTensor(inner1.clone(), 0))
+                                } else {
+                                    Ok(Type::GradTensor(inner1.clone(), std::cmp::max(*rank1, *rank2)))
+                                }
+                            }
+                        }
+                        // GradTensor × Tensor => GradTensor (grad preserved)
+                        (Type::GradTensor(inner1, rank1), Type::Tensor(inner2, rank2))
+                            if inner1 == inner2 =>
+                        {
+                            if matches!(result_ty, Type::Bool) {
+                                Ok(Type::Bool)
+                            } else {
+                                if *rank1 == 0 || *rank2 == 0 {
+                                    Ok(Type::GradTensor(inner1.clone(), 0))
+                                } else {
+                                    Ok(Type::GradTensor(inner1.clone(), std::cmp::max(*rank1, *rank2)))
+                                }
+                            }
+                        }
+                        // Tensor × GradTensor => GradTensor (grad preserved)
+                        (Type::Tensor(inner1, rank1), Type::GradTensor(inner2, rank2))
+                            if inner1 == inner2 =>
+                        {
+                            if matches!(result_ty, Type::Bool) {
+                                Ok(Type::Bool)
+                            } else {
+                                if *rank1 == 0 || *rank2 == 0 {
+                                    Ok(Type::GradTensor(inner2.clone(), 0))
+                                } else {
+                                    Ok(Type::GradTensor(inner2.clone(), std::cmp::max(*rank1, *rank2)))
+                                }
+                            }
+                        }
+                        // GradTensor with Struct("Tensor") compatibility
+                        (Type::GradTensor(_, _), Type::Struct(n, _)) if n == "Tensor" => Ok(left),
+                        (Type::Struct(n, _), Type::GradTensor(_, _)) if n == "Tensor" => Ok(right),
 
                         _ => self.err(
                             SemanticError::TypeMismatch {
@@ -6067,6 +6129,39 @@ impl SemanticAnalyzer {
             }
             (Type::Struct(n, _), Type::Tensor(_, _)) if n == "Tensor" => true,
             (Type::Tensor(_, _), Type::Struct(n, _)) if n == "Tensor" => true,
+            // GradTensor compatibility rules
+            (Type::GradTensor(i1, r1), Type::GradTensor(i2, r2)) => {
+                if *r1 == 0 || *r2 == 0 {
+                    return true;
+                }
+                r1 == r2 && self.are_types_compatible(i1, i2)
+            }
+            (Type::GradTensor(inner, _rank), primitive)
+                if self.are_types_compatible(inner, primitive) =>
+            {
+                true
+            }
+            (primitive, Type::GradTensor(inner, _rank))
+                if self.are_types_compatible(primitive, inner) =>
+            {
+                true
+            }
+            // GradTensor <-> Tensor interchangeability
+            (Type::GradTensor(i1, r1), Type::Tensor(i2, r2)) => {
+                if *r1 == 0 || *r2 == 0 {
+                    return true;
+                }
+                r1 == r2 && self.are_types_compatible(i1, i2)
+            }
+            (Type::Tensor(i1, r1), Type::GradTensor(i2, r2)) => {
+                if *r1 == 0 || *r2 == 0 {
+                    return true;
+                }
+                r1 == r2 && self.are_types_compatible(i1, i2)
+            }
+            // GradTensor with Struct("Tensor") compatibility
+            (Type::Struct(n, _), Type::GradTensor(_, _)) if n == "Tensor" => true,
+            (Type::GradTensor(_, _), Type::Struct(n, _)) if n == "Tensor" => true,
             // Allow I32/I64/F32/F64 inter-compatibility for some operations
             (Type::I64, Type::F32) | (Type::F32, Type::I64) => true,
             (Type::I32, Type::I64) | (Type::I64, Type::I32) => true,
