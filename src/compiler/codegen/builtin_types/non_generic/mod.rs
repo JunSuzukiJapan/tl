@@ -11,4 +11,5 @@ pub mod tensor_llm;
 pub mod tensor_misc;
 pub mod string_methods;
 pub mod map_methods;
+pub mod primitive_methods;
 pub mod param;
