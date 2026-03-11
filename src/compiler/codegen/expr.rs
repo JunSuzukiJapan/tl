@@ -6179,81 +6179,9 @@ impl<'ctx> CodeGenerator<'ctx> {
 
 
 
-        if type_name == "Map" {
-            match method {
-                "get" | "get_1d" | "get_quantized" => {
-                    if args.len() != 1 {
-                        return Err("Map::get requires 1 argument".into());
-                    }
-                    let (key_val, key_ty) = self.compile_expr(&args[0])?;
-                    
-                    // Runtime expects *mut StringStruct, so pass the String struct pointer directly
-                    // Do NOT extract the ptr field - runtime will access it
-                    let name_arg = if matches!(key_ty, Type::String(_)) {
-                        // key_val is already a pointer to StringStruct
-                        key_val
-                    } else {
-                        return Err(format!("Map::get expects String argument, got {:?}", key_ty));
-                    };
-                    
-                    let fn_name = match method {
-                        "get" => "tl_tensor_map_get",
-                        "get_1d" => "tl_tensor_map_get_1d",
-                        "get_quantized" => "tl_tensor_map_get_quantized",
-                        _ => unreachable!(),
-                    };
-                    let fn_val = self
-                        .module
-                        .get_function(fn_name)
-                        .ok_or(format!("{} not found", fn_name))?;
-                    let call = self
-                        .builder
-                        .build_call(fn_val, &[obj_val.into(), name_arg.into()], "map_get")
-                        .map_err(|e| e.to_string())?;
-                    let res = match call.try_as_basic_value() {
-                        inkwell::values::ValueKind::Basic(v) => v,
-                        _ => return Err("Invalid return from Map::get".into()),
-                    };
-                    if method == "get_quantized" {
-                        // Return Tensor type so that ownership is tracked correctly
-                        return Ok((res, Type::Tensor(Box::new(Type::I8), 2)));
-                    }
-                    let _ret_ty = Type::Tensor(Box::new(Type::F32), 0);
+        // Map and String methods are now handled by TypeManager (Evaluated).
+        // See map_methods.rs and string_methods.rs for implementations.
 
-                    return Ok((res, Type::Tensor(Box::new(Type::F32), 0)));
-                }
-                _ => {}
-            }
-        }
-
-        if type_name == "String" {
-            let str_struct_ty = self.context.struct_type(&[
-                self.context.ptr_type(inkwell::AddressSpace::default()).into(), // ptr
-                self.context.i64_type().into(), // len
-            ], false);
-
-            match method {
-
-                "print" | "display" => {
-                    let fn_val = self
-                        .module
-                        .get_function("tl_print_string")
-                        .ok_or("tl_print_string not found")?;
-                    
-                    // Pass struct pointer directly
-                    self.builder.build_call(fn_val, &[obj_val.into()], "").map_err(|e| e.to_string())?;
-                    return Ok((self.context.i64_type().const_zero().into(), Type::Void));
-                }
-                "len" => {
-                    let ptr = obj_val.into_pointer_value();
-                    let len_ptr = self.builder.build_struct_gep(str_struct_ty, ptr, 1, "len_ptr").map_err(|_| "Failed to GEP String len")?;
-                    let len_val = self.builder.build_load(self.context.i64_type(), len_ptr, "len").map_err(|e| e.to_string())?;
-                    return Ok((len_val, Type::I64));
-                }
-
-                _ => {}
-            }
-        }
 
         // Special Handling for Tensor methods was removed in favor of TypeManager registration.
         // See builtin_types/non_generic/tensor.rs for method implementations.
