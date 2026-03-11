@@ -285,69 +285,86 @@ pub fn register_tensor_types(manager: &mut TypeManager) {
     tensor.register_evaluated_instance_method("sub_assign", compile_tensor_sub_assign, vec![any_tensor.clone()], Type::Void);
 
     // ===== Additional methods from check_builtin_method (signature-only) =====
-    // Autograd
-    tensor.register_instance_signature("backward", vec![], Type::Void);
-    tensor.register_instance_signature("enable_grad", vec![], any_tensor.clone());
-    tensor.register_instance_signature("freeze", vec![], Type::Void);
-    tensor.register_instance_signature("unfreeze", vec![], Type::Void);
-    tensor.register_instance_signature("clip_grad_value", vec![Type::F32, Type::F32], Type::Void);
-    tensor.register_instance_signature("clip_grad_norm", vec![Type::F32, Type::F32], Type::F32);
+    // Autograd (implemented in tensor_autograd.rs)
+    use super::tensor_autograd;
+    tensor.register_evaluated_instance_method("backward", tensor_autograd::compile_backward, vec![], Type::Void);
+    tensor.register_evaluated_instance_method("enable_grad", tensor_autograd::compile_enable_grad, vec![], any_tensor.clone());
+    // freeze, unfreeze, clip_grad_value, clip_grad_norm are already registered as Evaluated above (L281-284)
+
     
-    // Activation / ops - 1 arg
-    tensor.register_instance_signature("softmax", vec![Type::I64], any_tensor.clone());
-    tensor.register_instance_signature("log_softmax", vec![Type::I64], any_tensor.clone());
-    tensor.register_instance_signature("matmul", vec![any_tensor.clone()], any_tensor.clone());
+    // Activation / ops - 1 arg (implemented in tensor_reduce.rs)
+    use super::tensor_reduce;
+    tensor.register_evaluated_instance_method("softmax", tensor_reduce::compile_softmax, vec![Type::I64], any_tensor.clone());
+    tensor.register_evaluated_instance_method("log_softmax", tensor_reduce::compile_log_softmax, vec![Type::I64], any_tensor.clone());
+    tensor.register_evaluated_instance_method("matmul", tensor_reduce::compile_matmul, vec![any_tensor.clone()], any_tensor.clone());
     tensor.register_evaluated_instance_method("embedding", compile_tensor_embedding, vec![any_tensor.clone()], any_tensor.clone());
-    tensor.register_instance_signature("cross_entropy", vec![any_tensor.clone()], any_tensor.clone());
-    tensor.register_instance_signature("pow", vec![Type::I64], any_tensor.clone());
+    tensor.register_evaluated_instance_method("cross_entropy", tensor_reduce::compile_cross_entropy, vec![any_tensor.clone()], any_tensor.clone());
+    tensor.register_evaluated_instance_method("pow", tensor_reduce::compile_pow, vec![Type::I64], any_tensor.clone());
     
-    // Elementwise ops - 0 arg
-    for method in ["abs", "relu", "gelu", "silu", "exp", "log", "sqrt", "sin", "cos", "tanh", "sigmoid", "neg", "tan"] {
-        tensor.register_instance_signature(method, vec![], any_tensor.clone());
-    }
+    // Elementwise ops - 0 arg (implemented in tensor_elementwise.rs)
+    use super::tensor_elementwise;
+    tensor.register_evaluated_instance_method("abs", tensor_elementwise::compile_abs, vec![], any_tensor.clone());
+    tensor.register_evaluated_instance_method("relu", tensor_elementwise::compile_relu, vec![], any_tensor.clone());
+    tensor.register_evaluated_instance_method("gelu", tensor_elementwise::compile_gelu, vec![], any_tensor.clone());
+    tensor.register_evaluated_instance_method("silu", tensor_elementwise::compile_silu, vec![], any_tensor.clone());
+    tensor.register_evaluated_instance_method("exp", tensor_elementwise::compile_exp, vec![], any_tensor.clone());
+    tensor.register_evaluated_instance_method("log", tensor_elementwise::compile_log, vec![], any_tensor.clone());
+    tensor.register_evaluated_instance_method("sqrt", tensor_elementwise::compile_sqrt, vec![], any_tensor.clone());
+    tensor.register_evaluated_instance_method("sin", tensor_elementwise::compile_sin, vec![], any_tensor.clone());
+    tensor.register_evaluated_instance_method("cos", tensor_elementwise::compile_cos, vec![], any_tensor.clone());
+    tensor.register_evaluated_instance_method("tanh", tensor_elementwise::compile_tanh, vec![], any_tensor.clone());
+    tensor.register_evaluated_instance_method("sigmoid", tensor_elementwise::compile_sigmoid, vec![], any_tensor.clone());
+    tensor.register_evaluated_instance_method("neg", tensor_elementwise::compile_neg, vec![], any_tensor.clone());
+    tensor.register_evaluated_instance_method("tan", tensor_elementwise::compile_tan, vec![], any_tensor.clone());
+
+    // Shape ops (implemented in tensor_shape.rs)
+    use super::tensor_shape;
+    tensor.register_evaluated_instance_method("squeeze", tensor_shape::compile_squeeze, vec![Type::I64], any_tensor.clone());
+    tensor.register_evaluated_instance_method("unsqueeze", tensor_shape::compile_unsqueeze, vec![Type::I64], any_tensor.clone());
+    tensor.register_evaluated_instance_method("flatten", tensor_shape::compile_flatten, vec![Type::I64], any_tensor.clone());
+    tensor.register_evaluated_instance_method("gather", tensor_shape::compile_gather, vec![any_tensor.clone()], any_tensor.clone());
+    tensor.register_evaluated_instance_method("permute", tensor_shape::compile_permute, vec![Type::Struct("Vec".into(), vec![Type::I64])], any_tensor.clone());
+    tensor.register_evaluated_instance_method("cat", tensor_shape::compile_cat, vec![any_tensor.clone()], any_tensor.clone());
     
-    // Shape ops - 1+ args 
-    tensor.register_instance_signature("squeeze", vec![Type::I64], any_tensor.clone());
-    tensor.register_instance_signature("unsqueeze", vec![Type::I64], any_tensor.clone());
-    tensor.register_instance_signature("flatten", vec![Type::I64], any_tensor.clone());
-    tensor.register_instance_signature("gather", vec![any_tensor.clone()], any_tensor.clone());
-    tensor.register_instance_signature("permute", vec![Type::Struct("Vec".into(), vec![Type::I64])], any_tensor.clone());
-    tensor.register_instance_signature("cat", vec![any_tensor.clone()], any_tensor.clone());
+    // LLM ops (implemented in tensor_llm.rs)
+    use super::tensor_llm;
+    tensor.register_evaluated_instance_method("scale", tensor_llm::compile_scale, vec![Type::F32], any_tensor.clone());
+    tensor.register_evaluated_instance_method("add_4d", tensor_llm::compile_add_4d, vec![any_tensor.clone()], any_tensor.clone());
+    tensor.register_evaluated_instance_method("matmul_4d", tensor_llm::compile_matmul_4d, vec![any_tensor.clone()], any_tensor.clone());
+    tensor.register_evaluated_instance_method("cat_4d", tensor_llm::compile_cat_4d, vec![any_tensor.clone(), Type::I64], any_tensor.clone());
+    tensor.register_evaluated_instance_method("rms_norm", tensor_llm::compile_rms_norm, vec![any_tensor.clone(), Type::F32], any_tensor.clone());
+    tensor.register_evaluated_instance_method("sample", tensor_llm::compile_sample, vec![Type::F32, Type::F32], Type::Tensor(Box::new(Type::F32), 1));
+    tensor.register_evaluated_instance_method("repeat_interleave", tensor_llm::compile_repeat_interleave, vec![Type::I64, Type::I64], any_tensor.clone());
+    tensor.register_evaluated_instance_method("apply_rope", tensor_llm::compile_apply_rope, vec![any_tensor.clone(), any_tensor.clone()], any_tensor.clone());
+    tensor.register_evaluated_instance_method("narrow", tensor_llm::compile_narrow, vec![Type::I64, Type::I64, Type::I64], any_tensor.clone());
+    tensor.register_evaluated_instance_method("transpose_2d", tensor_llm::compile_transpose_2d, vec![Type::I64, Type::I64], any_tensor.clone());
+    tensor.register_evaluated_instance_method("item_i64", tensor_llm::compile_item_i64, vec![], Type::I64);
+    tensor.register_evaluated_instance_method("cat_i64", tensor_llm::compile_cat_i64, vec![any_tensor.clone(), Type::I64], any_tensor.clone());
     
-    // LLM ops
-    tensor.register_instance_signature("scale", vec![Type::F32], any_tensor.clone());
-    tensor.register_instance_signature("add_4d", vec![any_tensor.clone()], any_tensor.clone());
-    tensor.register_instance_signature("matmul_4d", vec![any_tensor.clone()], any_tensor.clone());
-    tensor.register_instance_signature("cat_4d", vec![any_tensor.clone(), Type::I64], any_tensor.clone());
-    tensor.register_instance_signature("rms_norm", vec![any_tensor.clone(), Type::F32], any_tensor.clone());
-    tensor.register_instance_signature("sample", vec![Type::F32, Type::F32], Type::Tensor(Box::new(Type::F32), 1));
-    tensor.register_instance_signature("repeat_interleave", vec![Type::I64, Type::I64], any_tensor.clone());
-    tensor.register_instance_signature("apply_rope", vec![any_tensor.clone(), any_tensor.clone()], any_tensor.clone());
-    tensor.register_instance_signature("narrow", vec![Type::I64, Type::I64, Type::I64], any_tensor.clone());
-    tensor.register_instance_signature("transpose_2d", vec![Type::I64, Type::I64], any_tensor.clone());
-    tensor.register_instance_signature("item_i64", vec![], Type::I64);
-    tensor.register_instance_signature("cat_i64", vec![any_tensor.clone(), Type::I64], any_tensor.clone());
+    // Shape/length queries (implemented in tensor_shape.rs)
+    tensor.register_evaluated_instance_method("len", tensor_shape::compile_len, vec![], Type::I64);
+    tensor.register_evaluated_instance_method("dim", tensor_shape::compile_dim, vec![Type::I64], Type::I64);
+    tensor.register_evaluated_instance_method("ndim", tensor_shape::compile_ndim, vec![], Type::I64);
+    tensor.register_evaluated_instance_method("get_shape", tensor_shape::compile_get_shape, vec![], Type::Struct("Vec".into(), vec![Type::I64]));
+
+    // Misc (implemented in tensor_misc.rs)
+    use super::tensor_misc;
+    tensor.register_evaluated_instance_method("print", tensor_misc::compile_print, vec![], Type::Void);
+    tensor.register_evaluated_instance_method("display", tensor_misc::compile_display, vec![], Type::Void);
     
-    // Shape/length queries
-    tensor.register_instance_signature("len", vec![], Type::I64);
-    tensor.register_instance_signature("dim", vec![Type::I64], Type::I64);
-    tensor.register_instance_signature("ndim", vec![], Type::I64);
-    tensor.register_instance_signature("get_shape", vec![], Type::Struct("Vec".into(), vec![Type::I64]));
-    tensor.register_instance_signature("print", vec![], Type::Void);
-    tensor.register_instance_signature("display", vec![], Type::Void);
+    // Slice (implemented in tensor_misc.rs)
+    tensor.register_evaluated_instance_method("slice", tensor_misc::compile_slice, vec![Type::I64, Type::I64, Type::I64, Type::I64], any_tensor.clone());
     
-    // Slice
-    tensor.register_instance_signature("slice", vec![Type::I64, Type::I64, Type::I64, Type::I64], any_tensor.clone());
-    
-    // Dim-specific ops  
-    tensor.register_instance_signature("sum_dim", vec![Type::I64, Type::Bool], any_tensor.clone());
-    tensor.register_instance_signature("mean_dim", vec![Type::I64, Type::Bool], any_tensor.clone());
-    tensor.register_instance_signature("max_dim", vec![Type::I64], any_tensor.clone());
-    tensor.register_instance_signature("min_dim", vec![Type::I64], any_tensor.clone());
+    // Dim-specific ops (implemented in tensor_reduce.rs)
+    tensor.register_evaluated_instance_method("sum_dim", tensor_reduce::compile_sum_dim, vec![Type::I64, Type::Bool], any_tensor.clone());
+    tensor.register_evaluated_instance_method("mean_dim", tensor_reduce::compile_mean_dim, vec![Type::I64, Type::Bool], any_tensor.clone());
+    tensor.register_evaluated_instance_method("max_dim", tensor_reduce::compile_max_dim, vec![Type::I64], any_tensor.clone());
+    tensor.register_evaluated_instance_method("min_dim", tensor_reduce::compile_min_dim, vec![Type::I64], any_tensor.clone());
     tensor.register_evaluated_instance_method("sumall", compile_tensor_sumall, vec![], any_tensor.clone());
     
-    // Modulo
-    tensor.register_instance_signature("mod", vec![Type::I64], any_tensor.clone());
+    // Modulo (implemented in tensor_reduce.rs)
+    tensor.register_evaluated_instance_method("mod", tensor_reduce::compile_mod, vec![Type::I64], any_tensor.clone());
+
 
     manager.register_type(tensor);
 }
