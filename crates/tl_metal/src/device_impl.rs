@@ -378,41 +378,38 @@ impl IDevice for MetalDeviceImpl {
 
     fn tensor_scaled_dot_product_attention(&self, q: *mut c_void, k: *mut c_void, v: *mut c_void, mask: *mut c_void) -> BackendResult<*mut c_void> {
         let (tq, tk, tv) = unsafe { (&*t(q), &*t(k), &*t(v)) };
-        let qd = tq.to_vec::<f32>(); let kd = tk.to_vec::<f32>(); let vd = tv.to_vec::<f32>();
-        let qs = tq.shape().to_vec(); let ks = tk.shape().to_vec(); let vs = tv.shape().to_vec();
-        let (batch, heads) = if qs.len() == 4 { (qs[0], qs[1]) } else if qs.len() == 3 { (1, qs[0]) } else { (1, 1) };
-        let (seq_q, d_k) = (qs[qs.len()-2], qs[qs.len()-1]);
-        let seq_k = ks[ks.len()-2]; let d_v = vs[vs.len()-1];
+        let qs = tq.shape().to_vec();
+        let d_k = *qs.last().unwrap_or(&1);
         let scale = 1.0 / (d_k as f32).sqrt();
-        let has_mask = !mask.is_null();
-        let mask_data = if has_mask { unsafe { &*t(mask) }.to_vec::<f32>() } else { vec![] };
-        let mut result = vec![0.0f32; batch*heads*seq_q*d_v];
-        for b in 0..batch { for h in 0..heads {
-            let (q_off, k_off, v_off) = (b*heads*seq_q*d_k+h*seq_q*d_k, b*heads*seq_k*d_k+h*seq_k*d_k, b*heads*seq_k*d_v+h*seq_k*d_v);
-            let mut scores = vec![0.0f32; seq_q*seq_k];
-            for i in 0..seq_q { for j in 0..seq_k {
-                let mut s = 0.0f32;
-                for d in 0..d_k { s += qd[q_off+i*d_k+d] * kd[k_off+j*d_k+d]; }
-                scores[i*seq_k+j] = s * scale;
-            }}
-            if has_mask { for i in 0..seq_q { for j in 0..seq_k {
-                if mask_data.len() > i*seq_k+j && mask_data[i*seq_k+j] == 0.0 { scores[i*seq_k+j] = -1e9; }
-            }}}
-            for i in 0..seq_q {
-                let mx: f32 = scores[i*seq_k..(i+1)*seq_k].iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-                let mut sm = 0.0f32;
-                for j in 0..seq_k { scores[i*seq_k+j] = (scores[i*seq_k+j]-mx).exp(); sm += scores[i*seq_k+j]; }
-                for j in 0..seq_k { scores[i*seq_k+j] /= sm; }
-            }
-            let r_off = b*heads*seq_q*d_v+h*seq_q*d_v;
-            for i in 0..seq_q { for j in 0..d_v {
-                let mut s = 0.0f32;
-                for l in 0..seq_k { s += scores[i*seq_k+l] * vd[v_off+l*d_v+j]; }
-                result[r_off+i*d_v+j] = s;
-            }}
-        }}
-        let os = if qs.len()==4 { vec![batch,heads,seq_q,d_v] } else if qs.len()==3 { vec![heads,seq_q,d_v] } else { vec![seq_q,d_v] };
-        Ok(ffi_ops::make_tensor(MetalTensor::from_slice(&result, &os, crate::DType::F32)) as *mut c_void)
+
+        // K^T: transpose last two dims
+        let ndim = tk.shape().len();
+        let kt = tk.transpose_impl(ndim - 2, ndim - 1)?;
+
+        // scores = Q × K^T
+        let scores = tq.matmul_impl(&kt)?;
+
+        // scores = scores * scale
+        let scaled = scores.mul_scalar_impl(scale)?;
+
+        // mask 適用: mask==0 の位置を -1e9 で置換
+        let masked = if !mask.is_null() {
+            let tm = unsafe { &*t(mask) };
+            let numel: usize = scaled.shape().iter().product();
+            let neg_inf = MetalTensor::from_slice(&vec![-1e9f32; numel], scaled.shape(), crate::DType::F32);
+            // where_cond: condition > 0 → scaled, else → -1e9
+            MetalTensor::where_cond(tm, &scaled, &neg_inf)?
+        } else {
+            scaled
+        };
+
+        // softmax on last dim
+        let attn = masked.softmax_impl(-1)?;
+
+        // output = attn × V
+        let output = attn.matmul_impl(tv)?;
+
+        Ok(ffi_ops::make_tensor(output) as *mut c_void)
     }
 
     fn tensor_top_k_sample(&self, logits: *mut c_void, k: i64) -> BackendResult<*mut c_void> {

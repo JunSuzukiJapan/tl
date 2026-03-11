@@ -328,6 +328,19 @@ pub extern "C" fn tl_device_tensor_expand(t: *mut c_void, dims: *const i64, rank
         .iter().map(|&d| d as usize).collect();
     dispatch(|d| d.tensor_broadcast_to(t, &shape))
 }
+/// @ffi_sig (Tensor*, Tensor*) -> Tensor*
+/// expand / broadcast_to: shape は Tensor<i64> (e.g. [3, 3] literal)
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_device_tensor_expand_new(t: *mut c_void, shape_tensor: *mut c_void) -> *mut c_void {
+    if shape_tensor.is_null() { return t; }
+    // Read shape from shape tensor (contains i64 or f32 dims)
+    let rank = dispatch(|d| d.tensor_numel(shape_tensor)) as usize;
+    let data_ptr = dispatch(|d| d.tensor_data(shape_tensor));
+    if data_ptr.is_null() || rank == 0 { return t; }
+    let dims_f32 = unsafe { std::slice::from_raw_parts(data_ptr, rank) };
+    let shape: Vec<usize> = dims_f32.iter().map(|&x| x as usize).collect();
+    dispatch(|d| d.tensor_broadcast_to(t, &shape))
+}
 /// @ffi_sig (Tensor*, Tensor*, i64) -> Tensor*
 /// stack: 2つのテンソルを新しい次元で結合
 #[unsafe(no_mangle)]

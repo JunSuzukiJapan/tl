@@ -1957,11 +1957,30 @@ fn compile_tensor_expand<'ctx>(
     _obj_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    // Same pattern as compile_tensor_reshape for Vec<i64> shape
+    // Same pattern as compile_tensor_reshape: supports both Tensor and Vec<i64> shape
     if args.len() != 1 { return Err("expand requires 1 arg (shape)".into()); }
     let (shape_val, shape_ty) = &args[0];
+
+    if let Type::Tensor(_, _) = shape_ty {
+        // Case 1: Shape is a Tensor (e.g. [3, 3] literal → Tensor<i64, 1>)
+        let fn_val = codegen.module.get_function("tl_tensor_expand_new")
+            .ok_or("tl_tensor_expand_new not found")?;
+        let call = codegen.builder.build_call(fn_val, &[obj.into(), shape_val.clone().into()], "expand_res")
+            .map_err(|e| e.to_string())?;
+        let res = match call.try_as_basic_value() {
+            ValueKind::Basic(v) => v,
+            _ => return Err("Invalid return from tl_tensor_expand_new".into()),
+        };
+        // Free shape tensor after expand (it was only used as a shape descriptor)
+        if let Some(release_fn) = codegen.module.get_function("tl_tensor_release_safe") {
+            codegen.builder.build_call(release_fn, &[(*shape_val).into()], "").ok();
+        }
+        return Ok((res, Type::Tensor(Box::new(Type::F32), 0)));
+    }
+
+    // Case 2: Vec<i64> shape
     if !matches!(shape_ty, Type::Struct(n, _) if n.starts_with("Vec")) {
-        return Err(format!("expand argument must be Vec<i64>. Got: {:?}", shape_ty));
+        return Err(format!("expand argument must be Vec<i64> or Tensor. Got: {:?}", shape_ty));
     }
     let vec_ptr = if shape_val.is_pointer_value() {
         shape_val.into_pointer_value()

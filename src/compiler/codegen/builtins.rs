@@ -942,6 +942,9 @@ pub fn declare_runtime_functions<'ctx>(
     // expand uses same sig as reshape_dims: (void*, ptr, i64) -> void*
     let expand_type = void_ptr.fn_type(&[void_ptr.into(), context.ptr_type(inkwell::AddressSpace::default()).into(), i64_type.into()], false);
     add_fn("tl_tensor_expand", expand_type);
+    // expand_new: Tensor shape variant (same sig as reshape_new: (void*, void*) -> void*)
+    let expand_new_type = void_ptr.fn_type(&[void_ptr.into(), void_ptr.into()], false);
+    add_fn("tl_tensor_expand_new", expand_new_type);
     let stack_type = void_ptr.fn_type(&[void_ptr.into(), void_ptr.into(), i64_type.into()], false);
     add_fn("tl_tensor_stack", stack_type);
 
@@ -1766,6 +1769,7 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_tensor_logical_not") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_logical_not as *const () as usize); }
     // [IDevice] expand / stack → device_ffi
     if let Some(f) = module.get_function("tl_tensor_expand") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_expand as *const () as usize); }
+    if let Some(f) = module.get_function("tl_tensor_expand_new") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_expand_new as *const () as usize); }
     if let Some(f) = module.get_function("tl_tensor_stack") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_stack as *const () as usize); }
     if let Some(f) = module.get_function("tl_tensor_leaky_relu") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_leaky_relu as *const () as usize); }
     if let Some(f) = module.get_function("tl_tensor_elu") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_elu as *const () as usize); }

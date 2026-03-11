@@ -144,7 +144,7 @@ DOMAIN_FEATURES_ANALYSIS.md の分析結果に基づく実装計画。
 
 - [x] `expand(shape)` / `broadcast_to(shape)` — 明示的ブロードキャスト
   - [x] TypeManager登録、compile関数、device_ffi、builtins
-  - [ ] Vecからのポインタ変換バグ修正（reshape_dimsと同じ問題）
+  - [x] Tensor<i64>引数のサポート追加（reshape_dimsと同じパターン）
 
 - [x] `view(shape)` — ゼロコピーreshape
   - [x] reshapeのエイリアスとしてTypeManager登録
@@ -353,7 +353,8 @@ DOMAIN_FEATURES_ANALYSIS.md の分析結果に基づく実装計画。
 ### 7.2 中優先度
 
 - [x] Flash Attention サポート
-  - [x] 既存の `scaled_dot_product_attention` をベースに利用可能
+  - [x] 既存の `scaled_dot_product_attention` をGPU opsチェーンで実装
+  - [x] tl_metal: CPU fallback排除、既存Metal ops（matmul/transpose/softmax/scale）で構築
   - [ ] tl_metal: tiled attention kernel (将来最適化)
   - [ ] tl_cuda: cutlass/flash-attn integration (将来最適化)
 
