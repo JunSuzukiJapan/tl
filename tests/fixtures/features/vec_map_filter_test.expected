@@ -1,4 +1,14 @@
-map len: 5
-filter len: 2
+v: 1
+v: 2
+v: 3
+v: 4
+v: 5
+map: 2
+map: 4
+map: 6
+map: 8
+map: 10
+filter: 2
+filter: 4
 any even: true
 all positive: true

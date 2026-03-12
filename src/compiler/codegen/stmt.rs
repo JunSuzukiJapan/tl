@@ -2215,6 +2215,55 @@ impl<'ctx> CodeGenerator<'ctx> {
                         }
 
                         Type::Struct(ref name, _) | Type::UnifiedType { base_name: ref name, .. } => {
+                            // === Vec特殊処理: data_ptrから直接アクセス ===
+                            // Vec::get() は Option<T> を返すため for ループには不適。
+                            // data_ptr[i] で直接要素にアクセスする。
+                            // 要素型は struct_def の ptr フィールド (ptr<T> → T) から取得。
+                            let codegen_name = match &iter_ty {
+                                Type::UnifiedType { mangled_name, .. } => mangled_name.clone(),
+                                _ => name.clone(),
+                            };
+                            let base_name = crate::compiler::ast::mangle_base_name(&codegen_name);
+                            
+                            if base_name == "Vec" {
+                                // Get element type from struct_def's first field (ptr<T>)
+                                let elem_ty = if let Some(def) = self.struct_defs.get(&codegen_name) {
+                                    if let Some((_, Type::Ptr(inner))) = def.fields.first() {
+                                        *inner.clone()
+                                    } else {
+                                        Type::I64 // fallback
+                                    }
+                                } else {
+                                    Type::I64 // fallback
+                                };
+                                
+                                // Get Vec struct type from registry
+                                let vec_struct_ty = *self.struct_types.get(&codegen_name)
+                                    .ok_or_else(|| format!("Vec struct {} not found in struct_types", codegen_name))?;
+                                
+                                let elem_llvm_ty = self.get_llvm_type(&elem_ty)?;
+                                let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                                
+                                // Load data_ptr from Vec field 0
+                                let data_ptr_field = self.builder.build_struct_gep(
+                                    vec_struct_ty, tensor_ptr, 0, "vec_data_ptr_field"
+                                ).map_err(|e| e.to_string())?;
+                                let data_ptr = self.builder.build_load(ptr_type, data_ptr_field, "vec_data_ptr")
+                                    .map_err(|e| e.to_string())?.into_pointer_value();
+                                
+                                // elem = data_ptr[index]
+                                let elem_addr = unsafe {
+                                    self.builder.build_gep(
+                                        elem_llvm_ty, data_ptr,
+                                        &[phi.as_basic_value().into_int_value()],
+                                        "vec_elem_addr"
+                                    ).unwrap()
+                                };
+                                let elem_val = self.builder.build_load(elem_llvm_ty, elem_addr, "vec_elem")
+                                    .map_err(|e| e.to_string())?;
+                                
+                                (elem_val, elem_ty)
+                            } else {
                             // Struct/UnifiedType: dispatch to get() method
                             let mangled_name = match &iter_ty {
                                 Type::UnifiedType { mangled_name, .. } => mangled_name.clone(),
@@ -2242,9 +2291,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                             (v, Type::F32)
                                         } else {
                                             // ptr type → Struct return
-                                            // Element type should be determined by semantics
-                                            // For now return generic struct pointer
-                                            (v, Type::Void)
+                                            (v, Type::Struct(name.clone(), vec![]))
                                         }
                                     } else {
                                         (v, Type::Void)
@@ -2252,6 +2299,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 }
                                 _ => return Err(format!("Invalid {} return", get_fn_name)),
                             }
+                            } // end else (non-Vec)
                         }
 
                         _ => return Err(format!("Unsupported for-loop iterator type: {:?}", iter_ty)),
