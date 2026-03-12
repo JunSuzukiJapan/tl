@@ -196,8 +196,20 @@ fn parse_array_type(input: Input) -> IResult<Input, Type, ParserError> {
     Ok((input, Type::Array(Box::new(inner), size)))
 }
 
+fn parse_fn_type(input: Input) -> IResult<Input, Type, ParserError> {
+    // Fn(T1, T2, ...) -> R
+    let (input, _) = satisfy_token(|t| matches!(t, Token::Identifier(s) if s == "Fn"))(input)?;
+    let (input, _) = expect_token(Token::LParen)(input)?;
+    let (input, param_types) = separated_list0(expect_token(Token::Comma), parse_type)(input)?;
+    let (input, _) = expect_token(Token::RParen)(input)?;
+    let (input, _) = expect_token(Token::Arrow)(input)?;
+    let (input, ret_ty) = parse_type(input)?;
+    Ok((input, Type::Fn(param_types, Box::new(ret_ty))))
+}
+
 pub fn parse_type(input: Input) -> IResult<Input, Type, ParserError> {
     alt((
+        parse_fn_type,
         parse_primitive_type,
         parse_tensor_type,
         parse_ptr_type,
