@@ -1706,22 +1706,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         ),
                     ); // Store pointer and type
 
-                // Propagate closure env companion: if this Let binds a closure with captures,
-                // create __env_<name> so the call-site can find the env_ptr.
-                if matches!(val_ty, Type::Fn(_, _)) {
-                    if let Some(env_ptr) = self.pending_closure_env.take() {
-                        let env_var_name = format!("__env_{}", name);
-                        let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
-                        let env_alloca = self.builder.build_alloca(ptr_type, &env_var_name)
-                            .map_err(|e| e.to_string())?;
-                        self.builder.build_store(env_alloca, env_ptr)
-                            .map_err(|e| e.to_string())?;
-                        self.variables.last_mut().unwrap().insert(
-                            env_var_name,
-                            (env_alloca.into(), Type::Void, super::CLEANUP_FULL),
-                        );
-                    }
-                }
+                // (Fat pointer: env_ptr is embedded in the closure struct, no companion needed)
 
                 // Register Liveness
                 let last_use = if let Some(analysis) = &self.function_analysis {

@@ -2633,11 +2633,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let has_captures = !captures.is_empty();
                 let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
 
-                // Build LLVM function type — add env_ptr as first arg if there are captures
+                // Build LLVM function type — ALL closures get env_ptr as first arg (fat pointer)
                 let mut llvm_param_types: Vec<inkwell::types::BasicMetadataTypeEnum<'ctx>> = Vec::new();
-                if has_captures {
-                    llvm_param_types.push(ptr_type.into()); // env_ptr first
-                }
+                llvm_param_types.push(ptr_type.into()); // env_ptr always first
                 for pt in &param_types {
                     let llvm_ty = self.get_llvm_type(pt).unwrap_or(self.context.i64_type().into());
                     llvm_param_types.push(llvm_ty.into());
@@ -2652,8 +2650,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 let fn_val = self.module.add_function(&fn_name, fn_type, None);
 
-                // === Caller side: build env struct and store captured values ===
-                let env_ptr_val = if has_captures {
+                let env_ptr_result: inkwell::values::PointerValue<'ctx> = if has_captures {
                     // Calculate size: sum of all captured value LLVM sizes
                     // For mutable captures, store a pointer (for indirection)
                     let mut field_types: Vec<inkwell::types::BasicTypeEnum<'ctx>> = Vec::new();
@@ -2712,9 +2709,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                         }
                     }
 
-                    Some((env_ptr, env_struct_ty))
+                    env_ptr
                 } else {
-                    None
+                    // No captures: env_ptr = null
+                    ptr_type.const_null()
                 };
 
                 // Save current state
@@ -2731,11 +2729,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                 self.variables = vec![std::collections::HashMap::new()];
 
                 // === Callee side: extract captures from env_ptr ===
-                let param_offset = if has_captures { 1u32 } else { 0u32 };
+                // env_ptr is always param 0 (fat pointer convention)
+                let param_offset = 1u32; // always offset by 1
+                let env_param = fn_val.get_nth_param(0).unwrap();
+                env_param.set_name("env_ptr");
 
                 if has_captures {
-                    let env_param = fn_val.get_nth_param(0).unwrap();
-                    env_param.set_name("env_ptr");
 
                     // Build env struct type (same as caller side)
                     let mut field_types: Vec<inkwell::types::BasicTypeEnum<'ctx>> = Vec::new();
@@ -2826,14 +2825,16 @@ impl<'ctx> CodeGenerator<'ctx> {
                     self.builder.position_at_end(prev);
                 }
 
-                // Set pending_closure_env for Let binding to pick up
+                // Build fat pointer: {fn_ptr, env_ptr} struct
                 let fn_ptr = fn_val.as_global_value().as_pointer_value();
-                if let Some((env_ptr, _)) = env_ptr_val {
-                    self.pending_closure_env = Some(env_ptr);
-                }
+                let closure_struct_ty = self.context.struct_type(&[ptr_type.into(), ptr_type.into()], false);
+                let fat_ptr = closure_struct_ty.const_zero();
+                let fat_ptr = self.builder.build_insert_value(fat_ptr, fn_ptr, 0, "fat_fn")
+                    .map_err(|e| e.to_string())?;
+                let fat_ptr = self.builder.build_insert_value(fat_ptr, env_ptr_result, 1, "fat_env")
+                    .map_err(|e| e.to_string())?;
 
-                // Return function pointer as the closure value
-                Ok((fn_ptr.into(), Type::Fn(param_types, Box::new(ret_ty))))
+                Ok((fat_ptr.into_struct_value().into(), Type::Fn(param_types, Box::new(ret_ty))))
             }
 
             ExprKind::FieldAccess(obj, field) => {
@@ -7335,30 +7336,27 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
             if let Some((fn_ptr_alloca, var_ty)) = closure_info {
               if let Type::Fn(param_types, ret_ty) = var_ty {
-                // Load the function pointer from the variable
                 let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
-                let fn_ptr = self.builder.build_load(
-                    ptr_type,
+
+                // The closure variable stores a fat pointer: {fn_ptr, env_ptr} struct
+                let closure_struct_ty = self.context.struct_type(&[ptr_type.into(), ptr_type.into()], false);
+                let fat_ptr = self.builder.build_load(
+                    closure_struct_ty,
                     fn_ptr_alloca.into_pointer_value(),
-                    "load_fn_ptr",
+                    "load_fat_ptr",
                 ).unwrap();
 
-                // Check if this closure has an env companion (__env_<name>)
-                let env_var_name = format!("__env_{}", name);
-                let mut env_ptr_opt = None;
-                for scope in self.variables.iter().rev() {
-                    if let Some((val, _, _)) = scope.get(&env_var_name) {
-                        let loaded = self.builder.build_load(ptr_type, val.into_pointer_value(), "load_env_ptr").unwrap();
-                        env_ptr_opt = Some(loaded);
-                        break;
-                    }
-                }
+                // Extract fn_ptr and env_ptr from the fat pointer struct
+                let fn_ptr = self.builder.build_extract_value(
+                    fat_ptr.into_struct_value(), 0, "extract_fn_ptr"
+                ).unwrap();
+                let env_ptr = self.builder.build_extract_value(
+                    fat_ptr.into_struct_value(), 1, "extract_env_ptr"
+                ).unwrap();
 
-                // Build LLVM function type for the call
+                // Build LLVM function type (ALL closures have env_ptr as first param)
                 let mut llvm_param_types: Vec<inkwell::types::BasicMetadataTypeEnum<'ctx>> = Vec::new();
-                if env_ptr_opt.is_some() {
-                    llvm_param_types.push(ptr_type.into()); // env_ptr first
-                }
+                llvm_param_types.push(ptr_type.into()); // env_ptr always first
                 for pt in &param_types {
                     let llvm_ty = self.get_llvm_type(pt)?;
                     llvm_param_types.push(llvm_ty.into());
@@ -7371,11 +7369,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                     ret_llvm_ty.fn_type(&llvm_param_types, false)
                 };
 
-                // Compile arguments
+                // Compile arguments: env_ptr first, then user args
                 let mut compiled_args: Vec<inkwell::values::BasicMetadataValueEnum<'ctx>> = Vec::new();
-                if let Some(env_ptr) = env_ptr_opt {
-                    compiled_args.push(env_ptr.into()); // env_ptr first
-                }
+                compiled_args.push(env_ptr.into()); // env_ptr always first
                 for arg in args {
                     let (val, _) = self.compile_expr(arg)?;
                     compiled_args.push(val.into());

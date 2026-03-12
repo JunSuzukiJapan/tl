@@ -573,6 +573,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                  Ok(self.context.ptr_type(AddressSpace::default()).into())
             }
             
+            Type::Fn(_, _) => {
+                // Fat pointer: {fn_ptr, env_ptr} struct
+                let ptr_ty = self.context.ptr_type(AddressSpace::default());
+                Ok(self.context.struct_type(&[ptr_ty.into(), ptr_ty.into()], false).into())
+            }
+            
             _ => {
                 // Default to i64 for unknown types
                 Ok(self.context.i64_type().into())
