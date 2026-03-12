@@ -4105,6 +4105,23 @@ impl SemanticAnalyzer {
                     return Ok(Type::Never);
                 }
 
+                // assert(cond: bool, msg: String) -> Void
+                if name == "assert" {
+                    if args.len() != 2 {
+                        return self.err(
+                            SemanticError::ArgumentCountMismatch {
+                                name: "assert".into(),
+                                expected: 2,
+                                found: args.len(),
+                            },
+                            Some(expr.span.clone()),
+                        );
+                    }
+                    self.check_expr(&mut args[0])?;
+                    self.check_expr(&mut args[1])?;
+                    return Ok(Type::Void);
+                }
+
                 // --- StdLib FFI (Legacy/Direct) ---
                 if name == "args_get" {
                     if args.len() != 1 {

@@ -318,3 +318,102 @@ pub extern "C" fn tl_string_is_empty(s: *mut StringStruct) -> bool {
     }
 }
 
+/// String.to_uppercase() -> String
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_string_to_uppercase(s: *mut StringStruct) -> *mut StringStruct {
+    unsafe {
+        if s.is_null() || (*s).ptr.is_null() {
+            return std::ptr::null_mut();
+        }
+        let s_str = CStr::from_ptr((*s).ptr).to_string_lossy();
+        make_string_struct(s_str.to_uppercase())
+    }
+}
+
+/// String.to_lowercase() -> String
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_string_to_lowercase(s: *mut StringStruct) -> *mut StringStruct {
+    unsafe {
+        if s.is_null() || (*s).ptr.is_null() {
+            return std::ptr::null_mut();
+        }
+        let s_str = CStr::from_ptr((*s).ptr).to_string_lossy();
+        make_string_struct(s_str.to_lowercase())
+    }
+}
+
+/// String.index_of(needle: String) -> i64 (-1 if not found)
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_string_index_of(s: *mut StringStruct, needle: *mut StringStruct) -> i64 {
+    unsafe {
+        if s.is_null() || needle.is_null() || (*s).ptr.is_null() || (*needle).ptr.is_null() {
+            return -1;
+        }
+        let s_str = CStr::from_ptr((*s).ptr).to_string_lossy();
+        let needle_str = CStr::from_ptr((*needle).ptr).to_string_lossy();
+        match s_str.find(needle_str.as_ref()) {
+            Some(pos) => pos as i64,
+            None => -1,
+        }
+    }
+}
+
+/// String.split(sep: String) -> *mut VecStruct (Vec<String>)
+/// Returns a heap-allocated VecStruct { ptr, cap, len } where ptr points to an array of *mut StringStruct
+#[repr(C)]
+pub struct VecStruct {
+    pub ptr: *mut u8,
+    pub cap: i64,
+    pub len: i64,
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_string_split(s: *mut StringStruct, sep: *mut StringStruct) -> *mut VecStruct {
+    unsafe {
+        let layout = std::alloc::Layout::new::<VecStruct>();
+        let vec_ptr = std::alloc::alloc(layout) as *mut VecStruct;
+
+        if s.is_null() || sep.is_null() || (*s).ptr.is_null() || (*sep).ptr.is_null() {
+            (*vec_ptr).ptr = std::ptr::null_mut();
+            (*vec_ptr).cap = 0;
+            (*vec_ptr).len = 0;
+            return vec_ptr;
+        }
+
+        let s_str = CStr::from_ptr((*s).ptr).to_string_lossy();
+        let sep_str = CStr::from_ptr((*sep).ptr).to_string_lossy();
+        let parts: Vec<&str> = s_str.split(sep_str.as_ref()).collect();
+        let count = parts.len() as i64;
+
+        // Allocate array of *mut StringStruct (each pointer is 8 bytes)
+        let ptr_size = std::mem::size_of::<*mut StringStruct>();
+        let array_layout = std::alloc::Layout::from_size_align(ptr_size * parts.len(), 8).unwrap();
+        let array_ptr = std::alloc::alloc(array_layout) as *mut *mut StringStruct;
+
+        for (i, part) in parts.iter().enumerate() {
+            let str_ptr = make_string_struct(part.to_string());
+            *array_ptr.add(i) = str_ptr;
+        }
+
+        (*vec_ptr).ptr = array_ptr as *mut u8;
+        (*vec_ptr).cap = count;
+        (*vec_ptr).len = count;
+        vec_ptr
+    }
+}
+
+/// assert(cond: bool, msg: String) — aborts if cond is false
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_assert(cond: bool, msg: *mut StringStruct) {
+    if !cond {
+        unsafe {
+            if !msg.is_null() && !(*msg).ptr.is_null() {
+                let msg_str = CStr::from_ptr((*msg).ptr).to_string_lossy();
+                eprintln!("Assertion failed: {}", msg_str);
+            } else {
+                eprintln!("Assertion failed");
+            }
+        }
+        std::process::exit(1);
+    }
+}

@@ -251,3 +251,76 @@ pub fn compile_is_empty<'ctx>(
     Ok((res, Type::Bool))
 }
 
+/// String.to_uppercase() -> String
+pub fn compile_to_uppercase<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj: BasicValueEnum<'ctx>,
+    _obj_ty: Type,
+    _args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let fn_val = codegen.module.get_function("tl_string_to_uppercase")
+        .ok_or("tl_string_to_uppercase not found")?;
+    let call = codegen.builder.build_call(fn_val, &[obj.into()], "to_upper_res")
+        .map_err(|e| e.to_string())?;
+    let res = match call.try_as_basic_value() {
+        ValueKind::Basic(v) => v,
+        _ => return Err("Invalid return from String.to_uppercase".into()),
+    };
+    Ok((res, Type::String("String".to_string())))
+}
+
+/// String.to_lowercase() -> String
+pub fn compile_to_lowercase<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj: BasicValueEnum<'ctx>,
+    _obj_ty: Type,
+    _args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let fn_val = codegen.module.get_function("tl_string_to_lowercase")
+        .ok_or("tl_string_to_lowercase not found")?;
+    let call = codegen.builder.build_call(fn_val, &[obj.into()], "to_lower_res")
+        .map_err(|e| e.to_string())?;
+    let res = match call.try_as_basic_value() {
+        ValueKind::Basic(v) => v,
+        _ => return Err("Invalid return from String.to_lowercase".into()),
+    };
+    Ok((res, Type::String("String".to_string())))
+}
+
+/// String.index_of(needle: String) -> i64
+pub fn compile_index_of<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj: BasicValueEnum<'ctx>,
+    _obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 1 { return Err("String.index_of requires 1 argument".into()); }
+    let fn_val = codegen.module.get_function("tl_string_index_of")
+        .ok_or("tl_string_index_of not found")?;
+    let call = codegen.builder.build_call(fn_val, &[obj.into(), args[0].0.into()], "index_of_res")
+        .map_err(|e| e.to_string())?;
+    let res = match call.try_as_basic_value() {
+        ValueKind::Basic(v) => v,
+        _ => return Err("Invalid return from String.index_of".into()),
+    };
+    Ok((res, Type::I64))
+}
+
+/// String.split(sep: String) -> Vec<String>
+pub fn compile_split<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj: BasicValueEnum<'ctx>,
+    _obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 1 { return Err("String.split requires 1 argument".into()); }
+    let fn_val = codegen.module.get_function("tl_string_split")
+        .ok_or("tl_string_split not found")?;
+    let call = codegen.builder.build_call(fn_val, &[obj.into(), args[0].0.into()], "split_res")
+        .map_err(|e| e.to_string())?;
+    let res = match call.try_as_basic_value() {
+        ValueKind::Basic(v) => v,
+        _ => return Err("Invalid return from String.split".into()),
+    };
+    Ok((res, Type::Struct("Vec".to_string(), vec![Type::String("String".to_string())])))
+}

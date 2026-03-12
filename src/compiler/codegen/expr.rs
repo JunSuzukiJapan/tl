@@ -273,6 +273,9 @@ impl BuiltinManager {
         // Panic function - diverging, never returns
         self.register_uneval("panic", compile_panic_uneval);
 
+        // Assert function
+        self.register_uneval("assert", compile_assert_uneval);
+
         // Command line arguments
         self.register_eval("args_count", compile_args_count);
         self.register_eval("args_get", compile_args_get);
@@ -7543,6 +7546,33 @@ fn compile_panic_uneval<'ctx>(
     // Return a dummy value with Never type (code won't actually reach here)
     let dummy = codegen.context.i64_type().const_zero();
     Ok((dummy.into(), Type::Never))
+}
+
+fn compile_assert_uneval<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: &[Expr],
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 2 {
+        return Err("assert requires 2 arguments (condition, message)".into());
+    }
+
+    let (cond_val, _cond_ty) = codegen.compile_expr(&args[0])?;
+    let (msg_val, _msg_ty) = codegen.compile_expr(&args[1])?;
+
+    let fn_val = codegen
+        .module
+        .get_function("tl_assert")
+        .ok_or("tl_assert not found")?;
+
+    codegen
+        .builder
+        .build_call(fn_val, &[cond_val.into(), msg_val.into()], "")
+        .map_err(|e| e.to_string())?;
+
+    Ok((
+        codegen.context.i64_type().const_zero().into(),
+        Type::Void,
+    ))
 }
 
 fn compile_print_formatted<'ctx>(

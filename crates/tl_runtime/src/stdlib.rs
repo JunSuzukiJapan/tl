@@ -19,6 +19,11 @@ pub use crate::string_ffi::{
     tl_string_replace,
     tl_string_substring,
     tl_string_is_empty,
+    tl_string_to_uppercase,
+    tl_string_to_lowercase,
+    tl_string_index_of,
+    tl_string_split,
+    tl_assert,
 };
 
 // system からの re-export

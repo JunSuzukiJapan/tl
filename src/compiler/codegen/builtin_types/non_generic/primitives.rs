@@ -23,6 +23,10 @@ pub fn register_primitive_types(manager: &mut TypeManager) {
     string.register_evaluated_instance_method("replace", string_methods::compile_replace, vec![string_type.clone(), string_type.clone()], string_type.clone());
     string.register_evaluated_instance_method("substring", string_methods::compile_substring, vec![Type::I64, Type::I64], string_type.clone());
     string.register_evaluated_instance_method("is_empty", string_methods::compile_is_empty, vec![], Type::Bool);
+    string.register_evaluated_instance_method("to_uppercase", string_methods::compile_to_uppercase, vec![], string_type.clone());
+    string.register_evaluated_instance_method("to_lowercase", string_methods::compile_to_lowercase, vec![], string_type.clone());
+    string.register_evaluated_instance_method("index_of", string_methods::compile_index_of, vec![string_type.clone()], Type::I64);
+    string.register_evaluated_instance_method("split", string_methods::compile_split, vec![string_type.clone()], Type::Struct("Vec".to_string(), vec![string_type.clone()]));
     manager.register_type(string);
 
     // ===== F32 =====
@@ -156,6 +160,13 @@ pub fn register_primitive_types(manager: &mut TypeManager) {
     i32_type.register_evaluated_instance_method("div_euclid", pm::compile_i32_div_euclid, vec![Type::I64], Type::I64);
     i32_type.register_evaluated_instance_method("rem_euclid", pm::compile_i32_rem_euclid, vec![Type::I64], Type::I64);
     i32_type.register_evaluated_instance_method("pow", pm::compile_i32_pow, vec![Type::I64], Type::I64);
+    // Conversion & comparison methods
+    i32_type.register_evaluated_instance_method("to_f64", pm::compile_i32_to_f64, vec![], Type::F64);
+    i32_type.register_evaluated_instance_method("to_f32", pm::compile_i32_to_f32, vec![], Type::F32);
+    i32_type.register_evaluated_instance_method("to_string", pm::compile_i32_to_string, vec![], string_type.clone());
+    i32_type.register_evaluated_instance_method("min", pm::compile_i32_min, vec![Type::I64], Type::I64);
+    i32_type.register_evaluated_instance_method("max", pm::compile_i32_max, vec![Type::I64], Type::I64);
+    i32_type.register_evaluated_instance_method("clamp", pm::compile_i32_clamp, vec![Type::I64, Type::I64], Type::I64);
     manager.register_type(i32_type);
     
     // ===== Bool =====

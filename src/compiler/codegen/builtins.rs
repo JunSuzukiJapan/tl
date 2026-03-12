@@ -3258,6 +3258,39 @@ pub fn declare_runtime_functions<'ctx>(
         execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_is_empty as *const () as usize);
     }
 
+    // tl_string_to_uppercase(s) -> *mut StringStruct
+    add_fn("tl_string_to_uppercase", str_unary_type);
+    if let Some(f) = module.get_function("tl_string_to_uppercase") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_to_uppercase as *const () as usize);
+    }
+
+    // tl_string_to_lowercase(s) -> *mut StringStruct
+    add_fn("tl_string_to_lowercase", str_unary_type);
+    if let Some(f) = module.get_function("tl_string_to_lowercase") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_to_lowercase as *const () as usize);
+    }
+
+    // tl_string_index_of(s, needle) -> i64
+    let str_index_of_type = i64_type.fn_type(&[i8_ptr.into(), i8_ptr.into()], false);
+    add_fn("tl_string_index_of", str_index_of_type);
+    if let Some(f) = module.get_function("tl_string_index_of") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_index_of as *const () as usize);
+    }
+
+    // tl_string_split(s, sep) -> *mut VecStruct (pointer)
+    let str_split_type = i8_ptr.fn_type(&[i8_ptr.into(), i8_ptr.into()], false);
+    add_fn("tl_string_split", str_split_type);
+    if let Some(f) = module.get_function("tl_string_split") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_split as *const () as usize);
+    }
+
+    // tl_assert(cond: bool, msg: *mut StringStruct) -> void
+    let assert_type = context.void_type().fn_type(&[context.bool_type().into(), i8_ptr.into()], false);
+    add_fn("tl_assert", assert_type);
+    if let Some(f) = module.get_function("tl_assert") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_assert as *const () as usize);
+    }
+
     // tl_tensor_argmax(t, dim, keepdim) -> CTensorResult
     let argmax_type = c_tensor_result_type.fn_type(
         &[void_ptr.into(), i64_type.into(), context.bool_type().into()],
