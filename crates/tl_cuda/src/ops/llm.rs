@@ -28,6 +28,44 @@ extern "C" {
         cos_seq_len: i32,
         stream: cudaStream_t,
     );
+    // Phase C: LLM 推論カーネル
+    fn launch_sdpa_kernel(
+        q: *const f32,
+        k: *const f32,
+        v: *const f32,
+        mask: *const f32,
+        output: *mut f32,
+        batch: i32,
+        heads: i32,
+        seq_q: i32,
+        seq_k: i32,
+        head_dim: i32,
+        has_mask: i32,
+        stream: cudaStream_t,
+    );
+    fn launch_top_k_sample_kernel(
+        logits: *const f32,
+        output: *mut f32,
+        vocab_size: i32,
+        k: i32,
+        stream: cudaStream_t,
+    );
+    fn launch_top_p_sample_kernel(
+        logits: *const f32,
+        output: *mut f32,
+        vocab_size: i32,
+        p: f32,
+        stream: cudaStream_t,
+    );
+    fn launch_repetition_penalty_kernel(
+        logits: *const f32,
+        tokens: *const f32,
+        output: *mut f32,
+        vocab_size: i32,
+        token_len: i32,
+        penalty: f32,
+        stream: cudaStream_t,
+    );
 }
 
 impl CudaTensor {
@@ -143,6 +181,130 @@ impl CudaTensor {
         let stream = crate::stream::get_stream().raw();
         unsafe {
             launch_causal_mask_kernel(output.buffer.ptr() as *mut f32, size as i32, stream);
+        }
+        crate::stream::sync_stream();
+        Ok(output)
+    }
+
+    // ========== Phase C: LLM 推論操作 ==========
+
+    /// Scaled Dot-Product Attention — 専用 GPU カーネル
+    pub fn sdpa_impl(
+        &self,
+        key: &CudaTensor,
+        value: &CudaTensor,
+        mask: Option<&CudaTensor>,
+    ) -> BackendResult<CudaTensor> {
+        let q_shape = self.shape().to_vec();
+        let k_shape = key.shape().to_vec();
+        // Q/K/V shape: [batch*heads, seq, head_dim]
+        let (batch_heads, seq_q, head_dim) = if q_shape.len() == 3 {
+            (q_shape[0], q_shape[1], q_shape[2])
+        } else if q_shape.len() == 4 {
+            (q_shape[0] * q_shape[1], q_shape[2], q_shape[3])
+        } else {
+            return Err(BackendError::ShapeMismatch(
+                "sdpa requires 3D or 4D input".into(),
+            ));
+        };
+        let seq_k = if k_shape.len() == 3 {
+            k_shape[1]
+        } else {
+            k_shape[2]
+        };
+
+        // batch and heads for kernel
+        let batch = 1;
+        let heads = batch_heads;
+
+        let out_shape = q_shape.clone();
+        let output = CudaTensor::uninit(&out_shape, DType::F32);
+        let stream = crate::stream::get_stream().raw();
+
+        let mask_ptr = mask.map_or(std::ptr::null(), |m| m.buffer.ptr() as *const f32);
+        let has_mask = if mask.is_some() { 1 } else { 0 };
+
+        unsafe {
+            launch_sdpa_kernel(
+                self.buffer.ptr() as *const f32,
+                key.buffer.ptr() as *const f32,
+                value.buffer.ptr() as *const f32,
+                mask_ptr,
+                output.buffer.ptr() as *mut f32,
+                batch as i32,
+                heads as i32,
+                seq_q as i32,
+                seq_k as i32,
+                head_dim as i32,
+                has_mask,
+                stream,
+            );
+        }
+        crate::stream::sync_stream();
+        Ok(output)
+    }
+
+    /// Top-k sampling — GPU カーネル
+    pub fn top_k_sample_impl(&self, k: usize) -> BackendResult<CudaTensor> {
+        let vocab_size = self.elem_count();
+        let output = CudaTensor::uninit(&[1], DType::F32);
+        let stream = crate::stream::get_stream().raw();
+        unsafe {
+            launch_top_k_sample_kernel(
+                self.buffer.ptr() as *const f32,
+                output.buffer.ptr() as *mut f32,
+                vocab_size as i32,
+                k as i32,
+                stream,
+            );
+        }
+        crate::stream::sync_stream();
+        Ok(output)
+    }
+
+    /// Top-p sampling — GPU カーネル
+    pub fn top_p_sample_impl(&self, p: f32) -> BackendResult<CudaTensor> {
+        let vocab_size = self.elem_count();
+        let output = CudaTensor::uninit(&[1], DType::F32);
+        let stream = crate::stream::get_stream().raw();
+        unsafe {
+            launch_top_p_sample_kernel(
+                self.buffer.ptr() as *const f32,
+                output.buffer.ptr() as *mut f32,
+                vocab_size as i32,
+                p,
+                stream,
+            );
+        }
+        crate::stream::sync_stream();
+        Ok(output)
+    }
+
+    /// Temperature scaling — div_scalar で実装
+    pub fn temperature_scale_impl(&self, temperature: f32) -> BackendResult<CudaTensor> {
+        self.div_scalar_impl(temperature)
+    }
+
+    /// Repetition penalty — GPU カーネル
+    pub fn repetition_penalty_impl(
+        &self,
+        tokens: &CudaTensor,
+        penalty: f32,
+    ) -> BackendResult<CudaTensor> {
+        let vocab_size = self.elem_count();
+        let token_len = tokens.elem_count();
+        let output = CudaTensor::uninit(self.shape(), DType::F32);
+        let stream = crate::stream::get_stream().raw();
+        unsafe {
+            launch_repetition_penalty_kernel(
+                self.buffer.ptr() as *const f32,
+                tokens.buffer.ptr() as *const f32,
+                output.buffer.ptr() as *mut f32,
+                vocab_size as i32,
+                token_len as i32,
+                penalty,
+                stream,
+            );
         }
         crate::stream::sync_stream();
         Ok(output)

@@ -321,4 +321,26 @@ impl CudaTensor {
         crate::stream::sync_stream();
         Ok(output)
     }
+
+    /// to_vec_f32 — GPU → CPU データ転送
+    pub fn to_vec_f32_impl(&self) -> BackendResult<Vec<f32>> {
+        let n = self.elem_count();
+        let mut data = vec![0.0f32; n];
+        unsafe {
+            crate::cuda_sys::cudaMemcpy(
+                data.as_mut_ptr() as *mut std::ffi::c_void,
+                self.buffer.ptr(),
+                n * std::mem::size_of::<f32>(),
+                crate::cuda_sys::cudaMemcpyKind::cudaMemcpyDeviceToHost,
+            );
+        }
+        Ok(data)
+    }
+
+    /// stack — dim 方向に unsqueeze して cat
+    pub fn stack_impl(&self, other: &CudaTensor, dim: usize) -> BackendResult<CudaTensor> {
+        let a = self.unsqueeze_impl(dim)?;
+        let b = other.unsqueeze_impl(dim)?;
+        a.cat_impl(&b, dim)
+    }
 }

@@ -73,6 +73,29 @@ extern "C" {
     fn launch_le_kernel(a: *const f32, b: *const f32, y: *mut f32, n: i32, stream: cudaStream_t);
     fn launch_gt_kernel(a: *const f32, b: *const f32, y: *mut f32, n: i32, stream: cudaStream_t);
     fn launch_ge_kernel(a: *const f32, b: *const f32, y: *mut f32, n: i32, stream: cudaStream_t);
+    // Phase A: 論理演算・内積
+    fn launch_logical_and_kernel(
+        a: *const f32,
+        b: *const f32,
+        y: *mut f32,
+        n: i32,
+        stream: cudaStream_t,
+    );
+    fn launch_logical_or_kernel(
+        a: *const f32,
+        b: *const f32,
+        y: *mut f32,
+        n: i32,
+        stream: cudaStream_t,
+    );
+    fn launch_logical_not_kernel(x: *const f32, y: *mut f32, n: i32, stream: cudaStream_t);
+    fn launch_dot_mul_kernel(
+        a: *const f32,
+        b: *const f32,
+        y: *mut f32,
+        n: i32,
+        stream: cudaStream_t,
+    );
 }
 
 impl CudaTensor {
@@ -209,5 +232,63 @@ impl CudaTensor {
             launch_ge_kernel,
             |a, b| if a >= b { 1.0 } else { 0.0 },
         )
+    }
+
+    // ========== 論理演算 ==========
+
+    pub fn logical_and_impl(&self, other: &CudaTensor) -> BackendResult<CudaTensor> {
+        self.binary_op_gpu(other, launch_logical_and_kernel, |a, b| {
+            if a > 0.0 && b > 0.0 {
+                1.0
+            } else {
+                0.0
+            }
+        })
+    }
+
+    pub fn logical_or_impl(&self, other: &CudaTensor) -> BackendResult<CudaTensor> {
+        self.binary_op_gpu(other, launch_logical_or_kernel, |a, b| {
+            if a > 0.0 || b > 0.0 {
+                1.0
+            } else {
+                0.0
+            }
+        })
+    }
+
+    pub fn logical_not_impl(&self) -> BackendResult<CudaTensor> {
+        let n = self.elem_count();
+        let output = CudaTensor::uninit(self.shape(), DType::F32);
+        let stream = crate::stream::get_stream().raw();
+        unsafe {
+            launch_logical_not_kernel(
+                self.buffer.ptr() as *const f32,
+                output.buffer.ptr() as *mut f32,
+                n as i32,
+                stream,
+            );
+        }
+        crate::stream::sync_stream();
+        Ok(output)
+    }
+
+    // ========== 内積 ==========
+
+    pub fn dot_impl(&self, other: &CudaTensor) -> BackendResult<CudaTensor> {
+        // element-wise multiply → sum
+        let n = self.elem_count();
+        let tmp = CudaTensor::uninit(self.shape(), DType::F32);
+        let stream = crate::stream::get_stream().raw();
+        unsafe {
+            launch_dot_mul_kernel(
+                self.buffer.ptr() as *const f32,
+                other.buffer.ptr() as *const f32,
+                tmp.buffer.ptr() as *mut f32,
+                n as i32,
+                stream,
+            );
+        }
+        crate::stream::sync_stream();
+        tmp.sum_all_tensor_impl()
     }
 }

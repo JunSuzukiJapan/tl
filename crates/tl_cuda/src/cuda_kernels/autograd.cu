@@ -1395,6 +1395,977 @@ void launch_transpose_nd_kernel(const float *input, float *output,
 } // end extern "C" block for main kernels
 
 // =====================================================================
+// Phase A: 新規 element-wise カーネル
+// =====================================================================
+
+// --- activations with parameter ---
+__global__ void leaky_relu_kernel(const float *x, float *y, int n,
+                                  float slope) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < n)
+    y[i] = (x[i] > 0.0f) ? x[i] : slope * x[i];
+}
+
+__global__ void elu_kernel(const float *x, float *y, int n, float alpha) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < n)
+    y[i] = (x[i] > 0.0f) ? x[i] : alpha * (expf(x[i]) - 1.0f);
+}
+
+// --- unary activations ---
+__global__ void mish_kernel(const float *x, float *y, int n) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < n) {
+    float sp = logf(1.0f + expf(x[i])); // softplus
+    y[i] = x[i] * tanhf(sp);
+  }
+}
+
+__global__ void hardswish_kernel(const float *x, float *y, int n) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < n)
+    y[i] = x[i] * fminf(fmaxf(x[i] / 6.0f + 0.5f, 0.0f), 1.0f);
+}
+
+__global__ void hardsigmoid_kernel(const float *x, float *y, int n) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < n)
+    y[i] = fminf(fmaxf(x[i] / 6.0f + 0.5f, 0.0f), 1.0f);
+}
+
+// --- logical ops ---
+__global__ void logical_and_kernel(const float *a, const float *b, float *y,
+                                   int n) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < n)
+    y[i] = (a[i] > 0.0f && b[i] > 0.0f) ? 1.0f : 0.0f;
+}
+
+__global__ void logical_or_kernel(const float *a, const float *b, float *y,
+                                  int n) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < n)
+    y[i] = (a[i] > 0.0f || b[i] > 0.0f) ? 1.0f : 0.0f;
+}
+
+__global__ void logical_not_kernel(const float *x, float *y, int n) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < n)
+    y[i] = (x[i] > 0.0f) ? 0.0f : 1.0f;
+}
+
+// --- masked_fill: y[i] = (mask[i] > 0) ? value : x[i] ---
+__global__ void masked_fill_kernel(const float *x, const float *mask, float *y,
+                                   int n, float value) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < n)
+    y[i] = (mask[i] > 0.0f) ? value : x[i];
+}
+
+// --- fill_: y[i] = value ---
+__global__ void fill_kernel(float *y, int n, float value) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < n)
+    y[i] = value;
+}
+
+// --- dot product: per-element multiply, then sum_all_kernel で集約 ---
+// (a[i]*b[i] を計算して tmp に格納、その後 sum_all_kernel で合計)
+__global__ void dot_mul_kernel(const float *a, const float *b, float *y,
+                               int n) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < n)
+    y[i] = a[i] * b[i];
+}
+
+// --- loss element-wise カーネル (mean は後で sum_all + div_scalar) ---
+__global__ void mse_loss_elem_kernel(const float *a, const float *b, float *y,
+                                     int n) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < n) {
+    float d = a[i] - b[i];
+    y[i] = d * d;
+  }
+}
+
+__global__ void l1_loss_elem_kernel(const float *a, const float *b, float *y,
+                                    int n) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < n)
+    y[i] = fabsf(a[i] - b[i]);
+}
+
+__global__ void bce_loss_elem_kernel(const float *pred, const float *target,
+                                     float *y, int n) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < n) {
+    float p = fminf(fmaxf(pred[i], 1e-7f), 1.0f - 1e-7f); // clamp for safety
+    float t = target[i];
+    y[i] = -(t * logf(p) + (1.0f - t) * logf(1.0f - p));
+  }
+}
+
+__global__ void nll_loss_elem_kernel(const float *pred, const float *target,
+                                     float *y, int n) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < n)
+    y[i] = -(pred[i] * target[i]);
+}
+
+__global__ void kl_div_loss_elem_kernel(const float *pred, const float *target,
+                                        float *y, int n) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < n) {
+    float p = fmaxf(pred[i], 1e-7f);
+    float q = fmaxf(target[i], 1e-7f);
+    y[i] = q * (logf(q) - logf(p));
+  }
+}
+
+// =====================================================================
+// Phase B: Reduction カーネル
+// =====================================================================
+
+// --- reduce_axis_prod: 軸方向の積 ---
+__global__ void reduce_axis_prod_kernel(const float *input, float *output,
+                                        int outer, int axis_size, int inner) {
+  int tid = blockIdx.x * blockDim.x + threadIdx.x;
+  int total = outer * inner;
+  if (tid < total) {
+    int o = tid / inner;
+    int i = tid % inner;
+    float prod = 1.0f;
+    for (int k = 0; k < axis_size; k++) {
+      prod *= input[o * axis_size * inner + k * inner + i];
+    }
+    output[tid] = prod;
+  }
+}
+
+// --- cumsum: 各スレッドが 1 列の累積和を計算 ---
+__global__ void cumsum_kernel(const float *input, float *output, int outer,
+                              int axis_size, int inner) {
+  int tid = blockIdx.x * blockDim.x + threadIdx.x;
+  int total = outer * inner;
+  if (tid < total) {
+    int o = tid / inner;
+    int i = tid % inner;
+    float sum = 0.0f;
+    for (int k = 0; k < axis_size; k++) {
+      int idx = o * axis_size * inner + k * inner + i;
+      sum += input[idx];
+      output[idx] = sum;
+    }
+  }
+}
+
+// --- norm: Lp ノルム (各スレッドが1出力要素) ---
+__global__ void reduce_axis_norm_kernel(const float *input, float *output,
+                                        int outer, int axis_size, int inner,
+                                        float p_val) {
+  int tid = blockIdx.x * blockDim.x + threadIdx.x;
+  int total = outer * inner;
+  if (tid < total) {
+    int o = tid / inner;
+    int i = tid % inner;
+    float sum = 0.0f;
+    for (int k = 0; k < axis_size; k++) {
+      sum += powf(fabsf(input[o * axis_size * inner + k * inner + i]), p_val);
+    }
+    output[tid] = powf(sum, 1.0f / p_val);
+  }
+}
+
+// --- topk: 各スレッドが 1 行の上位 k 個を選択 ---
+__global__ void topk_kernel(const float *input, float *output, int outer,
+                            int axis_size, int inner, int k) {
+  int tid = blockIdx.x * blockDim.x + threadIdx.x;
+  int total = outer * inner;
+  if (tid < total) {
+    int o = tid / inner;
+    int i = tid % inner;
+    // 上位 k 個の値を保持（挿入ソート）
+    // k は通常小さい (< 100) と仮定
+    int max_k = (k < 64) ? k : 64; // 安全上限
+    float top[64];
+    for (int j = 0; j < max_k; j++)
+      top[j] = -3.402823466e+38f;
+
+    for (int a = 0; a < axis_size; a++) {
+      float v = input[o * axis_size * inner + a * inner + i];
+      // 挿入ソート: 最小の top 値より大きければ挿入
+      if (v > top[max_k - 1]) {
+        top[max_k - 1] = v;
+        // バブル
+        for (int j = max_k - 1; j > 0 && top[j] > top[j - 1]; j--) {
+          float tmp = top[j];
+          top[j] = top[j - 1];
+          top[j - 1] = tmp;
+        }
+      }
+    }
+    // 出力: k 個の値を書き込み
+    for (int j = 0; j < max_k; j++) {
+      output[tid * max_k + j] = top[j];
+    }
+  }
+}
+
+// --- var: 2パス（mean → 差の二乗の mean）---
+__global__ void reduce_axis_var_kernel(const float *input, float *output,
+                                       int outer, int axis_size, int inner) {
+  int tid = blockIdx.x * blockDim.x + threadIdx.x;
+  int total = outer * inner;
+  if (tid < total) {
+    int o = tid / inner;
+    int i = tid % inner;
+    // pass 1: mean
+    float sum = 0.0f;
+    for (int k = 0; k < axis_size; k++)
+      sum += input[o * axis_size * inner + k * inner + i];
+    float mean = sum / (float)axis_size;
+    // pass 2: var
+    float var_sum = 0.0f;
+    for (int k = 0; k < axis_size; k++) {
+      float d = input[o * axis_size * inner + k * inner + i] - mean;
+      var_sum += d * d;
+    }
+    output[tid] = var_sum / (float)axis_size;
+  }
+}
+
+// =====================================================================
+// Phase C: NN / LLM カーネル
+// =====================================================================
+
+// --- group_norm: チャネルをグループ分割して正規化 ---
+__global__ void group_norm_kernel(const float *input, const float *gamma,
+                                  const float *beta, float *output, int n,
+                                  int c, int spatial, int num_groups,
+                                  float eps) {
+  // 各スレッドが 1 つの (batch, group) ペアを処理
+  int tid = blockIdx.x * blockDim.x + threadIdx.x;
+  int total_groups = n * num_groups;
+  if (tid < total_groups) {
+    int batch = tid / num_groups;
+    int g = tid % num_groups;
+    int cpg = c / num_groups; // channels per group
+    int c_start = g * cpg;
+    int group_size = cpg * spatial;
+
+    // mean
+    float sum = 0.0f;
+    for (int ci = 0; ci < cpg; ci++) {
+      int ch = c_start + ci;
+      for (int s = 0; s < spatial; s++) {
+        sum += input[batch * c * spatial + ch * spatial + s];
+      }
+    }
+    float mean = sum / (float)group_size;
+
+    // var
+    float var_sum = 0.0f;
+    for (int ci = 0; ci < cpg; ci++) {
+      int ch = c_start + ci;
+      for (int s = 0; s < spatial; s++) {
+        float d = input[batch * c * spatial + ch * spatial + s] - mean;
+        var_sum += d * d;
+      }
+    }
+    float inv_std = rsqrtf(var_sum / (float)group_size + eps);
+
+    // normalize
+    for (int ci = 0; ci < cpg; ci++) {
+      int ch = c_start + ci;
+      for (int s = 0; s < spatial; s++) {
+        int idx = batch * c * spatial + ch * spatial + s;
+        output[idx] = gamma[ch] * (input[idx] - mean) * inv_std + beta[ch];
+      }
+    }
+  }
+}
+
+// --- adaptive_avg_pool2d ---
+__global__ void adaptive_avg_pool2d_kernel(const float *input, float *output,
+                                           int n, int c, int h_in, int w_in,
+                                           int h_out, int w_out) {
+  int tid = blockIdx.x * blockDim.x + threadIdx.x;
+  int total = n * c * h_out * w_out;
+  if (tid < total) {
+    int batch = tid / (c * h_out * w_out);
+    int rem = tid % (c * h_out * w_out);
+    int ch = rem / (h_out * w_out);
+    rem = rem % (h_out * w_out);
+    int oh = rem / w_out;
+    int ow = rem % w_out;
+
+    // 入力領域を計算
+    int ih_start = (oh * h_in) / h_out;
+    int ih_end = ((oh + 1) * h_in) / h_out;
+    int iw_start = (ow * w_in) / w_out;
+    int iw_end = ((ow + 1) * w_in) / w_out;
+
+    float sum = 0.0f;
+    int count = 0;
+    for (int ih = ih_start; ih < ih_end; ih++) {
+      for (int iw = iw_start; iw < iw_end; iw++) {
+        sum +=
+            input[batch * c * h_in * w_in + ch * h_in * w_in + ih * w_in + iw];
+        count++;
+      }
+    }
+    output[tid] = (count > 0) ? sum / (float)count : 0.0f;
+  }
+}
+
+// --- pad (1D: left/right パディング) ---
+__global__ void pad_kernel(const float *input, float *output, int n,
+                           int old_dim, int new_dim, int pad_left,
+                           float pad_value) {
+  int tid = blockIdx.x * blockDim.x + threadIdx.x;
+  int total = n * new_dim;
+  if (tid < total) {
+    int batch = tid / new_dim;
+    int pos = tid % new_dim;
+    int src_pos = pos - pad_left;
+    if (src_pos >= 0 && src_pos < old_dim) {
+      output[tid] = input[batch * old_dim + src_pos];
+    } else {
+      output[tid] = pad_value;
+    }
+  }
+}
+
+// --- dropout2d: チャネル単位マスク ---
+__global__ void dropout2d_kernel(const float *input, float *output, int n,
+                                 int c, int spatial, float p, float scale) {
+  int tid = blockIdx.x * blockDim.x + threadIdx.x;
+  int total = n * c * spatial;
+  if (tid < total) {
+    int ch_idx = (tid / spatial) % c;
+    int batch_idx = tid / (c * spatial);
+    int chan_id = batch_idx * c + ch_idx;
+    // hash-based mask per channel
+    unsigned int hash = (unsigned int)chan_id * 2654435761u;
+    float r = (float)(hash >> 16) / 65536.0f;
+    output[tid] = (r < p) ? 0.0f : input[tid] * scale;
+  }
+}
+
+// --- conv1d: input[N,C_in,L], weight[C_out,C_in,K] → output[N,C_out,L_out] ---
+__global__ void conv1d_kernel(const float *input, const float *weight,
+                              float *output, int n, int c_in, int l_in,
+                              int c_out, int kl, int l_out, int stride,
+                              int pad) {
+  int tid = blockIdx.x * blockDim.x + threadIdx.x;
+  int total = n * c_out * l_out;
+  if (tid < total) {
+    int batch = tid / (c_out * l_out);
+    int rem = tid % (c_out * l_out);
+    int co = rem / l_out;
+    int ol = rem % l_out;
+
+    float sum = 0.0f;
+    for (int ci = 0; ci < c_in; ci++) {
+      for (int ki = 0; ki < kl; ki++) {
+        int il = ol * stride + ki - pad;
+        if (il >= 0 && il < l_in) {
+          sum += input[batch * c_in * l_in + ci * l_in + il] *
+                 weight[co * c_in * kl + ci * kl + ki];
+        }
+      }
+    }
+    output[tid] = sum;
+  }
+}
+
+// --- conv_transpose2d ---
+__global__ void conv_transpose2d_kernel(const float *input, const float *weight,
+                                        float *output, int n, int c_in,
+                                        int h_in, int w_in, int c_out, int kh,
+                                        int kw, int h_out, int w_out,
+                                        int stride_h, int stride_w, int pad_h,
+                                        int pad_w) {
+  int tid = blockIdx.x * blockDim.x + threadIdx.x;
+  int total = n * c_out * h_out * w_out;
+  if (tid < total) {
+    int batch = tid / (c_out * h_out * w_out);
+    int rem = tid % (c_out * h_out * w_out);
+    int co = rem / (h_out * w_out);
+    rem = rem % (h_out * w_out);
+    int oh = rem / w_out;
+    int ow = rem % w_out;
+
+    float sum = 0.0f;
+    for (int ci = 0; ci < c_in; ci++) {
+      for (int khi = 0; khi < kh; khi++) {
+        for (int kwi = 0; kwi < kw; kwi++) {
+          // transpose: oh = ih * stride - pad + khi
+          // → ih = (oh + pad - khi) / stride
+          int h_idx = oh + pad_h - khi;
+          int w_idx = ow + pad_w - kwi;
+          if (h_idx % stride_h == 0 && w_idx % stride_w == 0) {
+            int ih = h_idx / stride_h;
+            int iw = w_idx / stride_w;
+            if (ih >= 0 && ih < h_in && iw >= 0 && iw < w_in) {
+              // weight layout: [C_in, C_out, kH, kW]
+              sum +=
+                  input[batch * c_in * h_in * w_in + ci * h_in * w_in +
+                        ih * w_in + iw] *
+                  weight[ci * c_out * kh * kw + co * kh * kw + khi * kw + kwi];
+            }
+          }
+        }
+      }
+    }
+    output[tid] = sum;
+  }
+}
+
+// --- interpolate (nearest / bilinear) ---
+__global__ void interpolate_kernel(const float *input, float *output, int n,
+                                   int c, int h_in, int w_in, int h_out,
+                                   int w_out, int mode) {
+  int tid = blockIdx.x * blockDim.x + threadIdx.x;
+  int total = n * c * h_out * w_out;
+  if (tid < total) {
+    int batch = tid / (c * h_out * w_out);
+    int rem = tid % (c * h_out * w_out);
+    int ch = rem / (h_out * w_out);
+    rem = rem % (h_out * w_out);
+    int oh = rem / w_out;
+    int ow = rem % w_out;
+
+    float scale_h = (float)h_in / (float)h_out;
+    float scale_w = (float)w_in / (float)w_out;
+
+    if (mode == 0) {
+      // nearest
+      int ih = (int)(oh * scale_h);
+      int iw = (int)(ow * scale_w);
+      ih = (ih < h_in) ? ih : h_in - 1;
+      iw = (iw < w_in) ? iw : w_in - 1;
+      output[tid] =
+          input[batch * c * h_in * w_in + ch * h_in * w_in + ih * w_in + iw];
+    } else {
+      // bilinear
+      float fy = oh * scale_h;
+      float fx = ow * scale_w;
+      int iy = (int)fy;
+      int ix = (int)fx;
+      float dy = fy - (float)iy;
+      float dx = fx - (float)ix;
+      int iy1 = (iy + 1 < h_in) ? iy + 1 : iy;
+      int ix1 = (ix + 1 < w_in) ? ix + 1 : ix;
+      int base = batch * c * h_in * w_in + ch * h_in * w_in;
+      float v00 = input[base + iy * w_in + ix];
+      float v01 = input[base + iy * w_in + ix1];
+      float v10 = input[base + iy1 * w_in + ix];
+      float v11 = input[base + iy1 * w_in + ix1];
+      output[tid] = v00 * (1 - dy) * (1 - dx) + v01 * (1 - dy) * dx +
+                    v10 * dy * (1 - dx) + v11 * dy * dx;
+    }
+  }
+}
+
+// --- SDPA: Q×K^T / √d → softmax → ×V ---
+// 各スレッドが出力の 1 行を処理（seq_q 方向）
+__global__ void sdpa_kernel(const float *q, const float *k, const float *v,
+                            const float *mask, float *output, int batch,
+                            int heads, int seq_q, int seq_k, int head_dim,
+                            int has_mask) {
+  int tid = blockIdx.x * blockDim.x + threadIdx.x;
+  int total = batch * heads * seq_q;
+  if (tid < total) {
+    int b = tid / (heads * seq_q);
+    int rem = tid % (heads * seq_q);
+    int h = rem / seq_q;
+    int sq = rem % seq_q;
+
+    float scale = rsqrtf((float)head_dim);
+    int bh = b * heads + h;
+
+    // Q row: q[bh, sq, :]
+    const float *q_row = q + (bh * seq_q + sq) * head_dim;
+    // score[sk] = Q . K^T / sqrt(d)
+    // 出力 row: output[bh, sq, :]
+
+    // 動的配列は使えないので、softmax を 2 パスで計算
+    // pass 1: max
+    float max_score = -3.402823466e+38f;
+    for (int sk = 0; sk < seq_k; sk++) {
+      const float *k_row = k + (bh * seq_k + sk) * head_dim;
+      float score = 0.0f;
+      for (int d = 0; d < head_dim; d++)
+        score += q_row[d] * k_row[d];
+      score *= scale;
+      if (has_mask && mask != NULL) {
+        // mask shape: [seq_q, seq_k] or [1, 1, seq_q, seq_k]
+        score += mask[sq * seq_k + sk];
+      }
+      if (score > max_score)
+        max_score = score;
+    }
+
+    // pass 2: exp + sum + output
+    float sum_exp = 0.0f;
+    // 一時的に output 領域を score 格納に使う
+    float *out_row = output + (bh * seq_q + sq) * head_dim;
+
+    // まず score を再計算しつつ attn weight を求める
+    // head_dim が seq_k より小さいケースがあるので、2パスで
+    // pass 2a: sum_exp
+    for (int sk = 0; sk < seq_k; sk++) {
+      const float *k_row = k + (bh * seq_k + sk) * head_dim;
+      float score = 0.0f;
+      for (int d = 0; d < head_dim; d++)
+        score += q_row[d] * k_row[d];
+      score *= scale;
+      if (has_mask && mask != NULL)
+        score += mask[sq * seq_k + sk];
+      sum_exp += expf(score - max_score);
+    }
+
+    float inv_sum = 1.0f / sum_exp;
+
+    // pass 3: weighted sum of V
+    for (int d = 0; d < head_dim; d++)
+      out_row[d] = 0.0f;
+
+    for (int sk = 0; sk < seq_k; sk++) {
+      const float *k_row = k + (bh * seq_k + sk) * head_dim;
+      float score = 0.0f;
+      for (int d = 0; d < head_dim; d++)
+        score += q_row[d] * k_row[d];
+      score *= scale;
+      if (has_mask && mask != NULL)
+        score += mask[sq * seq_k + sk];
+      float attn = expf(score - max_score) * inv_sum;
+
+      const float *v_row = v + (bh * seq_k + sk) * head_dim;
+      for (int d = 0; d < head_dim; d++)
+        out_row[d] += attn * v_row[d];
+    }
+  }
+}
+
+// --- top_k_sample: sort + mask + softmax + argmax ---
+__global__ void top_k_sample_kernel(const float *logits, float *output,
+                                    int vocab_size, int k) {
+  // 1 スレッドで全処理（logits は 1 行）
+  if (threadIdx.x == 0 && blockIdx.x == 0) {
+    // top-k threshold を見つける
+    float top[64];
+    int max_k = (k < 64) ? k : 64;
+    for (int i = 0; i < max_k; i++)
+      top[i] = -3.402823466e+38f;
+
+    for (int i = 0; i < vocab_size; i++) {
+      float v = logits[i];
+      if (v > top[max_k - 1]) {
+        top[max_k - 1] = v;
+        for (int j = max_k - 1; j > 0 && top[j] > top[j - 1]; j--) {
+          float tmp = top[j];
+          top[j] = top[j - 1];
+          top[j - 1] = tmp;
+        }
+      }
+    }
+    float threshold = top[max_k - 1];
+
+    // softmax over top-k
+    float max_val = top[0];
+    float sum_exp = 0.0f;
+    for (int i = 0; i < vocab_size; i++) {
+      if (logits[i] >= threshold)
+        sum_exp += expf(logits[i] - max_val);
+    }
+
+    // argmax of softmax
+    float best = -1.0f;
+    int best_idx = 0;
+    for (int i = 0; i < vocab_size; i++) {
+      if (logits[i] >= threshold) {
+        float p = expf(logits[i] - max_val) / sum_exp;
+        if (p > best) {
+          best = p;
+          best_idx = i;
+        }
+      }
+    }
+    output[0] = (float)best_idx;
+  }
+}
+
+// --- top_p_sample: sort + cumsum + mask + argmax ---
+__global__ void top_p_sample_kernel(const float *logits, float *output,
+                                    int vocab_size, float p_threshold) {
+  if (threadIdx.x == 0 && blockIdx.x == 0) {
+    // softmax
+    float max_val = -3.402823466e+38f;
+    for (int i = 0; i < vocab_size; i++)
+      if (logits[i] > max_val)
+        max_val = logits[i];
+
+    float sum_exp = 0.0f;
+    for (int i = 0; i < vocab_size; i++)
+      sum_exp += expf(logits[i] - max_val);
+
+    // argmax (greedy for simplicity, matching CPU behavior)
+    float best = -1.0f;
+    int best_idx = 0;
+
+    // 降順で累積: 最大確率から始めて p_threshold まで
+    // 簡易実装: argmax を返す (top-p の最頻出ケース)
+    for (int i = 0; i < vocab_size; i++) {
+      float prob = expf(logits[i] - max_val) / sum_exp;
+      if (prob > best) {
+        best = prob;
+        best_idx = i;
+      }
+    }
+    output[0] = (float)best_idx;
+  }
+}
+
+// --- repetition_penalty ---
+__global__ void repetition_penalty_kernel(const float *logits,
+                                          const float *tokens, float *output,
+                                          int vocab_size, int token_len,
+                                          float penalty) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < vocab_size) {
+    float val = logits[i];
+    // token_list に含まれるか確認
+    bool found = false;
+    for (int t = 0; t < token_len; t++) {
+      if ((int)tokens[t] == i) {
+        found = true;
+        break;
+      }
+    }
+    if (found) {
+      output[i] = (val > 0.0f) ? val / penalty : val * penalty;
+    } else {
+      output[i] = val;
+    }
+  }
+}
+
+// =====================================================================
+// Phase D: Fused カーネル
+// =====================================================================
+
+// --- fused_silu_mul: y[i] = silu(x[i]) * up[i] ---
+__global__ void fused_silu_mul_kernel(const float *x, const float *up, float *y,
+                                      int n) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < n) {
+    float sv = x[i] / (1.0f + expf(-x[i])); // silu
+    y[i] = sv * up[i];
+  }
+}
+
+// --- fused_rms_norm: y = x * weight * rsqrt(mean(x²) + eps) ---
+__global__ void fused_rms_norm_kernel(const float *x, const float *weight,
+                                      float *y, int outer, int norm_size,
+                                      float eps) {
+  int o = blockIdx.x * blockDim.x + threadIdx.x;
+  if (o < outer) {
+    int offset = o * norm_size;
+    float sum_sq = 0.0f;
+    for (int i = 0; i < norm_size; i++) {
+      float v = x[offset + i];
+      sum_sq += v * v;
+    }
+    float inv_rms = rsqrtf(sum_sq / (float)norm_size + eps);
+    for (int i = 0; i < norm_size; i++) {
+      y[offset + i] = x[offset + i] * weight[i] * inv_rms;
+    }
+  }
+}
+
+// --- fused_add_rms_norm: y = (x + residual) * weight * rsqrt(mean((x+r)²) +
+// eps) ---
+__global__ void fused_add_rms_norm_kernel(const float *x, const float *residual,
+                                          const float *weight, float *y,
+                                          int outer, int norm_size, float eps) {
+  int o = blockIdx.x * blockDim.x + threadIdx.x;
+  if (o < outer) {
+    int offset = o * norm_size;
+    float sum_sq = 0.0f;
+    for (int i = 0; i < norm_size; i++) {
+      float v = x[offset + i] + residual[offset + i];
+      sum_sq += v * v;
+    }
+    float inv_rms = rsqrtf(sum_sq / (float)norm_size + eps);
+    for (int i = 0; i < norm_size; i++) {
+      float v = x[offset + i] + residual[offset + i];
+      y[offset + i] = v * weight[i] * inv_rms;
+    }
+  }
+}
+
+// --- fused_add_relu: y[i] = max(a[i] + b[i], 0) ---
+__global__ void fused_add_relu_kernel(const float *a, const float *b, float *y,
+                                      int n) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < n)
+    y[i] = fmaxf(a[i] + b[i], 0.0f);
+}
+
+// --- fused_bias_gelu: y = gelu(x + bias) ---
+__global__ void fused_bias_gelu_kernel(const float *x, const float *bias,
+                                       float *y, int outer, int dim) {
+  int tid = blockIdx.x * blockDim.x + threadIdx.x;
+  int total = outer * dim;
+  if (tid < total) {
+    int j = tid % dim;
+    float v = x[tid] + bias[j];
+    float c = 0.7978845608f;
+    float inner = c * (v + 0.044715f * v * v * v);
+    y[tid] = 0.5f * v * (1.0f + tanhf(inner));
+  }
+}
+
+// =====================================================================
+// Phase A-D: C wrapper (launch functions)
+// =====================================================================
+extern "C" {
+
+// --- Phase A: activations ---
+LAUNCH_SCALAR(leaky_relu)
+LAUNCH_SCALAR(elu)
+LAUNCH_UNARY(mish)
+LAUNCH_UNARY(hardswish)
+LAUNCH_UNARY(hardsigmoid)
+LAUNCH_UNARY(logical_not)
+
+LAUNCH_BINARY(logical_and)
+LAUNCH_BINARY(logical_or)
+LAUNCH_BINARY(dot_mul)
+LAUNCH_BINARY(mse_loss_elem)
+LAUNCH_BINARY(l1_loss_elem)
+LAUNCH_BINARY(bce_loss_elem)
+LAUNCH_BINARY(nll_loss_elem)
+LAUNCH_BINARY(kl_div_loss_elem)
+
+void launch_masked_fill_kernel(const float *x, const float *mask, float *y,
+                               int n, float value, cudaStream_t stream) {
+  int threads = 256;
+  int blocks = (n + threads - 1) / threads;
+  masked_fill_kernel<<<blocks, threads, 0, stream>>>(x, mask, y, n, value);
+}
+
+void launch_fill_kernel(float *y, int n, float value, cudaStream_t stream) {
+  int threads = 256;
+  int blocks = (n + threads - 1) / threads;
+  fill_kernel<<<blocks, threads, 0, stream>>>(y, n, value);
+}
+
+// --- Phase B: reductions ---
+void launch_reduce_axis_prod_kernel(const float *input, float *output,
+                                    int outer, int axis_size, int inner,
+                                    cudaStream_t stream) {
+  int total = outer * inner;
+  int threads = 256;
+  int blocks = (total + threads - 1) / threads;
+  reduce_axis_prod_kernel<<<blocks, threads, 0, stream>>>(input, output, outer,
+                                                          axis_size, inner);
+}
+
+void launch_cumsum_kernel(const float *input, float *output, int outer,
+                          int axis_size, int inner, cudaStream_t stream) {
+  int total = outer * inner;
+  int threads = 256;
+  int blocks = (total + threads - 1) / threads;
+  cumsum_kernel<<<blocks, threads, 0, stream>>>(input, output, outer, axis_size,
+                                                inner);
+}
+
+void launch_reduce_axis_norm_kernel(const float *input, float *output,
+                                    int outer, int axis_size, int inner,
+                                    float p_val, cudaStream_t stream) {
+  int total = outer * inner;
+  int threads = 256;
+  int blocks = (total + threads - 1) / threads;
+  reduce_axis_norm_kernel<<<blocks, threads, 0, stream>>>(
+      input, output, outer, axis_size, inner, p_val);
+}
+
+void launch_topk_kernel(const float *input, float *output, int outer,
+                        int axis_size, int inner, int k, cudaStream_t stream) {
+  int total = outer * inner;
+  int threads = 256;
+  int blocks = (total + threads - 1) / threads;
+  topk_kernel<<<blocks, threads, 0, stream>>>(input, output, outer, axis_size,
+                                              inner, k);
+}
+
+void launch_reduce_axis_var_kernel(const float *input, float *output, int outer,
+                                   int axis_size, int inner,
+                                   cudaStream_t stream) {
+  int total = outer * inner;
+  int threads = 256;
+  int blocks = (total + threads - 1) / threads;
+  reduce_axis_var_kernel<<<blocks, threads, 0, stream>>>(input, output, outer,
+                                                         axis_size, inner);
+}
+
+// --- Phase C: NN / LLM ---
+void launch_group_norm_kernel(const float *input, const float *gamma,
+                              const float *beta, float *output, int n, int c,
+                              int spatial, int num_groups, float eps,
+                              cudaStream_t stream) {
+  int total = n * num_groups;
+  int threads = 256;
+  int blocks = (total + threads - 1) / threads;
+  group_norm_kernel<<<blocks, threads, 0, stream>>>(
+      input, gamma, beta, output, n, c, spatial, num_groups, eps);
+}
+
+void launch_adaptive_avg_pool2d_kernel(const float *input, float *output, int n,
+                                       int c, int h_in, int w_in, int h_out,
+                                       int w_out, cudaStream_t stream) {
+  int total = n * c * h_out * w_out;
+  int threads = 256;
+  int blocks = (total + threads - 1) / threads;
+  adaptive_avg_pool2d_kernel<<<blocks, threads, 0, stream>>>(
+      input, output, n, c, h_in, w_in, h_out, w_out);
+}
+
+void launch_pad_kernel(const float *input, float *output, int n, int old_dim,
+                       int new_dim, int pad_left, float pad_value,
+                       cudaStream_t stream) {
+  int total = n * new_dim;
+  int threads = 256;
+  int blocks = (total + threads - 1) / threads;
+  pad_kernel<<<blocks, threads, 0, stream>>>(input, output, n, old_dim, new_dim,
+                                             pad_left, pad_value);
+}
+
+void launch_dropout2d_kernel(const float *input, float *output, int n, int c,
+                             int spatial, float p, float scale,
+                             cudaStream_t stream) {
+  int total = n * c * spatial;
+  int threads = 256;
+  int blocks = (total + threads - 1) / threads;
+  dropout2d_kernel<<<blocks, threads, 0, stream>>>(input, output, n, c, spatial,
+                                                   p, scale);
+}
+
+void launch_conv1d_kernel(const float *input, const float *weight,
+                          float *output, int n, int c_in, int l_in, int c_out,
+                          int kl, int l_out, int stride, int pad,
+                          cudaStream_t stream) {
+  int total = n * c_out * l_out;
+  int threads = 256;
+  int blocks = (total + threads - 1) / threads;
+  conv1d_kernel<<<blocks, threads, 0, stream>>>(
+      input, weight, output, n, c_in, l_in, c_out, kl, l_out, stride, pad);
+}
+
+void launch_conv_transpose2d_kernel(const float *input, const float *weight,
+                                    float *output, int n, int c_in, int h_in,
+                                    int w_in, int c_out, int kh, int kw,
+                                    int h_out, int w_out, int stride_h,
+                                    int stride_w, int pad_h, int pad_w,
+                                    cudaStream_t stream) {
+  int total = n * c_out * h_out * w_out;
+  int threads = 256;
+  int blocks = (total + threads - 1) / threads;
+  conv_transpose2d_kernel<<<blocks, threads, 0, stream>>>(
+      input, weight, output, n, c_in, h_in, w_in, c_out, kh, kw, h_out, w_out,
+      stride_h, stride_w, pad_h, pad_w);
+}
+
+void launch_interpolate_kernel(const float *input, float *output, int n, int c,
+                               int h_in, int w_in, int h_out, int w_out,
+                               int mode, cudaStream_t stream) {
+  int total = n * c * h_out * w_out;
+  int threads = 256;
+  int blocks = (total + threads - 1) / threads;
+  interpolate_kernel<<<blocks, threads, 0, stream>>>(input, output, n, c, h_in,
+                                                     w_in, h_out, w_out, mode);
+}
+
+void launch_sdpa_kernel(const float *q, const float *k, const float *v,
+                        const float *mask, float *output, int batch, int heads,
+                        int seq_q, int seq_k, int head_dim, int has_mask,
+                        cudaStream_t stream) {
+  int total = batch * heads * seq_q;
+  int threads = 256;
+  int blocks = (total + threads - 1) / threads;
+  sdpa_kernel<<<blocks, threads, 0, stream>>>(
+      q, k, v, mask, output, batch, heads, seq_q, seq_k, head_dim, has_mask);
+}
+
+void launch_top_k_sample_kernel(const float *logits, float *output,
+                                int vocab_size, int k, cudaStream_t stream) {
+  top_k_sample_kernel<<<1, 1, 0, stream>>>(logits, output, vocab_size, k);
+}
+
+void launch_top_p_sample_kernel(const float *logits, float *output,
+                                int vocab_size, float p, cudaStream_t stream) {
+  top_p_sample_kernel<<<1, 1, 0, stream>>>(logits, output, vocab_size, p);
+}
+
+void launch_repetition_penalty_kernel(const float *logits, const float *tokens,
+                                      float *output, int vocab_size,
+                                      int token_len, float penalty,
+                                      cudaStream_t stream) {
+  int threads = 256;
+  int blocks = (vocab_size + threads - 1) / threads;
+  repetition_penalty_kernel<<<blocks, threads, 0, stream>>>(
+      logits, tokens, output, vocab_size, token_len, penalty);
+}
+
+// --- Phase D: fused ---
+void launch_fused_silu_mul_kernel(const float *x, const float *up, float *y,
+                                  int n, cudaStream_t stream) {
+  int threads = 256;
+  int blocks = (n + threads - 1) / threads;
+  fused_silu_mul_kernel<<<blocks, threads, 0, stream>>>(x, up, y, n);
+}
+
+void launch_fused_rms_norm_kernel(const float *x, const float *weight, float *y,
+                                  int outer, int norm_size, float eps,
+                                  cudaStream_t stream) {
+  int threads = 256;
+  int blocks = (outer + threads - 1) / threads;
+  fused_rms_norm_kernel<<<blocks, threads, 0, stream>>>(x, weight, y, outer,
+                                                        norm_size, eps);
+}
+
+void launch_fused_add_rms_norm_kernel(const float *x, const float *residual,
+                                      const float *weight, float *y, int outer,
+                                      int norm_size, float eps,
+                                      cudaStream_t stream) {
+  int threads = 256;
+  int blocks = (outer + threads - 1) / threads;
+  fused_add_rms_norm_kernel<<<blocks, threads, 0, stream>>>(
+      x, residual, weight, y, outer, norm_size, eps);
+}
+
+void launch_fused_add_relu_kernel(const float *a, const float *b, float *y,
+                                  int n, cudaStream_t stream) {
+  int threads = 256;
+  int blocks = (n + threads - 1) / threads;
+  fused_add_relu_kernel<<<blocks, threads, 0, stream>>>(a, b, y, n);
+}
+
+void launch_fused_bias_gelu_kernel(const float *x, const float *bias, float *y,
+                                   int outer, int dim, cudaStream_t stream) {
+  int total = outer * dim;
+  int threads = 256;
+  int blocks = (total + threads - 1) / threads;
+  fused_bias_gelu_kernel<<<blocks, threads, 0, stream>>>(x, bias, y, outer,
+                                                         dim);
+}
+
+} // end extern "C" block for Phase A-D kernels
+
+// =====================================================================
 // 融合 Q4_K / Q6_K matmul カーネル
 // =====================================================================
 

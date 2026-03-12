@@ -73,7 +73,13 @@ impl IDevice for CudaDeviceImpl {
     fn tensor_from_u8_labels(&self, data: *const u8, len: i64) -> BackendResult<*mut c_void> {
         Ok(v(ffi_ops::tl_cuda_from_u8_labels(data, len)))
     }
-    fn tensor_full(&self, rank: usize, shape: *const usize, value: f32, req_grad: bool) -> BackendResult<*mut c_void> {
+    fn tensor_full(
+        &self,
+        rank: usize,
+        shape: *const usize,
+        value: f32,
+        req_grad: bool,
+    ) -> BackendResult<*mut c_void> {
         Ok(v(ffi_ops::tl_cuda_full(rank, shape, value, req_grad)))
     }
     fn tensor_eye(&self, n: usize, req_grad: bool) -> BackendResult<*mut c_void> {
@@ -85,54 +91,310 @@ impl IDevice for CudaDeviceImpl {
     fn tensor_linspace(&self, start: f64, end: f64, steps: usize) -> BackendResult<*mut c_void> {
         Ok(v(ffi_ops::tl_cuda_linspace(start, end, steps)))
     }
-    fn tensor_rand(&self, rank: usize, shape: *const usize, req_grad: bool) -> BackendResult<*mut c_void> {
+    fn tensor_rand(
+        &self,
+        rank: usize,
+        shape: *const usize,
+        req_grad: bool,
+    ) -> BackendResult<*mut c_void> {
         Ok(v(ffi_ops::tl_cuda_rand(rank as i64, shape, req_grad)))
     }
     // ========== 要素操作 ==========
-    fn tensor_where_cond(&self, cond: *mut c_void, x: *mut c_void, y: *mut c_void) -> BackendResult<*mut c_void> {
+    fn tensor_where_cond(
+        &self,
+        cond: *mut c_void,
+        x: *mut c_void,
+        y: *mut c_void,
+    ) -> BackendResult<*mut c_void> {
         let (tc, tx, ty) = unsafe { (&*p(cond), &*p(x), &*p(y)) };
-        let result = CudaTensor::where_cond_impl(tc, tx, ty)?;
+        let result = crate::tensor::CudaTensor::where_cond_impl(tc, tx, ty)?;
         Ok(v(ffi_ops::make_tensor(result)))
     }
-    fn tensor_masked_fill(&self, _t: *mut c_void, _mask: *mut c_void, _value: f32) -> BackendResult<*mut c_void> { unimplemented!("CUDA masked_fill") }
-    fn tensor_to_vec_f32(&self, _t: *mut c_void) -> BackendResult<(*mut f32, usize)> { unimplemented!("CUDA to_vec_f32") }
-    fn tensor_var(&self, _t: *mut c_void, _dim: i32) -> BackendResult<*mut c_void> { unimplemented!("CUDA var") }
-    fn tensor_std(&self, _t: *mut c_void, _dim: i32) -> BackendResult<*mut c_void> { unimplemented!("CUDA std") }
-    fn tensor_prod(&self, _t: *mut c_void, _dim: i32) -> BackendResult<*mut c_void> { unimplemented!("CUDA prod") }
-    fn tensor_cumsum(&self, _t: *mut c_void, _dim: i32) -> BackendResult<*mut c_void> { unimplemented!("CUDA cumsum") }
-    fn tensor_norm(&self, _t: *mut c_void, _p: f32, _dim: i32) -> BackendResult<*mut c_void> { unimplemented!("CUDA norm") }
-    fn tensor_topk(&self, _t: *mut c_void, _k: usize, _dim: i32) -> BackendResult<*mut c_void> { unimplemented!("CUDA topk") }
-    fn tensor_logical_and(&self, _a: *mut c_void, _b: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!("CUDA logical_and") }
-    fn tensor_logical_or(&self, _a: *mut c_void, _b: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!("CUDA logical_or") }
-    fn tensor_logical_not(&self, _t: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!("CUDA logical_not") }
-    fn tensor_leaky_relu(&self, _t: *mut c_void, _slope: f32) -> BackendResult<*mut c_void> { unimplemented!("CUDA leaky_relu") }
-    fn tensor_elu(&self, _t: *mut c_void, _alpha: f32) -> BackendResult<*mut c_void> { unimplemented!("CUDA elu") }
-    fn tensor_mish(&self, _t: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!("CUDA mish") }
-    fn tensor_mse_loss(&self, _a: *mut c_void, _b: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!("CUDA mse_loss") }
-    fn tensor_l1_loss(&self, _a: *mut c_void, _b: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!("CUDA l1_loss") }
-    fn tensor_bce_loss(&self, _a: *mut c_void, _b: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!("CUDA bce_loss") }
-    fn tensor_nll_loss(&self, _a: *mut c_void, _b: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!("CUDA nll_loss") }
-    fn tensor_linear(&self, _i: *mut c_void, _w: *mut c_void, _b: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!("CUDA linear") }
-    fn tensor_hardswish(&self, _t: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!("CUDA hardswish") }
-    fn tensor_hardsigmoid(&self, _t: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!("CUDA hardsigmoid") }
-    fn tensor_group_norm(&self, _i: *mut c_void, _g: i64, _w: *mut c_void, _b: *mut c_void, _e: f64) -> BackendResult<*mut c_void> { unimplemented!("CUDA group_norm") }
-    fn tensor_adaptive_avg_pool2d(&self, _i: *mut c_void, _h: i64, _w: i64) -> BackendResult<*mut c_void> { unimplemented!("CUDA adaptive_avg_pool2d") }
-    fn tensor_pad(&self, _i: *mut c_void, _l: i64, _r: i64, _v: f32) -> BackendResult<*mut c_void> { unimplemented!("CUDA pad") }
-    fn tensor_instance_norm(&self, _i: *mut c_void, _w: *mut c_void, _b: *mut c_void, _e: f64) -> BackendResult<*mut c_void> { unimplemented!("CUDA instance_norm") }
-    fn tensor_dropout2d(&self, _i: *mut c_void, _p: f64, _t: bool) -> BackendResult<*mut c_void> { unimplemented!("CUDA dropout2d") }
-    fn tensor_conv1d(&self, _i: *mut c_void, _w: *mut c_void, _b: *mut c_void, _s: i64, _p: i64) -> BackendResult<*mut c_void> { unimplemented!("CUDA conv1d") }
-    fn tensor_kl_div_loss(&self, _a: *mut c_void, _b: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!("CUDA kl_div_loss") }
-    fn tensor_conv_transpose2d(&self, _i: *mut c_void, _w: *mut c_void, _b: *mut c_void, _s: i64, _p: i64, _o: i64) -> BackendResult<*mut c_void> { unimplemented!("CUDA conv_transpose2d") }
-    fn tensor_interpolate(&self, _i: *mut c_void, _h: i64, _w: i64, _m: i64) -> BackendResult<*mut c_void> { unimplemented!("CUDA interpolate") }
-    fn tensor_scaled_dot_product_attention(&self, _q: *mut c_void, _k: *mut c_void, _v: *mut c_void, _m: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!("CUDA sdpa") }
-    fn tensor_top_k_sample(&self, _l: *mut c_void, _k: i64) -> BackendResult<*mut c_void> { unimplemented!("CUDA top_k") }
-    fn tensor_top_p_sample(&self, _l: *mut c_void, _p: f64) -> BackendResult<*mut c_void> { unimplemented!("CUDA top_p") }
-    fn tensor_temperature_scale(&self, _l: *mut c_void, _t: f64) -> BackendResult<*mut c_void> { unimplemented!("CUDA temp_scale") }
-    fn tensor_repetition_penalty(&self, _l: *mut c_void, _t: *mut c_void, _p: f64) -> BackendResult<*mut c_void> { unimplemented!("CUDA rep_penalty") }
-    fn tensor_dot(&self, _a: *mut c_void, _b: *mut c_void) -> BackendResult<*mut c_void> { unimplemented!("CUDA dot") }
-    fn tensor_fill_(&self, _t: *mut c_void, _value: f32) -> BackendResult<()> { unimplemented!("CUDA fill_") }
-    fn tensor_broadcast_to(&self, _t: *mut c_void, _shape: &[usize]) -> BackendResult<*mut c_void> { unimplemented!("CUDA broadcast_to") }
-    fn tensor_stack(&self, _a: *mut c_void, _b: *mut c_void, _dim: i64) -> BackendResult<*mut c_void> { unimplemented!("CUDA stack") }
+    fn tensor_masked_fill(
+        &self,
+        t: *mut c_void,
+        mask: *mut c_void,
+        value: f32,
+    ) -> BackendResult<*mut c_void> {
+        let (tt, tm) = unsafe { (&*p(t), &*p(mask)) };
+        Ok(v(ffi_ops::make_tensor(tt.masked_fill_impl(tm, value)?)))
+    }
+    fn tensor_to_vec_f32(&self, t: *mut c_void) -> BackendResult<(*mut f32, usize)> {
+        let tt = unsafe { &*p(t) };
+        let data = tt.to_vec_f32_impl()?;
+        let len = data.len();
+        let ptr = Box::into_raw(data.into_boxed_slice()) as *mut f32;
+        Ok((ptr, len))
+    }
+    fn tensor_var(&self, t: *mut c_void, _dim: i32) -> BackendResult<*mut c_void> {
+        let tt = unsafe { &*p(t) };
+        Ok(v(ffi_ops::make_tensor(tt.var_impl()?)))
+    }
+    fn tensor_std(&self, t: *mut c_void, _dim: i32) -> BackendResult<*mut c_void> {
+        let tt = unsafe { &*p(t) };
+        Ok(v(ffi_ops::make_tensor(tt.std_impl()?)))
+    }
+    fn tensor_prod(&self, t: *mut c_void, _dim: i32) -> BackendResult<*mut c_void> {
+        let tt = unsafe { &*p(t) };
+        Ok(v(ffi_ops::make_tensor(tt.prod_impl()?)))
+    }
+    fn tensor_cumsum(&self, t: *mut c_void, dim: i32) -> BackendResult<*mut c_void> {
+        let tt = unsafe { &*p(t) };
+        Ok(v(ffi_ops::make_tensor(tt.cumsum_impl(dim as usize)?)))
+    }
+    fn tensor_norm(&self, t: *mut c_void, p_val: f32, _dim: i32) -> BackendResult<*mut c_void> {
+        let tt = unsafe { &*p(t) };
+        Ok(v(ffi_ops::make_tensor(tt.norm_impl(p_val)?)))
+    }
+    fn tensor_topk(&self, t: *mut c_void, k: usize, _dim: i32) -> BackendResult<*mut c_void> {
+        let tt = unsafe { &*p(t) };
+        Ok(v(ffi_ops::make_tensor(tt.topk_impl(k)?)))
+    }
+    fn tensor_logical_and(&self, a: *mut c_void, b: *mut c_void) -> BackendResult<*mut c_void> {
+        let (ta, tb) = unsafe { (&*p(a), &*p(b)) };
+        Ok(v(ffi_ops::make_tensor(ta.logical_and_impl(tb)?)))
+    }
+    fn tensor_logical_or(&self, a: *mut c_void, b: *mut c_void) -> BackendResult<*mut c_void> {
+        let (ta, tb) = unsafe { (&*p(a), &*p(b)) };
+        Ok(v(ffi_ops::make_tensor(ta.logical_or_impl(tb)?)))
+    }
+    fn tensor_logical_not(&self, t: *mut c_void) -> BackendResult<*mut c_void> {
+        let tt = unsafe { &*p(t) };
+        Ok(v(ffi_ops::make_tensor(tt.logical_not_impl()?)))
+    }
+    fn tensor_leaky_relu(&self, t: *mut c_void, slope: f32) -> BackendResult<*mut c_void> {
+        let tt = unsafe { &*p(t) };
+        Ok(v(ffi_ops::make_tensor(tt.leaky_relu_impl(slope)?)))
+    }
+    fn tensor_elu(&self, t: *mut c_void, alpha: f32) -> BackendResult<*mut c_void> {
+        let tt = unsafe { &*p(t) };
+        Ok(v(ffi_ops::make_tensor(tt.elu_impl(alpha)?)))
+    }
+    fn tensor_mish(&self, t: *mut c_void) -> BackendResult<*mut c_void> {
+        let tt = unsafe { &*p(t) };
+        Ok(v(ffi_ops::make_tensor(tt.mish_impl()?)))
+    }
+    fn tensor_mse_loss(&self, a: *mut c_void, b: *mut c_void) -> BackendResult<*mut c_void> {
+        let (ta, tb) = unsafe { (&*p(a), &*p(b)) };
+        Ok(v(ffi_ops::make_tensor(ta.mse_loss_impl(tb)?)))
+    }
+    fn tensor_l1_loss(&self, a: *mut c_void, b: *mut c_void) -> BackendResult<*mut c_void> {
+        let (ta, tb) = unsafe { (&*p(a), &*p(b)) };
+        Ok(v(ffi_ops::make_tensor(ta.l1_loss_impl(tb)?)))
+    }
+    fn tensor_bce_loss(&self, a: *mut c_void, b: *mut c_void) -> BackendResult<*mut c_void> {
+        let (ta, tb) = unsafe { (&*p(a), &*p(b)) };
+        Ok(v(ffi_ops::make_tensor(ta.bce_loss_impl(tb)?)))
+    }
+    fn tensor_nll_loss(&self, a: *mut c_void, b: *mut c_void) -> BackendResult<*mut c_void> {
+        let (ta, tb) = unsafe { (&*p(a), &*p(b)) };
+        Ok(v(ffi_ops::make_tensor(ta.nll_loss_impl(tb)?)))
+    }
+    fn tensor_linear(
+        &self,
+        i: *mut c_void,
+        w: *mut c_void,
+        b: *mut c_void,
+    ) -> BackendResult<*mut c_void> {
+        let (ti, tw) = unsafe { (&*p(i), &*p(w)) };
+        let bias = if b.is_null() {
+            None
+        } else {
+            Some(unsafe { &*p(b) })
+        };
+        Ok(v(ffi_ops::make_tensor(ti.linear_impl(tw, bias)?)))
+    }
+    fn tensor_hardswish(&self, t: *mut c_void) -> BackendResult<*mut c_void> {
+        let tt = unsafe { &*p(t) };
+        Ok(v(ffi_ops::make_tensor(tt.hardswish_impl()?)))
+    }
+    fn tensor_hardsigmoid(&self, t: *mut c_void) -> BackendResult<*mut c_void> {
+        let tt = unsafe { &*p(t) };
+        Ok(v(ffi_ops::make_tensor(tt.hardsigmoid_impl()?)))
+    }
+    fn tensor_group_norm(
+        &self,
+        i: *mut c_void,
+        g: i64,
+        w: *mut c_void,
+        b: *mut c_void,
+        e: f64,
+    ) -> BackendResult<*mut c_void> {
+        let (ti, tw, tb) = unsafe { (&*p(i), &*p(w), &*p(b)) };
+        Ok(v(ffi_ops::make_tensor(
+            ti.group_norm_impl(tw, tb, g as usize, e as f32)?,
+        )))
+    }
+    fn tensor_adaptive_avg_pool2d(
+        &self,
+        i: *mut c_void,
+        h: i64,
+        w: i64,
+    ) -> BackendResult<*mut c_void> {
+        let ti = unsafe { &*p(i) };
+        Ok(v(ffi_ops::make_tensor(
+            ti.adaptive_avg_pool2d_impl((h as usize, w as usize))?,
+        )))
+    }
+    fn tensor_pad(&self, i: *mut c_void, l: i64, r: i64, val: f32) -> BackendResult<*mut c_void> {
+        let ti = unsafe { &*p(i) };
+        Ok(v(ffi_ops::make_tensor(
+            ti.pad_impl(&[l as usize, r as usize], val)?,
+        )))
+    }
+    fn tensor_instance_norm(
+        &self,
+        i: *mut c_void,
+        w: *mut c_void,
+        b: *mut c_void,
+        e: f64,
+    ) -> BackendResult<*mut c_void> {
+        let (ti, tw, tb) = unsafe { (&*p(i), &*p(w), &*p(b)) };
+        Ok(v(ffi_ops::make_tensor(
+            ti.instance_norm_impl(tw, tb, e as f32)?,
+        )))
+    }
+    fn tensor_dropout2d(
+        &self,
+        i: *mut c_void,
+        prob: f64,
+        training: bool,
+    ) -> BackendResult<*mut c_void> {
+        let ti = unsafe { &*p(i) };
+        Ok(v(ffi_ops::make_tensor(
+            ti.dropout2d_impl(prob as f32, training)?,
+        )))
+    }
+    fn tensor_conv1d(
+        &self,
+        i: *mut c_void,
+        w: *mut c_void,
+        b: *mut c_void,
+        s: i64,
+        pad: i64,
+    ) -> BackendResult<*mut c_void> {
+        let (ti, tw) = unsafe { (&*p(i), &*p(w)) };
+        let result = ti.conv1d_impl(tw, s as usize, pad as usize)?;
+        let result = if !b.is_null() {
+            let tb = unsafe { &*p(b) };
+            result.add_impl(tb)?
+        } else {
+            result
+        };
+        Ok(v(ffi_ops::make_tensor(result)))
+    }
+    fn tensor_kl_div_loss(&self, a: *mut c_void, b: *mut c_void) -> BackendResult<*mut c_void> {
+        let (ta, tb) = unsafe { (&*p(a), &*p(b)) };
+        Ok(v(ffi_ops::make_tensor(ta.kl_div_loss_impl(tb)?)))
+    }
+    fn tensor_conv_transpose2d(
+        &self,
+        i: *mut c_void,
+        w: *mut c_void,
+        b: *mut c_void,
+        s: i64,
+        pad: i64,
+        _o: i64,
+    ) -> BackendResult<*mut c_void> {
+        let (ti, tw) = unsafe { (&*p(i), &*p(w)) };
+        let result =
+            ti.conv_transpose2d_impl(tw, (s as usize, s as usize), (pad as usize, pad as usize))?;
+        let result = if !b.is_null() {
+            let tb = unsafe { &*p(b) };
+            result.add_impl(tb)?
+        } else {
+            result
+        };
+        Ok(v(ffi_ops::make_tensor(result)))
+    }
+    fn tensor_interpolate(
+        &self,
+        i: *mut c_void,
+        h: i64,
+        w: i64,
+        m: i64,
+    ) -> BackendResult<*mut c_void> {
+        let ti = unsafe { &*p(i) };
+        let mode = if m == 1 { "bilinear" } else { "nearest" };
+        Ok(v(ffi_ops::make_tensor(
+            ti.interpolate_impl((h as usize, w as usize), mode)?,
+        )))
+    }
+    fn tensor_scaled_dot_product_attention(
+        &self,
+        q: *mut c_void,
+        k: *mut c_void,
+        val: *mut c_void,
+        m: *mut c_void,
+    ) -> BackendResult<*mut c_void> {
+        let (tq, tk, tv) = unsafe { (&*p(q), &*p(k), &*p(val)) };
+        let mask = if m.is_null() {
+            None
+        } else {
+            Some(unsafe { &*p(m) })
+        };
+        Ok(v(ffi_ops::make_tensor(tq.sdpa_impl(tk, tv, mask)?)))
+    }
+    fn tensor_top_k_sample(&self, l: *mut c_void, k: i64) -> BackendResult<*mut c_void> {
+        let tl = unsafe { &*p(l) };
+        Ok(v(ffi_ops::make_tensor(tl.top_k_sample_impl(k as usize)?)))
+    }
+    fn tensor_top_p_sample(&self, l: *mut c_void, prob: f64) -> BackendResult<*mut c_void> {
+        let tl = unsafe { &*p(l) };
+        Ok(v(ffi_ops::make_tensor(tl.top_p_sample_impl(prob as f32)?)))
+    }
+    fn tensor_temperature_scale(&self, l: *mut c_void, t: f64) -> BackendResult<*mut c_void> {
+        let tl = unsafe { &*p(l) };
+        Ok(v(ffi_ops::make_tensor(
+            tl.temperature_scale_impl(t as f32)?,
+        )))
+    }
+    fn tensor_repetition_penalty(
+        &self,
+        l: *mut c_void,
+        tokens: *mut c_void,
+        penalty: f64,
+    ) -> BackendResult<*mut c_void> {
+        let (tl, tt) = unsafe { (&*p(l), &*p(tokens)) };
+        Ok(v(ffi_ops::make_tensor(
+            tl.repetition_penalty_impl(tt, penalty as f32)?,
+        )))
+    }
+    fn tensor_dot(&self, a: *mut c_void, b: *mut c_void) -> BackendResult<*mut c_void> {
+        let (ta, tb) = unsafe { (&*p(a), &*p(b)) };
+        Ok(v(ffi_ops::make_tensor(ta.dot_impl(tb)?)))
+    }
+    fn tensor_fill_(&self, t: *mut c_void, value: f32) -> BackendResult<()> {
+        let tt = unsafe { &*p(t) };
+        let _ = tt.fill_impl(value)?;
+        Ok(())
+    }
+    fn tensor_broadcast_to(&self, t: *mut c_void, shape: &[usize]) -> BackendResult<*mut c_void> {
+        let tt = unsafe { &*p(t) };
+        Ok(v(ffi_ops::make_tensor(tt.broadcast_to_impl(shape)?)))
+    }
+    fn tensor_stack(&self, a: *mut c_void, b: *mut c_void, dim: i64) -> BackendResult<*mut c_void> {
+        let (ta, tb) = unsafe { (&*p(a), &*p(b)) };
+        Ok(v(ffi_ops::make_tensor(ta.stack_impl(tb, dim as usize)?)))
+    }
+    // ========== autograd ==========
+    fn tensor_set_requires_grad(&self, _t: *mut c_void, _requires_grad: bool) -> BackendResult<()> {
+        // TODO: autograd 対応後に実装
+        Ok(())
+    }
+    fn tensor_clip_grad_value(&self, _t: *mut c_void, _min: f64, _max: f64) -> BackendResult<()> {
+        // TODO: autograd 対応後に実装
+        Ok(())
+    }
+    fn tensor_clip_grad_norm(
+        &self,
+        _t: *mut c_void,
+        _max_norm: f64,
+        _norm_type: f64,
+    ) -> BackendResult<f64> {
+        // TODO: autograd 対応後に実装
+        Ok(0.0)
+    }
     // ========== メモリ管理 ==========
     fn tensor_clone(&self, t: *mut c_void) -> BackendResult<*mut c_void> {
         Ok(v(crate::ffi::tl_cuda_clone(p(t))))

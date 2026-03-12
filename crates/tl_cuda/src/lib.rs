@@ -16,6 +16,7 @@ pub mod ops {
     pub mod fused;
     pub mod index;
     pub mod llm;
+    pub mod loss;
     pub mod matmul;
     pub mod nn;
     pub mod quantized;

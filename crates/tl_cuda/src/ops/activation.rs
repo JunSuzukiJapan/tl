@@ -19,6 +19,12 @@ extern "C" {
     fn launch_floor_kernel(x: *const f32, y: *mut f32, n: i32, stream: cudaStream_t);
     fn launch_ceil_kernel(x: *const f32, y: *mut f32, n: i32, stream: cudaStream_t);
     fn launch_round_kernel(x: *const f32, y: *mut f32, n: i32, stream: cudaStream_t);
+    // Phase A: 新規活性化関数
+    fn launch_mish_kernel(x: *const f32, y: *mut f32, n: i32, stream: cudaStream_t);
+    fn launch_hardswish_kernel(x: *const f32, y: *mut f32, n: i32, stream: cudaStream_t);
+    fn launch_hardsigmoid_kernel(x: *const f32, y: *mut f32, n: i32, stream: cudaStream_t);
+    fn launch_leaky_relu_kernel(x: *const f32, y: *mut f32, n: i32, s: f32, stream: cudaStream_t);
+    fn launch_elu_kernel(x: *const f32, y: *mut f32, n: i32, s: f32, stream: cudaStream_t);
 }
 
 impl CudaTensor {
@@ -35,6 +41,28 @@ impl CudaTensor {
                 self.buffer.ptr() as *const f32,
                 output.buffer.ptr() as *mut f32,
                 n as i32,
+                stream,
+            );
+        }
+        crate::stream::sync_stream();
+        Ok(output)
+    }
+
+    /// GPU カーネルによる活性化関数（スカラーパラメータ付き）
+    fn activation_kernel_op_scalar(
+        &self,
+        launch: unsafe extern "C" fn(*const f32, *mut f32, i32, f32, cudaStream_t),
+        scalar: f32,
+    ) -> BackendResult<CudaTensor> {
+        let n = self.elem_count();
+        let output = CudaTensor::uninit(self.shape(), DType::F32);
+        let stream = crate::stream::get_stream().raw();
+        unsafe {
+            launch(
+                self.buffer.ptr() as *const f32,
+                output.buffer.ptr() as *mut f32,
+                n as i32,
+                scalar,
                 stream,
             );
         }
@@ -74,5 +102,21 @@ impl CudaTensor {
     }
     pub fn round_impl(&self) -> BackendResult<CudaTensor> {
         self.activation_kernel_op(launch_round_kernel)
+    }
+    // Phase A: 新規活性化関数
+    pub fn leaky_relu_impl(&self, slope: f32) -> BackendResult<CudaTensor> {
+        self.activation_kernel_op_scalar(launch_leaky_relu_kernel, slope)
+    }
+    pub fn elu_impl(&self, alpha: f32) -> BackendResult<CudaTensor> {
+        self.activation_kernel_op_scalar(launch_elu_kernel, alpha)
+    }
+    pub fn mish_impl(&self) -> BackendResult<CudaTensor> {
+        self.activation_kernel_op(launch_mish_kernel)
+    }
+    pub fn hardswish_impl(&self) -> BackendResult<CudaTensor> {
+        self.activation_kernel_op(launch_hardswish_kernel)
+    }
+    pub fn hardsigmoid_impl(&self) -> BackendResult<CudaTensor> {
+        self.activation_kernel_op(launch_hardsigmoid_kernel)
     }
 }

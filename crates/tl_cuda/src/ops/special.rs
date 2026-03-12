@@ -83,6 +83,16 @@ extern "C" {
         repeats: i32,
         stream: cudaStream_t,
     );
+    // Phase A: masked_fill / fill_
+    fn launch_masked_fill_kernel(
+        x: *const f32,
+        mask: *const f32,
+        y: *mut f32,
+        n: i32,
+        value: f32,
+        stream: cudaStream_t,
+    );
+    fn launch_fill_kernel(y: *mut f32, n: i32, value: f32, stream: cudaStream_t);
 }
 
 impl CudaTensor {
@@ -356,6 +366,39 @@ impl CudaTensor {
                 vocab_size as i32,
                 stream,
             );
+        }
+        crate::stream::sync_stream();
+        Ok(output)
+    }
+
+    // ========== Phase A: masked_fill / fill_ ==========
+
+    /// masked_fill — GPU カーネル
+    pub fn masked_fill_impl(&self, mask: &CudaTensor, value: f32) -> BackendResult<CudaTensor> {
+        let n = self.elem_count();
+        let output = CudaTensor::uninit(self.shape(), DType::F32);
+        let stream = crate::stream::get_stream().raw();
+        unsafe {
+            launch_masked_fill_kernel(
+                self.buffer.ptr() as *const f32,
+                mask.buffer.ptr() as *const f32,
+                output.buffer.ptr() as *mut f32,
+                n as i32,
+                value,
+                stream,
+            );
+        }
+        crate::stream::sync_stream();
+        Ok(output)
+    }
+
+    /// fill_ (in-place fill) — GPU カーネル
+    pub fn fill_impl(&self, value: f32) -> BackendResult<CudaTensor> {
+        let n = self.elem_count();
+        let output = CudaTensor::uninit(self.shape(), DType::F32);
+        let stream = crate::stream::get_stream().raw();
+        unsafe {
+            launch_fill_kernel(output.buffer.ptr() as *mut f32, n as i32, value, stream);
         }
         crate::stream::sync_stream();
         Ok(output)
