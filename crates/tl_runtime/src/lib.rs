@@ -165,6 +165,8 @@ pub use math_ffi::{
     tl_f32_floor, tl_f32_fract, tl_f32_hypot, tl_f32_ln, tl_f32_ln_1p, tl_f32_log, tl_f32_log10, tl_f32_log2,
     tl_f32_powf, tl_f32_powi, tl_f32_recip, tl_f32_round, tl_f32_signum, tl_f32_sin, tl_f32_sinh,
     tl_f32_sqrt, tl_f32_tan, tl_f32_tanh, tl_f32_to_degrees, tl_f32_to_radians, tl_f32_trunc,
+    // to_string methods
+    tl_f32_to_string, tl_f64_to_string,
 };
 
 // ========== Print Additional Exports ==========

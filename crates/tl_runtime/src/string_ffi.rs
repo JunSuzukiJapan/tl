@@ -216,3 +216,105 @@ pub extern "C" fn tl_hash_string(s: *mut StringStruct) -> i64 {
         hasher.finish() as i64
     }
 }
+
+/// Helper: Rust String → *mut StringStruct
+unsafe fn make_string_struct(s: String) -> *mut StringStruct {
+    unsafe {
+        let c_str = CString::new(s).unwrap();
+        let ptr = c_str.into_raw();
+        let len = libc::strlen(ptr) as i64;
+        let layout = std::alloc::Layout::new::<StringStruct>();
+        let struct_ptr = std::alloc::alloc(layout) as *mut StringStruct;
+        (*struct_ptr).ptr = ptr;
+        (*struct_ptr).len = len;
+        struct_ptr
+    }
+}
+
+/// String.trim() -> String
+/// 前後の空白を除去
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_string_trim(s: *mut StringStruct) -> *mut StringStruct {
+    unsafe {
+        if s.is_null() || (*s).ptr.is_null() {
+            return std::ptr::null_mut();
+        }
+        let s_str = CStr::from_ptr((*s).ptr).to_string_lossy();
+        make_string_struct(s_str.trim().to_string())
+    }
+}
+
+/// String.starts_with(prefix: String) -> bool
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_string_starts_with(s: *mut StringStruct, prefix: *mut StringStruct) -> bool {
+    unsafe {
+        if s.is_null() || prefix.is_null() || (*s).ptr.is_null() || (*prefix).ptr.is_null() {
+            return false;
+        }
+        let s_str = CStr::from_ptr((*s).ptr).to_string_lossy();
+        let prefix_str = CStr::from_ptr((*prefix).ptr).to_string_lossy();
+        s_str.starts_with(prefix_str.as_ref())
+    }
+}
+
+/// String.ends_with(suffix: String) -> bool
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_string_ends_with(s: *mut StringStruct, suffix: *mut StringStruct) -> bool {
+    unsafe {
+        if s.is_null() || suffix.is_null() || (*s).ptr.is_null() || (*suffix).ptr.is_null() {
+            return false;
+        }
+        let s_str = CStr::from_ptr((*s).ptr).to_string_lossy();
+        let suffix_str = CStr::from_ptr((*suffix).ptr).to_string_lossy();
+        s_str.ends_with(suffix_str.as_ref())
+    }
+}
+
+/// String.replace(from: String, to: String) -> String
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_string_replace(
+    s: *mut StringStruct,
+    from: *mut StringStruct,
+    to: *mut StringStruct,
+) -> *mut StringStruct {
+    unsafe {
+        if s.is_null() || from.is_null() || to.is_null()
+            || (*s).ptr.is_null() || (*from).ptr.is_null() || (*to).ptr.is_null()
+        {
+            return std::ptr::null_mut();
+        }
+        let s_str = CStr::from_ptr((*s).ptr).to_string_lossy();
+        let from_str = CStr::from_ptr((*from).ptr).to_string_lossy();
+        let to_str = CStr::from_ptr((*to).ptr).to_string_lossy();
+        make_string_struct(s_str.replace(from_str.as_ref(), to_str.as_ref()))
+    }
+}
+
+/// String.substring(start: i64, len: i64) -> String
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_string_substring(s: *mut StringStruct, start: i64, len: i64) -> *mut StringStruct {
+    unsafe {
+        if s.is_null() || (*s).ptr.is_null() || start < 0 || len < 0 {
+            return make_string_struct(String::new());
+        }
+        let s_str = CStr::from_ptr((*s).ptr).to_string_lossy();
+        let result: String = s_str
+            .chars()
+            .skip(start as usize)
+            .take(len as usize)
+            .collect();
+        make_string_struct(result)
+    }
+}
+
+/// String.is_empty() -> bool
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_string_is_empty(s: *mut StringStruct) -> bool {
+    unsafe {
+        if s.is_null() || (*s).ptr.is_null() {
+            return true;
+        }
+        (*s).len == 0
+    }
+}
+

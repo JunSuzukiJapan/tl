@@ -1466,6 +1466,20 @@ pub fn declare_runtime_functions<'ctx>(
             execution_engine.add_global_mapping(&f, addr);
         }
     }
+
+    // f32.to_string() -> *mut StringStruct (returns pointer, not f32)
+    let f32_to_string_type = i8_ptr.fn_type(&[context.f32_type().into()], false);
+    add_fn("tl_f32_to_string", f32_to_string_type);
+    if let Some(f) = module.get_function("tl_f32_to_string") {
+        execution_engine.add_global_mapping(&f, runtime::tl_f32_to_string as *const () as usize);
+    }
+
+    // f64.to_string() -> *mut StringStruct (returns pointer, not f64)
+    let f64_to_string_type = i8_ptr.fn_type(&[context.f64_type().into()], false);
+    add_fn("tl_f64_to_string", f64_to_string_type);
+    if let Some(f) = module.get_function("tl_f64_to_string") {
+        execution_engine.add_global_mapping(&f, runtime::tl_f64_to_string as *const () as usize);
+    }
     let f32_binary_mappings: [(&str, usize); 5] = [
         ("tl_f32_atan2", runtime::tl_f32_atan2 as *const () as usize),
         (
@@ -3201,6 +3215,47 @@ pub fn declare_runtime_functions<'ctx>(
     add_fn("tl_string_from_int", str_from_int_type);
     if let Some(f) = module.get_function("tl_string_from_int") {
         execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_from_int as *const () as usize);
+    }
+
+    // tl_string_trim(s: *mut StringStruct) -> *mut StringStruct
+    let str_unary_type = i8_ptr.fn_type(&[i8_ptr.into()], false);
+    add_fn("tl_string_trim", str_unary_type);
+    if let Some(f) = module.get_function("tl_string_trim") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_trim as *const () as usize);
+    }
+
+    // tl_string_starts_with(s, prefix) -> bool
+    let str_bool_binary_type = context.bool_type().fn_type(&[i8_ptr.into(), i8_ptr.into()], false);
+    add_fn("tl_string_starts_with", str_bool_binary_type);
+    if let Some(f) = module.get_function("tl_string_starts_with") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_starts_with as *const () as usize);
+    }
+
+    // tl_string_ends_with(s, suffix) -> bool
+    add_fn("tl_string_ends_with", str_bool_binary_type);
+    if let Some(f) = module.get_function("tl_string_ends_with") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_ends_with as *const () as usize);
+    }
+
+    // tl_string_replace(s, from, to) -> *mut StringStruct
+    let str_replace_type = i8_ptr.fn_type(&[i8_ptr.into(), i8_ptr.into(), i8_ptr.into()], false);
+    add_fn("tl_string_replace", str_replace_type);
+    if let Some(f) = module.get_function("tl_string_replace") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_replace as *const () as usize);
+    }
+
+    // tl_string_substring(s, start: i64, len: i64) -> *mut StringStruct
+    let str_substring_type = i8_ptr.fn_type(&[i8_ptr.into(), i64_type.into(), i64_type.into()], false);
+    add_fn("tl_string_substring", str_substring_type);
+    if let Some(f) = module.get_function("tl_string_substring") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_substring as *const () as usize);
+    }
+
+    // tl_string_is_empty(s) -> bool
+    let str_is_empty_type = context.bool_type().fn_type(&[i8_ptr.into()], false);
+    add_fn("tl_string_is_empty", str_is_empty_type);
+    if let Some(f) = module.get_function("tl_string_is_empty") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_is_empty as *const () as usize);
     }
 
     // tl_tensor_argmax(t, dim, keepdim) -> CTensorResult

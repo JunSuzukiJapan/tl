@@ -6080,6 +6080,11 @@ impl<'ctx> CodeGenerator<'ctx> {
             Type::Tensor(_, _) => Some("Tensor".to_string()),
             Type::GradTensor(_, _) => Some("Tensor".to_string()),
             Type::String(_) => Some("String".to_string()),
+            Type::I64 => Some("I64".to_string()),
+            Type::I32 => Some("I32".to_string()),
+            Type::F32 => Some("F32".to_string()),
+            Type::F64 => Some("F64".to_string()),
+            Type::Bool => Some("Bool".to_string()),
             _ => None,
         };
 

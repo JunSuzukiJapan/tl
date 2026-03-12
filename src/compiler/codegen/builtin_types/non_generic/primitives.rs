@@ -17,6 +17,12 @@ pub fn register_primitive_types(manager: &mut TypeManager) {
     string.register_evaluated_instance_method("to_i64", string_methods::compile_to_i64, vec![], Type::I64);
     string.register_evaluated_instance_method("print", string_methods::compile_print, vec![], Type::Void);
     string.register_evaluated_instance_method("display", string_methods::compile_display, vec![], Type::Void);
+    string.register_evaluated_instance_method("trim", string_methods::compile_trim, vec![], string_type.clone());
+    string.register_evaluated_instance_method("starts_with", string_methods::compile_starts_with, vec![string_type.clone()], Type::Bool);
+    string.register_evaluated_instance_method("ends_with", string_methods::compile_ends_with, vec![string_type.clone()], Type::Bool);
+    string.register_evaluated_instance_method("replace", string_methods::compile_replace, vec![string_type.clone(), string_type.clone()], string_type.clone());
+    string.register_evaluated_instance_method("substring", string_methods::compile_substring, vec![Type::I64, Type::I64], string_type.clone());
+    string.register_evaluated_instance_method("is_empty", string_methods::compile_is_empty, vec![], Type::Bool);
     manager.register_type(string);
 
     // ===== F32 =====
@@ -61,6 +67,13 @@ pub fn register_primitive_types(manager: &mut TypeManager) {
     f32_type.register_evaluated_instance_method("powf", pm::compile_f32_powf, vec![Type::F32], Type::F32);
     f32_type.register_evaluated_instance_method("pow", pm::compile_f32_pow, vec![Type::F32], Type::F32);
     f32_type.register_evaluated_instance_method("powi", pm::compile_f32_powi, vec![Type::F32], Type::F32);
+    // Conversion & comparison methods
+    f32_type.register_evaluated_instance_method("to_f64", pm::compile_f32_to_f64, vec![], Type::F64);
+    f32_type.register_evaluated_instance_method("to_i64", pm::compile_f32_to_i64, vec![], Type::I64);
+    f32_type.register_evaluated_instance_method("to_string", pm::compile_f32_to_string, vec![], string_type.clone());
+    f32_type.register_evaluated_instance_method("min", pm::compile_f32_min, vec![Type::F32], Type::F32);
+    f32_type.register_evaluated_instance_method("max", pm::compile_f32_max, vec![Type::F32], Type::F32);
+    f32_type.register_evaluated_instance_method("clamp", pm::compile_f32_clamp, vec![Type::F32, Type::F32], Type::F32);
     manager.register_type(f32_type);
 
     // ===== F64 =====
@@ -103,6 +116,13 @@ pub fn register_primitive_types(manager: &mut TypeManager) {
     f64_type.register_evaluated_instance_method("powf", pm::compile_f64_powf, vec![Type::F64], Type::F64);
     f64_type.register_evaluated_instance_method("pow", pm::compile_f64_pow, vec![Type::F64], Type::F64);
     f64_type.register_evaluated_instance_method("powi", pm::compile_f64_powi, vec![Type::F64], Type::F64);
+    // Conversion & comparison methods
+    f64_type.register_evaluated_instance_method("to_f32", pm::compile_f64_to_f32, vec![], Type::F32);
+    f64_type.register_evaluated_instance_method("to_i64", pm::compile_f64_to_i64, vec![], Type::I64);
+    f64_type.register_evaluated_instance_method("to_string", pm::compile_f64_to_string, vec![], string_type.clone());
+    f64_type.register_evaluated_instance_method("min", pm::compile_f64_min, vec![Type::F64], Type::F64);
+    f64_type.register_evaluated_instance_method("max", pm::compile_f64_max, vec![Type::F64], Type::F64);
+    f64_type.register_evaluated_instance_method("clamp", pm::compile_f64_clamp, vec![Type::F64, Type::F64], Type::F64);
     manager.register_type(f64_type);
 
     // ===== I64 =====
@@ -116,6 +136,13 @@ pub fn register_primitive_types(manager: &mut TypeManager) {
     i64_type.register_evaluated_instance_method("div_euclid", pm::compile_i64_div_euclid, vec![Type::I64], Type::I64);
     i64_type.register_evaluated_instance_method("rem_euclid", pm::compile_i64_rem_euclid, vec![Type::I64], Type::I64);
     i64_type.register_evaluated_instance_method("pow", pm::compile_i64_pow, vec![Type::I64], Type::I64);
+    // Conversion & comparison methods
+    i64_type.register_evaluated_instance_method("to_f64", pm::compile_i64_to_f64, vec![], Type::F64);
+    i64_type.register_evaluated_instance_method("to_f32", pm::compile_i64_to_f32, vec![], Type::F32);
+    i64_type.register_evaluated_instance_method("to_string", pm::compile_i64_to_string, vec![], string_type.clone());
+    i64_type.register_evaluated_instance_method("min", pm::compile_i64_min, vec![Type::I64], Type::I64);
+    i64_type.register_evaluated_instance_method("max", pm::compile_i64_max, vec![Type::I64], Type::I64);
+    i64_type.register_evaluated_instance_method("clamp", pm::compile_i64_clamp, vec![Type::I64, Type::I64], Type::I64);
     manager.register_type(i64_type);
     
     // ===== I32 =====

@@ -84,4 +84,48 @@ impl<T> Vec<T> {
         let p = self.ptr;
         p[index] = item;
     }
+
+    fn insert(mut self, index: i64, item: T) {
+        if index < 0 || index > self.len {
+            return;
+        }
+        // Ensure capacity
+        if self.len == self.cap {
+            let new_cap = if self.cap == 0 { 4 } else { self.cap * 2 };
+            let item_size = T::sizeof();
+            let new_size = new_cap * item_size;
+            let old_ptr = self.ptr as ptr<u8>;
+            let new_ptr_u8 = realloc(old_ptr, new_size);
+            self.ptr = new_ptr_u8 as ptr<T>;
+            self.cap = new_cap;
+        }
+        // Shift elements right
+        let mut i = self.len;
+        while i > index {
+            let p = self.ptr;
+            p[i] = p[i - 1];
+            i = i - 1;
+        }
+        let p = self.ptr;
+        p[index] = item;
+        self.len = self.len + 1;
+    }
+
+    fn remove(mut self, index: i64) -> T {
+        let item = self.ptr[index];
+        // Shift elements left
+        let mut i = index;
+        while i < self.len - 1 {
+            let p = self.ptr;
+            p[i] = p[i + 1];
+            i = i + 1;
+        }
+        self.len = self.len - 1;
+        item
+    }
+
+
+    fn clear(mut self) {
+        self.len = 0;
+    }
 }

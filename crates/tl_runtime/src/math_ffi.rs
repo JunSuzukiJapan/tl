@@ -125,6 +125,23 @@ pub extern "C" fn tl_f32_to_radians(x: f32) -> f32 { x.to_radians() }
 /// @ffi_sig (f32) -> f32
 pub extern "C" fn tl_f32_trunc(x: f32) -> f32 { x.trunc() }
 
+/// f32.to_string() -> *mut StringStruct
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_f32_to_string(x: f32) -> *mut crate::string_ffi::StringStruct {
+    use std::ffi::CString;
+    let s = format!("{}", x);
+    let c_str = CString::new(s).unwrap();
+    let ptr = c_str.into_raw();
+    unsafe {
+        let len = libc::strlen(ptr) as i64;
+        let layout = std::alloc::Layout::new::<crate::string_ffi::StringStruct>();
+        let struct_ptr = std::alloc::alloc(layout) as *mut crate::string_ffi::StringStruct;
+        (*struct_ptr).ptr = ptr;
+        (*struct_ptr).len = len;
+        struct_ptr
+    }
+}
+
 // ========== f64 Functions ==========
 
 #[unsafe(no_mangle)]
@@ -246,6 +263,23 @@ pub extern "C" fn tl_f64_to_radians(x: f64) -> f64 { x.to_radians() }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_f64_trunc(x: f64) -> f64 { x.trunc() }
+
+/// f64.to_string() -> *mut StringStruct
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_f64_to_string(x: f64) -> *mut crate::string_ffi::StringStruct {
+    use std::ffi::CString;
+    let s = format!("{}", x);
+    let c_str = CString::new(s).unwrap();
+    let ptr = c_str.into_raw();
+    unsafe {
+        let len = libc::strlen(ptr) as i64;
+        let layout = std::alloc::Layout::new::<crate::string_ffi::StringStruct>();
+        let struct_ptr = std::alloc::alloc(layout) as *mut crate::string_ffi::StringStruct;
+        (*struct_ptr).ptr = ptr;
+        (*struct_ptr).len = len;
+        struct_ptr
+    }
+}
 
 // ========== i32 Functions ==========
 

@@ -261,6 +261,214 @@ pub fn compile_i64_pow<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx
 pub fn compile_i64_get_offset<'ctx>(_c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> { Ok((o, Type::I64)) }
 pub fn compile_i64_sumall<'ctx>(_c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> { Ok((o, Type::I64)) }
 
+// ========== 型変換メソッド (Compiler-intrinsic) ==========
+
+/// i64.to_f64() -> f64
+pub fn compile_i64_to_f64<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let res = c.builder.build_signed_int_to_float(o.into_int_value(), c.context.f64_type(), "i64_to_f64")
+        .map_err(|e| e.to_string())?;
+    Ok((res.into(), Type::F64))
+}
+
+/// i64.to_f32() -> f32
+pub fn compile_i64_to_f32<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let res = c.builder.build_signed_int_to_float(o.into_int_value(), c.context.f32_type(), "i64_to_f32")
+        .map_err(|e| e.to_string())?;
+    Ok((res.into(), Type::F32))
+}
+
+/// i64.to_string() -> String (via FFI)
+pub fn compile_i64_to_string<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let fn_val = c.module.get_function("tl_string_from_int")
+        .ok_or("tl_string_from_int not found")?;
+    let call = c.builder.build_call(fn_val, &[o.into()], "i64_to_string")
+        .map_err(|e| e.to_string())?;
+    let res = match call.try_as_basic_value() {
+        ValueKind::Basic(v) => v,
+        _ => return Err("Invalid return from i64.to_string".into()),
+    };
+    Ok((res, Type::String("String".to_string())))
+}
+
+/// i64.min(other: i64) -> i64
+pub fn compile_i64_min<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if a.len() != 1 { return Err("i64.min requires 1 argument".into()); }
+    let lhs = o.into_int_value();
+    let rhs = a[0].0.into_int_value();
+    let cmp = c.builder.build_int_compare(inkwell::IntPredicate::SLT, lhs, rhs, "cmp_min")
+        .map_err(|e| e.to_string())?;
+    let res = c.builder.build_select(cmp, lhs, rhs, "min_res")
+        .map_err(|e| e.to_string())?;
+    Ok((res.into(), Type::I64))
+}
+
+/// i64.max(other: i64) -> i64
+pub fn compile_i64_max<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if a.len() != 1 { return Err("i64.max requires 1 argument".into()); }
+    let lhs = o.into_int_value();
+    let rhs = a[0].0.into_int_value();
+    let cmp = c.builder.build_int_compare(inkwell::IntPredicate::SGT, lhs, rhs, "cmp_max")
+        .map_err(|e| e.to_string())?;
+    let res = c.builder.build_select(cmp, lhs, rhs, "max_res")
+        .map_err(|e| e.to_string())?;
+    Ok((res.into(), Type::I64))
+}
+
+/// i64.clamp(min: i64, max: i64) -> i64
+pub fn compile_i64_clamp<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if a.len() != 2 { return Err("i64.clamp requires 2 arguments".into()); }
+    let val = o.into_int_value();
+    let lo = a[0].0.into_int_value();
+    let hi = a[1].0.into_int_value();
+    // clamp = max(lo, min(val, hi))
+    let cmp_hi = c.builder.build_int_compare(inkwell::IntPredicate::SLT, val, hi, "cmp_hi")
+        .map_err(|e| e.to_string())?;
+    let min_val = c.builder.build_select(cmp_hi, val, hi, "min_val")
+        .map_err(|e| e.to_string())?.into_int_value();
+    let cmp_lo = c.builder.build_int_compare(inkwell::IntPredicate::SGT, min_val, lo, "cmp_lo")
+        .map_err(|e| e.to_string())?;
+    let res = c.builder.build_select(cmp_lo, min_val, lo, "clamp_res")
+        .map_err(|e| e.to_string())?;
+    Ok((res.into(), Type::I64))
+}
+
+/// f32.to_f64() -> f64
+pub fn compile_f32_to_f64<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let res = c.builder.build_float_ext(o.into_float_value(), c.context.f64_type(), "f32_to_f64")
+        .map_err(|e| e.to_string())?;
+    Ok((res.into(), Type::F64))
+}
+
+/// f32.to_i64() -> i64
+pub fn compile_f32_to_i64<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let res = c.builder.build_float_to_signed_int(o.into_float_value(), c.context.i64_type(), "f32_to_i64")
+        .map_err(|e| e.to_string())?;
+    Ok((res.into(), Type::I64))
+}
+
+/// f32.to_string() -> String (via FFI)
+pub fn compile_f32_to_string<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let fn_val = c.module.get_function("tl_f32_to_string")
+        .ok_or("tl_f32_to_string not found")?;
+    let call = c.builder.build_call(fn_val, &[o.into()], "f32_to_string")
+        .map_err(|e| e.to_string())?;
+    let res = match call.try_as_basic_value() {
+        ValueKind::Basic(v) => v,
+        _ => return Err("Invalid return from f32.to_string".into()),
+    };
+    Ok((res, Type::String("String".to_string())))
+}
+
+/// f32.min(other: f32) -> f32
+pub fn compile_f32_min<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if a.len() != 1 { return Err("f32.min requires 1 argument".into()); }
+    let lhs = o.into_float_value();
+    let rhs = a[0].0.into_float_value();
+    let cmp = c.builder.build_float_compare(inkwell::FloatPredicate::OLT, lhs, rhs, "cmp_min")
+        .map_err(|e| e.to_string())?;
+    let res = c.builder.build_select(cmp, lhs, rhs, "min_res")
+        .map_err(|e| e.to_string())?;
+    Ok((res.into(), Type::F32))
+}
+
+/// f32.max(other: f32) -> f32
+pub fn compile_f32_max<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if a.len() != 1 { return Err("f32.max requires 1 argument".into()); }
+    let lhs = o.into_float_value();
+    let rhs = a[0].0.into_float_value();
+    let cmp = c.builder.build_float_compare(inkwell::FloatPredicate::OGT, lhs, rhs, "cmp_max")
+        .map_err(|e| e.to_string())?;
+    let res = c.builder.build_select(cmp, lhs, rhs, "max_res")
+        .map_err(|e| e.to_string())?;
+    Ok((res.into(), Type::F32))
+}
+
+/// f32.clamp(min: f32, max: f32) -> f32
+pub fn compile_f32_clamp<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if a.len() != 2 { return Err("f32.clamp requires 2 arguments".into()); }
+    let val = o.into_float_value();
+    let lo = a[0].0.into_float_value();
+    let hi = a[1].0.into_float_value();
+    let cmp_hi = c.builder.build_float_compare(inkwell::FloatPredicate::OLT, val, hi, "cmp_hi")
+        .map_err(|e| e.to_string())?;
+    let min_val = c.builder.build_select(cmp_hi, val, hi, "min_val")
+        .map_err(|e| e.to_string())?.into_float_value();
+    let cmp_lo = c.builder.build_float_compare(inkwell::FloatPredicate::OGT, min_val, lo, "cmp_lo")
+        .map_err(|e| e.to_string())?;
+    let res = c.builder.build_select(cmp_lo, min_val, lo, "clamp_res")
+        .map_err(|e| e.to_string())?;
+    Ok((res.into(), Type::F32))
+}
+
+/// f64.to_f32() -> f32
+pub fn compile_f64_to_f32<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let res = c.builder.build_float_trunc(o.into_float_value(), c.context.f32_type(), "f64_to_f32")
+        .map_err(|e| e.to_string())?;
+    Ok((res.into(), Type::F32))
+}
+
+/// f64.to_i64() -> i64
+pub fn compile_f64_to_i64<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let res = c.builder.build_float_to_signed_int(o.into_float_value(), c.context.i64_type(), "f64_to_i64")
+        .map_err(|e| e.to_string())?;
+    Ok((res.into(), Type::I64))
+}
+
+/// f64.to_string() -> String (via FFI)
+pub fn compile_f64_to_string<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let fn_val = c.module.get_function("tl_f64_to_string")
+        .ok_or("tl_f64_to_string not found")?;
+    let call = c.builder.build_call(fn_val, &[o.into()], "f64_to_string")
+        .map_err(|e| e.to_string())?;
+    let res = match call.try_as_basic_value() {
+        ValueKind::Basic(v) => v,
+        _ => return Err("Invalid return from f64.to_string".into()),
+    };
+    Ok((res, Type::String("String".to_string())))
+}
+
+/// f64.min(other: f64) -> f64
+pub fn compile_f64_min<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if a.len() != 1 { return Err("f64.min requires 1 argument".into()); }
+    let lhs = o.into_float_value();
+    let rhs = a[0].0.into_float_value();
+    let cmp = c.builder.build_float_compare(inkwell::FloatPredicate::OLT, lhs, rhs, "cmp_min")
+        .map_err(|e| e.to_string())?;
+    let res = c.builder.build_select(cmp, lhs, rhs, "min_res")
+        .map_err(|e| e.to_string())?;
+    Ok((res.into(), Type::F64))
+}
+
+/// f64.max(other: f64) -> f64
+pub fn compile_f64_max<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if a.len() != 1 { return Err("f64.max requires 1 argument".into()); }
+    let lhs = o.into_float_value();
+    let rhs = a[0].0.into_float_value();
+    let cmp = c.builder.build_float_compare(inkwell::FloatPredicate::OGT, lhs, rhs, "cmp_max")
+        .map_err(|e| e.to_string())?;
+    let res = c.builder.build_select(cmp, lhs, rhs, "max_res")
+        .map_err(|e| e.to_string())?;
+    Ok((res.into(), Type::F64))
+}
+
+/// f64.clamp(min: f64, max: f64) -> f64
+pub fn compile_f64_clamp<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if a.len() != 2 { return Err("f64.clamp requires 2 arguments".into()); }
+    let val = o.into_float_value();
+    let lo = a[0].0.into_float_value();
+    let hi = a[1].0.into_float_value();
+    let cmp_hi = c.builder.build_float_compare(inkwell::FloatPredicate::OLT, val, hi, "cmp_hi")
+        .map_err(|e| e.to_string())?;
+    let min_val = c.builder.build_select(cmp_hi, val, hi, "min_val")
+        .map_err(|e| e.to_string())?.into_float_value();
+    let cmp_lo = c.builder.build_float_compare(inkwell::FloatPredicate::OGT, min_val, lo, "cmp_lo")
+        .map_err(|e| e.to_string())?;
+    let res = c.builder.build_select(cmp_lo, min_val, lo, "clamp_res")
+        .map_err(|e| e.to_string())?;
+    Ok((res.into(), Type::F64))
+}
+
+
 // ========== I32 メソッド ==========
 
 fn compile_i32_unary<'ctx>(

@@ -163,5 +163,100 @@ impl<K, V> HashMap<K, V> {
     }
 
     fn remove(mut self, key: K) {
+        if self.len == 0 {
+            return;
+        }
+        let cap = self.entries.len();
+        let h = tl_core_hash(key);
+        let mut idx = h % cap;
+        if idx < 0 { idx = -idx; }
+        let start_idx = idx;
+
+        loop {
+            let entry = self.entries.get(idx).unwrap();
+            match (entry) {
+                Entry<K, V>::Empty => {
+                    return;
+                },
+                Entry<K, V>::Occupied(k, v) => {
+                    if k == key {
+                        self.entries[idx] = Entry<K, V>::Deleted;
+                        self.len = self.len - 1;
+                        return;
+                    }
+                },
+                Entry<K, V>::Deleted => {}
+            }
+            idx = (idx + 1) % cap;
+            if idx == start_idx {
+                return;
+            }
+        }
+    }
+
+    fn contains_key(self, key: K) -> bool {
+        if self.len == 0 {
+            return false;
+        }
+        let cap = self.entries.len();
+        let h = tl_core_hash(key);
+        let mut idx = h % cap;
+        if idx < 0 { idx = -idx; }
+        let start_idx = idx;
+
+        loop {
+            let entry = self.entries.get(idx).unwrap();
+            match (entry) {
+                Entry<K, V>::Empty => {
+                    return false;
+                },
+                Entry<K, V>::Occupied(k, v) => {
+                    if k == key {
+                        return true;
+                    }
+                },
+                Entry<K, V>::Deleted => {}
+            }
+            idx = (idx + 1) % cap;
+            if idx == start_idx {
+                return false;
+            }
+        }
+    }
+
+    fn keys(self) -> Vec<K> {
+        let mut result: Vec<K> = Vec::new();
+        let mut i = 0;
+        let cap = self.entries.len();
+        while i < cap {
+            let entry = self.entries.get(i).unwrap();
+            match (entry) {
+                Entry<K, V>::Occupied(k, v) => {
+                    result.push(k);
+                },
+                Entry<K, V>::Empty => {},
+                Entry<K, V>::Deleted => {}
+            }
+            i = i + 1;
+        }
+        result
+    }
+
+    fn values(self) -> Vec<V> {
+        let mut result: Vec<V> = Vec::new();
+        let mut i = 0;
+        let cap = self.entries.len();
+        while i < cap {
+            let entry = self.entries.get(i).unwrap();
+            match (entry) {
+                Entry<K, V>::Occupied(k, v) => {
+                    result.push(v);
+                },
+                Entry<K, V>::Empty => {},
+                Entry<K, V>::Deleted => {}
+            }
+            i = i + 1;
+        }
+        result
     }
 }

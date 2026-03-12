@@ -13,6 +13,12 @@ pub use crate::string_ffi::{
     tl_string_to_i64,
     tl_string_char_at,
     tl_string_from_char,
+    tl_string_trim,
+    tl_string_starts_with,
+    tl_string_ends_with,
+    tl_string_replace,
+    tl_string_substring,
+    tl_string_is_empty,
 };
 
 // system からの re-export

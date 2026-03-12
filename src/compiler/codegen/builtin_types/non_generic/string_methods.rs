@@ -138,3 +138,116 @@ pub fn compile_to_i64<'ctx>(
     };
     Ok((res, Type::I64))
 }
+
+/// String.trim() -> String
+pub fn compile_trim<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj: BasicValueEnum<'ctx>,
+    _obj_ty: Type,
+    _args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let fn_val = codegen.module.get_function("tl_string_trim")
+        .ok_or("tl_string_trim not found")?;
+    let call = codegen.builder.build_call(fn_val, &[obj.into()], "trim_res")
+        .map_err(|e| e.to_string())?;
+    let res = match call.try_as_basic_value() {
+        ValueKind::Basic(v) => v,
+        _ => return Err("Invalid return from String.trim".into()),
+    };
+    Ok((res, Type::String("String".to_string())))
+}
+
+/// String.starts_with(prefix: String) -> bool
+pub fn compile_starts_with<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj: BasicValueEnum<'ctx>,
+    _obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 1 { return Err("String.starts_with requires 1 argument".into()); }
+    let fn_val = codegen.module.get_function("tl_string_starts_with")
+        .ok_or("tl_string_starts_with not found")?;
+    let call = codegen.builder.build_call(fn_val, &[obj.into(), args[0].0.into()], "starts_with_res")
+        .map_err(|e| e.to_string())?;
+    let res = match call.try_as_basic_value() {
+        ValueKind::Basic(v) => v,
+        _ => return Err("Invalid return from String.starts_with".into()),
+    };
+    Ok((res, Type::Bool))
+}
+
+/// String.ends_with(suffix: String) -> bool
+pub fn compile_ends_with<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj: BasicValueEnum<'ctx>,
+    _obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 1 { return Err("String.ends_with requires 1 argument".into()); }
+    let fn_val = codegen.module.get_function("tl_string_ends_with")
+        .ok_or("tl_string_ends_with not found")?;
+    let call = codegen.builder.build_call(fn_val, &[obj.into(), args[0].0.into()], "ends_with_res")
+        .map_err(|e| e.to_string())?;
+    let res = match call.try_as_basic_value() {
+        ValueKind::Basic(v) => v,
+        _ => return Err("Invalid return from String.ends_with".into()),
+    };
+    Ok((res, Type::Bool))
+}
+
+/// String.replace(from: String, to: String) -> String
+pub fn compile_replace<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj: BasicValueEnum<'ctx>,
+    _obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 2 { return Err("String.replace requires 2 arguments".into()); }
+    let fn_val = codegen.module.get_function("tl_string_replace")
+        .ok_or("tl_string_replace not found")?;
+    let call = codegen.builder.build_call(fn_val, &[obj.into(), args[0].0.into(), args[1].0.into()], "replace_res")
+        .map_err(|e| e.to_string())?;
+    let res = match call.try_as_basic_value() {
+        ValueKind::Basic(v) => v,
+        _ => return Err("Invalid return from String.replace".into()),
+    };
+    Ok((res, Type::String("String".to_string())))
+}
+
+/// String.substring(start: i64, len: i64) -> String
+pub fn compile_substring<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj: BasicValueEnum<'ctx>,
+    _obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 2 { return Err("String.substring requires 2 arguments".into()); }
+    let fn_val = codegen.module.get_function("tl_string_substring")
+        .ok_or("tl_string_substring not found")?;
+    let call = codegen.builder.build_call(fn_val, &[obj.into(), args[0].0.into(), args[1].0.into()], "substring_res")
+        .map_err(|e| e.to_string())?;
+    let res = match call.try_as_basic_value() {
+        ValueKind::Basic(v) => v,
+        _ => return Err("Invalid return from String.substring".into()),
+    };
+    Ok((res, Type::String("String".to_string())))
+}
+
+/// String.is_empty() -> bool
+pub fn compile_is_empty<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj: BasicValueEnum<'ctx>,
+    _obj_ty: Type,
+    _args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let fn_val = codegen.module.get_function("tl_string_is_empty")
+        .ok_or("tl_string_is_empty not found")?;
+    let call = codegen.builder.build_call(fn_val, &[obj.into()], "is_empty_res")
+        .map_err(|e| e.to_string())?;
+    let res = match call.try_as_basic_value() {
+        ValueKind::Basic(v) => v,
+        _ => return Err("Invalid return from String.is_empty".into()),
+    };
+    Ok((res, Type::Bool))
+}
+
