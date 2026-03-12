@@ -178,6 +178,9 @@ pub enum Type {
     Void, // For functions returning nothing
     Never, // For diverging expressions (panic!, unreachable, etc.)
     Undefined(u64), // For unresolved generics (unique ID)
+
+    /// Closure / function type: Fn(arg_types) -> return_type
+    Fn(Vec<Type>, Box<Type>),
 }
 
 impl Type {
@@ -218,6 +221,7 @@ impl Type {
             Type::Ptr(_inner) => "Ptr".to_string(),
             Type::Range => "Range".to_string(),
             Type::Array(inner, _) => format!("Array_{}", inner.get_base_name()),
+            Type::Fn(_, _) => "Fn".to_string(),
         }
     }
 
@@ -530,6 +534,14 @@ pub enum ExprKind {
     Match {
         expr: Box<Expr>,
         arms: Vec<(Pattern, Expr)>, // (pattern, body)
+    },
+
+    /// Closure expression: |args| body
+    Closure {
+        args: Vec<(String, Option<Type>)>,   // arg name + optional type annotation
+        return_type: Option<Type>,            // optional explicit return type
+        body: Vec<Stmt>,                      // body statements
+        captures: Vec<String>,               // filled by semantic analysis
     },
 }
 

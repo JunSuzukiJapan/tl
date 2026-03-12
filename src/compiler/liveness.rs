@@ -279,6 +279,13 @@ impl LivenessAnalyzer {
             ExprKind::Try(inner) => {
                 self.visit_expr(inner);
             }
+            ExprKind::Closure { body, .. } => {
+                self.enter_scope();
+                for s in body {
+                    self.visit_stmt(s);
+                }
+                self.exit_scope();
+            }
 
         }
     }

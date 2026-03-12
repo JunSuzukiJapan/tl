@@ -551,6 +551,50 @@ fn parse_variable(input: Input) -> IResult<Input, Expr, ParserError> {
     Ok((input, Spanned::new(ExprKind::Variable(name), crate::compiler::error::Span::default())))
 }
 
+fn parse_closure(input: Input) -> IResult<Input, Expr, ParserError> {
+    // Parse |args| body  or  || body
+    let (input, _) = expect_token(Token::Pipe)(input)?;
+    
+    // Parse arguments: name or name: Type, separated by commas
+    let (input, args) = separated_list0(
+        expect_token(Token::Comma),
+        |input| {
+            let (input, name) = identifier(input)?;
+            let (input, ty) = opt(preceded(expect_token(Token::Colon), parse_type))(input)?;
+            Ok((input, (name, ty)))
+        }
+    )(input)?;
+    
+    let (input, _) = expect_token(Token::Pipe)(input)?;
+    
+    // Optional return type annotation: -> Type
+    let (input, return_type) = opt(preceded(expect_token(Token::Arrow), parse_type))(input)?;
+    
+    // Parse body: either { stmts } or a single expr
+    let (input, body) = if let Ok((rest, block_stmts)) = parse_block_stmts(input) {
+        // Block body: |x| { let y = x * 2; y + 1 }
+        (rest, block_stmts)
+    } else {
+        // Single expression body: |x| x + 1
+        let (rest, body_expr) = parse_expr(input)?;
+        let stmt = Spanned::new(
+            StmtKind::Expr(body_expr),
+            crate::compiler::error::Span::default(),
+        );
+        (rest, vec![stmt])
+    };
+    
+    Ok((input, Spanned::new(
+        ExprKind::Closure {
+            args,
+            return_type,
+            body,
+            captures: Vec::new(),
+        },
+        crate::compiler::error::Span::default(),
+    )))
+}
+
 fn parse_atom(input: Input, allow_struct: bool) -> IResult<Input, Expr, ParserError> {
     alt((
         parse_literal,
@@ -580,6 +624,7 @@ fn parse_atom(input: Input, allow_struct: bool) -> IResult<Input, Expr, ParserEr
         parse_self,
         parse_logic_var,
         parse_wildcard,
+        parse_closure,
     ))(input)
 }
 

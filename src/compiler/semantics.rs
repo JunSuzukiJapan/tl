@@ -3159,6 +3159,55 @@ impl SemanticAnalyzer {
 
                 Ok(ok_ty)
             }
+            ExprKind::Closure { args, return_type, body, captures } => {
+                // Enter a new scope for the closure
+                self.enter_scope();
+
+                // Collect arg types (inferred as Unknown if not annotated)
+                let mut arg_types = Vec::new();
+                for (arg_name, arg_type_opt) in args.iter() {
+                    let arg_ty = arg_type_opt.clone().unwrap_or(Type::I64); // Default to i64 for now
+                    self.declare_variable(arg_name.clone(), arg_ty.clone(), false)?;
+                    arg_types.push(arg_ty);
+                }
+
+                // Save and set return type context
+                let prev_return_type = self.current_return_type.clone();
+
+                // Check body statements
+                let mut last_ty = Type::Void;
+                let body_len = body.len();
+                for (i, stmt) in body.iter_mut().enumerate() {
+                    if i == body_len - 1 {
+                        // Last statement: if it's an expression, its type is the closure return type
+                        if let StmtKind::Expr(e) = &mut stmt.inner {
+                            last_ty = self.check_expr(e)?;
+                        } else {
+                            self.check_stmt(stmt)?;
+                        }
+                    } else {
+                        self.check_stmt(stmt)?;
+                    }
+                }
+
+                // Determine return type
+                let ret_ty = if let Some(explicit_ret) = return_type {
+                    explicit_ret.clone()
+                } else {
+                    last_ty
+                };
+
+                // Detect captured variables: variables used in body but not defined in closure scope
+                // (This is a simplified version - captures is filled during codegen or a separate pass)
+                let _ = captures; // Will be populated later
+
+                // Restore return type
+                self.current_return_type = prev_return_type;
+
+                self.exit_scope();
+
+                Ok(Type::Fn(arg_types, Box::new(ret_ty)))
+            }
             ExprKind::StructInit(type_node, fields) => {
                 // First check if this is an enum variant pattern (e.g., Shape::Circle { ... })
                 // before resolving, since we need both the enum name and variant name
@@ -3993,6 +4042,28 @@ impl SemanticAnalyzer {
                 let resolved_name = self.resolve_symbol_name(name);
                 if *name != resolved_name {
                     *name = resolved_name.clone();
+                }
+
+                // Check if name is a closure variable (Type::Fn)
+                if let Ok(var_ty) = self.lookup_variable(name) {
+                    if let Type::Fn(param_types, ret_ty) = var_ty {
+                        // Verify arg count
+                        if args.len() != param_types.len() {
+                            return self.err(
+                                SemanticError::ArgumentCountMismatch {
+                                    name: name.clone(),
+                                    expected: param_types.len(),
+                                    found: args.len(),
+                                },
+                                Some(expr.span.clone()),
+                            );
+                        }
+                        // Check arg types
+                        for arg in args.iter_mut() {
+                            self.check_expr(arg)?;
+                        }
+                        return Ok(*ret_ty);
+                    }
                 }
 
                 if name == "print" || name == "println" {

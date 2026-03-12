@@ -64,6 +64,7 @@ pub struct CodeGenerator<'ctx> {
     /// Trait registry: maps type name -> set of implemented trait names.
     /// Used to check trait bounds during monomorphization.
     pub(crate) trait_registry: HashMap<String, std::collections::HashSet<String>>,
+    pub(crate) closure_counter: usize,
 }
 
 impl<'ctx> CodeGenerator<'ctx> {
@@ -116,6 +117,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
                 reg
             },
+            closure_counter: 0,
         };
 
         // Register all methods (instance and static)
@@ -457,6 +459,12 @@ impl<'ctx> CodeGenerator<'ctx> {
 
 
     // Enter a new scope
+    pub(crate) fn next_closure_id(&mut self) -> usize {
+        let id = self.closure_counter;
+        self.closure_counter += 1;
+        id
+    }
+
     fn enter_scope(&mut self) {
         self.variables.push(std::collections::HashMap::new());
         self.variable_liveness.push(std::collections::HashMap::new());

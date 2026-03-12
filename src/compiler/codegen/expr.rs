@@ -2613,6 +2613,100 @@ impl<'ctx> CodeGenerator<'ctx> {
                 Ok((ok_val, ok_ty))
             }
 
+            ExprKind::Closure { args, return_type, body, captures: _ } => {
+                // Generate a unique anonymous function name using $ (invalid in TL identifiers)
+                let closure_id = self.next_closure_id();
+                let fn_name = format!("__tl_closure${}", closure_id);
+
+                // Determine arg types from annotations or default to i64
+                let mut param_types = Vec::new();
+                let mut param_names = Vec::new();
+                for (arg_name, arg_type_opt) in args {
+                    let arg_ty = arg_type_opt.clone().unwrap_or(Type::I64);
+                    param_types.push(arg_ty);
+                    param_names.push(arg_name.clone());
+                }
+
+                // Determine return type
+                let ret_ty = return_type.clone().unwrap_or(Type::I64);
+
+                // Build LLVM function type
+                let mut llvm_param_types: Vec<inkwell::types::BasicMetadataTypeEnum<'ctx>> = Vec::new();
+                for pt in &param_types {
+                    let llvm_ty = self.get_llvm_type(pt).unwrap_or(self.context.i64_type().into());
+                    llvm_param_types.push(llvm_ty.into());
+                }
+
+                let fn_type = if matches!(ret_ty, Type::Void) {
+                    self.context.void_type().fn_type(&llvm_param_types, false)
+                } else {
+                    let ret_llvm_ty = self.get_llvm_type(&ret_ty)?;
+                    ret_llvm_ty.fn_type(&llvm_param_types, false)
+                };
+
+                let fn_val = self.module.add_function(&fn_name, fn_type, None);
+
+                // Save current state
+                let prev_block = self.builder.get_insert_block();
+                let prev_vars = self.variables.clone();
+                let prev_sret = self.current_sret_dest;
+
+                // Set up new function
+                self.current_sret_dest = None;
+                let entry = self.context.append_basic_block(fn_val, "entry");
+                self.builder.position_at_end(entry);
+
+                // Create new variable scope with args
+                self.variables = vec![std::collections::HashMap::new()];
+                for (i, (name, ty)) in param_names.iter().zip(param_types.iter()).enumerate() {
+                    let param = fn_val.get_nth_param(i as u32).unwrap();
+                    param.set_name(name);
+                    let alloca = self.builder.build_alloca(param.get_type(), name)
+                        .map_err(|e| e.to_string())?;
+                    self.builder.build_store(alloca, param)
+                        .map_err(|e| e.to_string())?;
+                    self.variables.last_mut().unwrap().insert(
+                        name.clone(),
+                        (alloca.into(), ty.clone(), crate::compiler::codegen::CLEANUP_NONE),
+                    );
+                }
+
+                // Compile body
+                let mut last_val: Option<(inkwell::values::BasicValueEnum<'ctx>, Type)> = None;
+                for (i, stmt) in body.iter().enumerate() {
+                    if i == body.len() - 1 {
+                        if let crate::compiler::ast::StmtKind::Expr(e) = &stmt.inner {
+                            last_val = Some(self.compile_expr(e)?);
+                        } else {
+                            self.compile_stmt(stmt)?;
+                        }
+                    } else {
+                        self.compile_stmt(stmt)?;
+                    }
+                }
+
+                // Build return
+                if matches!(ret_ty, Type::Void) {
+                    self.builder.build_return(None).unwrap();
+                } else if let Some((val, _)) = last_val {
+                    self.builder.build_return(Some(&val)).unwrap();
+                } else {
+                    let zero = self.context.i64_type().const_zero();
+                    self.builder.build_return(Some(&zero)).unwrap();
+                }
+
+                // Restore previous state
+                self.variables = prev_vars;
+                self.current_sret_dest = prev_sret;
+                if let Some(prev) = prev_block {
+                    self.builder.position_at_end(prev);
+                }
+
+                // Return function pointer as the closure value
+                let fn_ptr = fn_val.as_global_value().as_pointer_value();
+                Ok((fn_ptr.into(), Type::Fn(param_types, Box::new(ret_ty))))
+            }
+
             ExprKind::FieldAccess(obj, field) => {
                 let (obj_val, obj_ty) = self.compile_expr(obj)?;
 
@@ -6733,6 +6827,68 @@ impl<'ctx> CodeGenerator<'ctx> {
             return self.compile_relation_call(name, args);
         } else if self.relations.contains(simple_name) {
             return self.compile_relation_call(simple_name, args);
+        }
+
+        // 0.5. Check if name is a closure variable (Type::Fn)
+        {
+            let mut closure_info = None;
+            for scope in self.variables.iter().rev() {
+                if let Some((val, ty, _)) = scope.get(name) {
+                    if let Type::Fn(_, _) = ty {
+                        closure_info = Some((*val, ty.clone()));
+                    }
+                    break;
+                }
+            }
+            if let Some((fn_ptr_alloca, var_ty)) = closure_info {
+              if let Type::Fn(param_types, ret_ty) = var_ty {
+                // Load the function pointer from the variable
+                let fn_ptr = self.builder.build_load(
+                    self.context.ptr_type(inkwell::AddressSpace::default()),
+                    fn_ptr_alloca.into_pointer_value(),
+                    "load_fn_ptr",
+                ).unwrap();
+
+                // Build LLVM function type for the call
+                let mut llvm_param_types: Vec<inkwell::types::BasicMetadataTypeEnum<'ctx>> = Vec::new();
+                for pt in &param_types {
+                    let llvm_ty = self.get_llvm_type(pt)?;
+                    llvm_param_types.push(llvm_ty.into());
+                }
+
+                let fn_type = if matches!(*ret_ty, Type::Void) {
+                    self.context.void_type().fn_type(&llvm_param_types, false)
+                } else {
+                    let ret_llvm_ty = self.get_llvm_type(&ret_ty)?;
+                    ret_llvm_ty.fn_type(&llvm_param_types, false)
+                };
+
+                // Compile arguments
+                let mut compiled_args: Vec<inkwell::values::BasicMetadataValueEnum<'ctx>> = Vec::new();
+                for arg in args {
+                    let (val, _) = self.compile_expr(arg)?;
+                    compiled_args.push(val.into());
+                }
+
+                // Build indirect call
+                let call_val = self.builder.build_indirect_call(
+                    fn_type,
+                    fn_ptr.into_pointer_value(),
+                    &compiled_args,
+                    "closure_call",
+                ).map_err(|e| e.to_string())?;
+
+                if matches!(*ret_ty, Type::Void) {
+                    return Ok((self.context.i64_type().const_zero().into(), *ret_ty));
+                } else {
+                    let result = match call_val.try_as_basic_value() {
+                        inkwell::values::ValueKind::Basic(v) => v,
+                        _ => return Err("Closure call returned no value".to_string()),
+                    };
+                    return Ok((result, *ret_ty));
+                }
+              }
+            }
         }
 
         // 1. Builtins
