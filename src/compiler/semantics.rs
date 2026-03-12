@@ -6528,6 +6528,55 @@ impl SemanticAnalyzer {
                     }
                 };
 
+                // === Vec closure methods: map, filter, any, all ===
+                if (method_name == "map" || method_name == "filter" || method_name == "any" || method_name == "all")
+                    && args.len() == 1
+                {
+                    let is_vec = match &obj_type {
+                        Type::Struct(name, _) if name.starts_with("Vec") => true,
+                        _ => obj_type.get_base_name() == "Vec",
+                    };
+
+                    if is_vec {
+                        if let ExprKind::Closure { args: closure_args, body, .. } = &mut args[0].inner {
+                            // Get element type from Vec type args
+                            let elem_ty = match &obj_type {
+                                Type::Struct(_, type_args) => type_args.first().cloned().unwrap_or(Type::I64),
+                                _ => Type::I64,
+                            };
+
+                            // Enter scope and bind closure args
+                            self.enter_scope();
+                            for (arg_name, arg_type_opt) in closure_args.iter() {
+                                let arg_ty = arg_type_opt.clone().unwrap_or(elem_ty.clone());
+                                self.declare_variable(arg_name.clone(), arg_ty, false)?;
+                            }
+
+                            // Check closure body
+                            let mut last_ty = Type::Void;
+                            let body_len = body.len();
+                            for (idx, stmt) in body.iter_mut().enumerate() {
+                                if idx == body_len - 1 {
+                                    if let StmtKind::Expr(e) = &mut stmt.inner {
+                                        last_ty = self.check_expr(e)?;
+                                    } else {
+                                        self.check_stmt(stmt)?;
+                                    }
+                                } else {
+                                    self.check_stmt(stmt)?;
+                                }
+                            }
+                            self.exit_scope();
+
+                            return match method_name.as_str() {
+                                "map" | "filter" => Ok(obj_type.clone()),
+                                "any" | "all" => Ok(Type::Bool),
+                                _ => unreachable!(),
+                            };
+                        }
+                    }
+                }
+
                 if let Some((new_method_name, args_types, raw_return_type)) = method_data {
                     // UPDATE AST Name In-Place
                     if *method_name != new_method_name {

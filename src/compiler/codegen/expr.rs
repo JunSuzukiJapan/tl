@@ -6097,6 +6097,29 @@ impl<'ctx> CodeGenerator<'ctx> {
         method: &str,
         args: &[Expr],
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+        // === Vec closure methods: map, filter, any, all ===
+        // Detect BEFORE compile_expr(obj) so we have full AST access to the closure.
+        // The element type comes from the closure argument's type annotation,
+        // NOT from parsing mangled type names.
+        if (method == "map" || method == "filter" || method == "any" || method == "all")
+            && args.len() == 1
+        {
+            if let ExprKind::Closure { args: closure_args, body, .. } = &args[0].inner {
+                // Get element type from the closure argument's type annotation
+                let elem_ty = closure_args.first()
+                    .and_then(|(_, ty_opt)| ty_opt.clone())
+                    .unwrap_or(Type::I64); // fallback if no annotation
+
+                // Now compile the object expression to get obj_val
+                let (obj_val, obj_ty) = self.compile_expr(obj)?;
+
+                return self.compile_vec_closure_method(
+                    obj_val, &obj_ty, &elem_ty, method,
+                    closure_args, body,
+                );
+            }
+        }
+
         let (obj_val, obj_ty) = self.compile_expr(obj)?;
         self.emit_method_call(obj, obj_val, obj_ty, method, args)
     }
@@ -6797,6 +6820,347 @@ impl<'ctx> CodeGenerator<'ctx> {
             _ => Type::Void, 
         }
     }
+
+    /// Compile Vec closure methods (map, filter, any, all) via inline expansion.
+    /// Instead of calling a function pointer, we expand the closure body inline in a loop.
+    fn compile_vec_closure_method(
+        &mut self,
+        vec_val: BasicValueEnum<'ctx>,
+        vec_ty: &Type,
+        elem_ty: &Type,
+        method: &str,
+        closure_args: &[(String, Option<Type>)],
+        closure_body: &[Stmt],
+    ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+        let i64_type = self.context.i64_type();
+        let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
+
+        // Get Vec struct type for GEP access — must look up from struct_types registry,
+        // not get_llvm_type() which returns a pointer.
+        let vec_type_name = vec_ty.codegen_name()
+            .ok_or_else(|| "Cannot get Vec codegen name".to_string())?;
+        let vec_struct_ty = *self.struct_types.get(&vec_type_name)
+            .ok_or_else(|| format!("Vec struct type {} not found in struct_types", vec_type_name))?;
+        let vec_ptr = vec_val.into_pointer_value();
+
+        // Load Vec fields: ptr, len
+        let data_ptr_field = self.builder.build_struct_gep(
+            vec_struct_ty, vec_ptr, 0, "data_ptr_field",
+        ).map_err(|e| e.to_string())?;
+        let data_ptr = self.builder.build_load(ptr_type, data_ptr_field, "data_ptr").unwrap();
+
+        let len_field = self.builder.build_struct_gep(
+            vec_struct_ty, vec_ptr, 2, "len_field",
+        ).map_err(|e| e.to_string())?;
+        let len = self.builder.build_load(i64_type, len_field, "len").unwrap().into_int_value();
+
+        let elem_llvm_ty = self.get_llvm_type(elem_ty)?;
+
+        let current_fn = self.builder.get_insert_block().unwrap().get_parent().unwrap();
+        let zero = i64_type.const_zero();
+
+        match method {
+            "map" => {
+                // map(|x| expr) -> Vec<U> where U is the return type of the closure
+                // Allocate result Vec directly: { ptr, cap, len }
+                let result_ptr = self.builder.build_alloca(vec_struct_ty, "result_vec").unwrap();
+
+                // Allocate data buffer: malloc(len * sizeof(elem))
+                let elem_size_val = elem_llvm_ty.size_of().unwrap();
+                let buf_size = self.builder.build_int_mul(len, elem_size_val, "buf_size").unwrap();
+                let malloc_fn = self.module.get_function("malloc")
+                    .ok_or("malloc not found")?;
+                let raw_buf = self.builder.build_call(malloc_fn, &[buf_size.into()], "raw_buf")
+                    .map_err(|e| e.to_string())?;
+                let buf_ptr = match raw_buf.try_as_basic_value() {
+                    inkwell::values::ValueKind::Basic(v) => v,
+                    _ => return Err("malloc returned no value".to_string()),
+                };
+
+                // Set fields: ptr, cap, len
+                let f0 = self.builder.build_struct_gep(vec_struct_ty, result_ptr, 0, "f0").unwrap();
+                self.builder.build_store(f0, buf_ptr).unwrap();
+                let f1 = self.builder.build_struct_gep(vec_struct_ty, result_ptr, 1, "f1").unwrap();
+                self.builder.build_store(f1, len).unwrap(); // cap = len
+                let f2 = self.builder.build_struct_gep(vec_struct_ty, result_ptr, 2, "f2").unwrap();
+                self.builder.build_store(f2, zero).unwrap(); // len = 0 (will be set at end)
+
+                let result_data = buf_ptr;
+
+                // Loop: for i in 0..len
+                let loop_bb = self.context.append_basic_block(current_fn, "map_loop");
+                let body_bb = self.context.append_basic_block(current_fn, "map_body");
+                let done_bb = self.context.append_basic_block(current_fn, "map_done");
+
+                // i = 0
+                let i_alloca = self.builder.build_alloca(i64_type, "i").unwrap();
+                self.builder.build_store(i_alloca, zero).unwrap();
+                self.builder.build_unconditional_branch(loop_bb).unwrap();
+
+                // Loop check: i < len
+                self.builder.position_at_end(loop_bb);
+                let i_val = self.builder.build_load(i64_type, i_alloca, "i").unwrap().into_int_value();
+                let cond = self.builder.build_int_compare(
+                    inkwell::IntPredicate::SLT, i_val, len, "cond",
+                ).unwrap();
+                self.builder.build_conditional_branch(cond, body_bb, done_bb).unwrap();
+
+                // Body: load element, apply closure, store result
+                self.builder.position_at_end(body_bb);
+                let elem_addr = unsafe {
+                    self.builder.build_gep(elem_llvm_ty, data_ptr.into_pointer_value(), &[i_val], "elem_addr").unwrap()
+                };
+                let elem_val = self.builder.build_load(elem_llvm_ty, elem_addr, "elem").unwrap();
+
+                // Bind closure arg to element value
+                self.enter_scope();
+                let arg_name = closure_args.first().map(|(n, _)| n.as_str()).unwrap_or("x");
+                let arg_alloca = self.builder.build_alloca(elem_llvm_ty, arg_name).unwrap();
+                self.builder.build_store(arg_alloca, elem_val).unwrap();
+                self.variables.last_mut().unwrap().insert(
+                    arg_name.to_string(),
+                    (arg_alloca.into(), elem_ty.clone(), crate::compiler::codegen::CLEANUP_NONE),
+                );
+
+                // Compile closure body
+                let mut result_val = None;
+                let body_len = closure_body.len();
+                for (idx, stmt) in closure_body.iter().enumerate() {
+                    if idx == body_len - 1 {
+                        if let crate::compiler::ast::StmtKind::Expr(e) = &stmt.inner {
+                            result_val = Some(self.compile_expr(e)?);
+                        } else {
+                            self.compile_stmt(stmt)?;
+                        }
+                    } else {
+                        self.compile_stmt(stmt)?;
+                    }
+                }
+                self.exit_scope();
+
+                // Store result in output vec
+                let (mapped_val, mapped_ty) = result_val.unwrap_or((zero.into(), Type::I64));
+                let mapped_llvm_ty = self.get_llvm_type(&mapped_ty)?;
+                let result_elem_addr = unsafe {
+                    self.builder.build_gep(mapped_llvm_ty, result_data.into_pointer_value(), &[i_val], "result_addr").unwrap()
+                };
+                self.builder.build_store(result_elem_addr, mapped_val).unwrap();
+
+                // i += 1
+                let next_i = self.builder.build_int_add(i_val, i64_type.const_int(1, false), "next_i").unwrap();
+                self.builder.build_store(i_alloca, next_i).unwrap();
+                self.builder.build_unconditional_branch(loop_bb).unwrap();
+
+                // Done: set result len
+                self.builder.position_at_end(done_bb);
+                let result_len_field = self.builder.build_struct_gep(
+                    vec_struct_ty, result_ptr, 2, "result_len_field",
+                ).map_err(|e| e.to_string())?;
+                self.builder.build_store(result_len_field, len).unwrap();
+
+                // Return type: Vec<mapped_ty> (use same vec type for now)
+                Ok((result_ptr.into(), vec_ty.clone()))
+            }
+            "filter" => {
+                // filter(|x| bool_expr) -> Vec<T>
+                // Allocate result Vec directly
+                let result_ptr = self.builder.build_alloca(vec_struct_ty, "result_vec").unwrap();
+
+                let elem_size_val = elem_llvm_ty.size_of().unwrap();
+                let buf_size = self.builder.build_int_mul(len, elem_size_val, "buf_size").unwrap();
+                let malloc_fn = self.module.get_function("malloc")
+                    .ok_or("malloc not found")?;
+                let raw_buf = self.builder.build_call(malloc_fn, &[buf_size.into()], "raw_buf")
+                    .map_err(|e| e.to_string())?;
+                let buf_ptr = match raw_buf.try_as_basic_value() {
+                    inkwell::values::ValueKind::Basic(v) => v,
+                    _ => return Err("malloc returned no value".to_string()),
+                };
+
+                let f0 = self.builder.build_struct_gep(vec_struct_ty, result_ptr, 0, "f0").unwrap();
+                self.builder.build_store(f0, buf_ptr).unwrap();
+                let f1 = self.builder.build_struct_gep(vec_struct_ty, result_ptr, 1, "f1").unwrap();
+                self.builder.build_store(f1, len).unwrap();
+                let f2 = self.builder.build_struct_gep(vec_struct_ty, result_ptr, 2, "f2").unwrap();
+                self.builder.build_store(f2, zero).unwrap();
+
+                let result_data = buf_ptr;
+
+                // Count for result length
+                let count_alloca = self.builder.build_alloca(i64_type, "count").unwrap();
+                self.builder.build_store(count_alloca, zero).unwrap();
+
+                let loop_bb = self.context.append_basic_block(current_fn, "filter_loop");
+                let body_bb = self.context.append_basic_block(current_fn, "filter_body");
+                let store_bb = self.context.append_basic_block(current_fn, "filter_store");
+                let skip_bb = self.context.append_basic_block(current_fn, "filter_skip");
+                let done_bb = self.context.append_basic_block(current_fn, "filter_done");
+
+                let i_alloca = self.builder.build_alloca(i64_type, "i").unwrap();
+                self.builder.build_store(i_alloca, zero).unwrap();
+                self.builder.build_unconditional_branch(loop_bb).unwrap();
+
+                self.builder.position_at_end(loop_bb);
+                let i_val = self.builder.build_load(i64_type, i_alloca, "i").unwrap().into_int_value();
+                let cond = self.builder.build_int_compare(
+                    inkwell::IntPredicate::SLT, i_val, len, "cond",
+                ).unwrap();
+                self.builder.build_conditional_branch(cond, body_bb, done_bb).unwrap();
+
+                self.builder.position_at_end(body_bb);
+                let elem_addr = unsafe {
+                    self.builder.build_gep(elem_llvm_ty, data_ptr.into_pointer_value(), &[i_val], "elem_addr").unwrap()
+                };
+                let elem_val = self.builder.build_load(elem_llvm_ty, elem_addr, "elem").unwrap();
+
+                // Bind closure arg
+                self.enter_scope();
+                let arg_name = closure_args.first().map(|(n, _)| n.as_str()).unwrap_or("x");
+                let arg_alloca = self.builder.build_alloca(elem_llvm_ty, arg_name).unwrap();
+                self.builder.build_store(arg_alloca, elem_val).unwrap();
+                self.variables.last_mut().unwrap().insert(
+                    arg_name.to_string(),
+                    (arg_alloca.into(), elem_ty.clone(), crate::compiler::codegen::CLEANUP_NONE),
+                );
+
+                let mut predicate_val = None;
+                let body_len = closure_body.len();
+                for (idx, stmt) in closure_body.iter().enumerate() {
+                    if idx == body_len - 1 {
+                        if let crate::compiler::ast::StmtKind::Expr(e) = &stmt.inner {
+                            predicate_val = Some(self.compile_expr(e)?);
+                        }
+                    } else {
+                        self.compile_stmt(stmt)?;
+                    }
+                }
+                self.exit_scope();
+
+                let pred = predicate_val.map(|(v, _)| v.into_int_value())
+                    .unwrap_or(self.context.bool_type().const_zero());
+                self.builder.build_conditional_branch(pred, store_bb, skip_bb).unwrap();
+
+                // Store element in result
+                self.builder.position_at_end(store_bb);
+                let count_val = self.builder.build_load(i64_type, count_alloca, "count").unwrap().into_int_value();
+                let result_elem_addr = unsafe {
+                    self.builder.build_gep(elem_llvm_ty, result_data.into_pointer_value(), &[count_val], "result_addr").unwrap()
+                };
+                self.builder.build_store(result_elem_addr, elem_val).unwrap();
+                let next_count = self.builder.build_int_add(count_val, i64_type.const_int(1, false), "next_count").unwrap();
+                self.builder.build_store(count_alloca, next_count).unwrap();
+                self.builder.build_unconditional_branch(skip_bb).unwrap();
+
+                // Skip / increment
+                self.builder.position_at_end(skip_bb);
+                let i_val2 = self.builder.build_load(i64_type, i_alloca, "i2").unwrap().into_int_value();
+                let next_i = self.builder.build_int_add(i_val2, i64_type.const_int(1, false), "next_i").unwrap();
+                self.builder.build_store(i_alloca, next_i).unwrap();
+                self.builder.build_unconditional_branch(loop_bb).unwrap();
+
+                // Done: set result len
+                self.builder.position_at_end(done_bb);
+                let final_count = self.builder.build_load(i64_type, count_alloca, "final_count").unwrap();
+                let result_len_field = self.builder.build_struct_gep(
+                    vec_struct_ty, result_ptr, 2, "result_len_field",
+                ).map_err(|e| e.to_string())?;
+                self.builder.build_store(result_len_field, final_count).unwrap();
+
+                Ok((result_ptr.into(), vec_ty.clone()))
+            }
+            "any" | "all" => {
+                // any(|x| bool_expr) -> bool / all(|x| bool_expr) -> bool
+                let is_any = method == "any";
+                let result_alloca = self.builder.build_alloca(self.context.bool_type(), "result").unwrap();
+                let init_val = if is_any {
+                    self.context.bool_type().const_zero() // any starts false
+                } else {
+                    self.context.bool_type().const_all_ones() // all starts true
+                };
+                self.builder.build_store(result_alloca, init_val).unwrap();
+
+                let loop_bb = self.context.append_basic_block(current_fn, "anyall_loop");
+                let body_bb = self.context.append_basic_block(current_fn, "anyall_body");
+                let early_bb = self.context.append_basic_block(current_fn, "anyall_early");
+                let cont_bb = self.context.append_basic_block(current_fn, "anyall_cont");
+                let done_bb = self.context.append_basic_block(current_fn, "anyall_done");
+
+                let i_alloca = self.builder.build_alloca(i64_type, "i").unwrap();
+                self.builder.build_store(i_alloca, zero).unwrap();
+                self.builder.build_unconditional_branch(loop_bb).unwrap();
+
+                self.builder.position_at_end(loop_bb);
+                let i_val = self.builder.build_load(i64_type, i_alloca, "i").unwrap().into_int_value();
+                let cond = self.builder.build_int_compare(
+                    inkwell::IntPredicate::SLT, i_val, len, "cond",
+                ).unwrap();
+                self.builder.build_conditional_branch(cond, body_bb, done_bb).unwrap();
+
+                self.builder.position_at_end(body_bb);
+                let elem_addr = unsafe {
+                    self.builder.build_gep(elem_llvm_ty, data_ptr.into_pointer_value(), &[i_val], "elem_addr").unwrap()
+                };
+                let elem_val = self.builder.build_load(elem_llvm_ty, elem_addr, "elem").unwrap();
+
+                self.enter_scope();
+                let arg_name = closure_args.first().map(|(n, _)| n.as_str()).unwrap_or("x");
+                let arg_alloca = self.builder.build_alloca(elem_llvm_ty, arg_name).unwrap();
+                self.builder.build_store(arg_alloca, elem_val).unwrap();
+                self.variables.last_mut().unwrap().insert(
+                    arg_name.to_string(),
+                    (arg_alloca.into(), elem_ty.clone(), crate::compiler::codegen::CLEANUP_NONE),
+                );
+
+                let mut pred_val = None;
+                let body_len = closure_body.len();
+                for (idx, stmt) in closure_body.iter().enumerate() {
+                    if idx == body_len - 1 {
+                        if let crate::compiler::ast::StmtKind::Expr(e) = &stmt.inner {
+                            pred_val = Some(self.compile_expr(e)?);
+                        }
+                    } else {
+                        self.compile_stmt(stmt)?;
+                    }
+                }
+                self.exit_scope();
+
+                let pred = pred_val.map(|(v, _)| v.into_int_value())
+                    .unwrap_or(self.context.bool_type().const_zero());
+
+                if is_any {
+                    // any: if true, set result=true and break
+                    self.builder.build_conditional_branch(pred, early_bb, cont_bb).unwrap();
+                } else {
+                    // all: if false, set result=false and break
+                    let not_pred = self.builder.build_not(pred, "not_pred").unwrap();
+                    self.builder.build_conditional_branch(not_pred, early_bb, cont_bb).unwrap();
+                }
+
+                // Early exit
+                self.builder.position_at_end(early_bb);
+                let early_val = if is_any {
+                    self.context.bool_type().const_all_ones()
+                } else {
+                    self.context.bool_type().const_zero()
+                };
+                self.builder.build_store(result_alloca, early_val).unwrap();
+                self.builder.build_unconditional_branch(done_bb).unwrap();
+
+                // Continue loop
+                self.builder.position_at_end(cont_bb);
+                let next_i = self.builder.build_int_add(i_val, i64_type.const_int(1, false), "next_i").unwrap();
+                self.builder.build_store(i_alloca, next_i).unwrap();
+                self.builder.build_unconditional_branch(loop_bb).unwrap();
+
+                // Done
+                self.builder.position_at_end(done_bb);
+                let result = self.builder.build_load(self.context.bool_type(), result_alloca, "result").unwrap();
+                Ok((result, Type::Bool))
+            }
+            _ => Err(format!("Unknown Vec closure method: {}", method)),
+        }
+    }
+
 
     pub(crate) fn compile_fn_call(
         &mut self,
