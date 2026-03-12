@@ -487,6 +487,17 @@ impl<'ctx> CodeGenerator<'ctx> {
         };
 
         for (_name, (val_enum, ty, cleanup_mode)) in vars {
+            // Closure env_ptr cleanup: free the malloc'd env struct
+            if cleanup_mode != CLEANUP_NONE && _name.starts_with("__env_") {
+                let ptr = val_enum.into_pointer_value();
+                let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                if let Ok(env_ptr) = self.builder.build_load(load_type, ptr, "env_to_free") {
+                    if let Some(free_fn) = self.module.get_function("free") {
+                        let _ = self.builder.build_call(free_fn, &[env_ptr.into()], "");
+                    }
+                }
+                continue;
+            }
             if cleanup_mode != CLEANUP_NONE {
                     if let Type::Struct(name, _) = &ty {
                     // Opaque Handles check (formerly UserDefined logic)

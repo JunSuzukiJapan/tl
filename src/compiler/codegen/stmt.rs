@@ -1718,7 +1718,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .map_err(|e| e.to_string())?;
                         self.variables.last_mut().unwrap().insert(
                             env_var_name,
-                            (env_alloca.into(), Type::Void, super::CLEANUP_NONE),
+                            (env_alloca.into(), Type::Void, super::CLEANUP_FULL),
                         );
                     }
                 }
