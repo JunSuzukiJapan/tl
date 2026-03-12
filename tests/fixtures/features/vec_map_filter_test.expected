@@ -1,0 +1,4 @@
+map len: 5
+filter len: 2
+any even: true
+all positive: true
