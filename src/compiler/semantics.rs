@@ -3165,6 +3165,7 @@ impl SemanticAnalyzer {
 
                 // Collect arg types (inferred as Unknown if not annotated)
                 let mut arg_types = Vec::new();
+                let arg_names: Vec<String> = args.iter().map(|(n, _)| n.clone()).collect();
                 for (arg_name, arg_type_opt) in args.iter() {
                     let arg_ty = arg_type_opt.clone().unwrap_or(Type::I64); // Default to i64 for now
                     self.declare_variable(arg_name.clone(), arg_ty.clone(), false)?;
@@ -3197,9 +3198,36 @@ impl SemanticAnalyzer {
                     last_ty
                 };
 
-                // Detect captured variables: variables used in body but not defined in closure scope
-                // (This is a simplified version - captures is filled during codegen or a separate pass)
-                let _ = captures; // Will be populated later
+                // Detect captured variables: collect variable names used in body,
+                // then filter out closure args and locally defined vars.
+                // Any remaining names that exist in outer scopes are captures.
+                let mut used_vars = Vec::new();
+                for stmt in body.iter() {
+                    Self::collect_variable_refs_stmt(stmt, &mut used_vars);
+                }
+                // Deduplicate
+                used_vars.sort();
+                used_vars.dedup();
+
+                // Filter: remove closure args and look up type in outer scopes
+                let closure_scope_depth = self.scopes.len(); // current = closure scope
+                for var_name in &used_vars {
+                    if arg_names.contains(var_name) {
+                        continue; // closure argument, not a capture
+                    }
+                    // Check if defined in outer scopes (before closure scope)
+                    // Outer scopes are at indices 0..closure_scope_depth-1
+                    let mut found_ty = None;
+                    for i in (0..closure_scope_depth - 1).rev() {
+                        if let Some(symbol) = self.scopes[i].get(var_name) {
+                            found_ty = Some(symbol.ty.clone());
+                            break;
+                        }
+                    }
+                    if let Some(ty) = found_ty {
+                        captures.push((var_name.clone(), ty));
+                    }
+                }
 
                 // Restore return type
                 self.current_return_type = prev_return_type;
@@ -7066,6 +7094,107 @@ impl SemanticAnalyzer {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Collect all variable names referenced in a statement (for closure capture analysis)
+    fn collect_variable_refs_stmt(stmt: &Stmt, out: &mut Vec<String>) {
+        match &stmt.inner {
+            StmtKind::Expr(e) => Self::collect_variable_refs_expr(e, out),
+            StmtKind::Let { value, .. } => {
+                Self::collect_variable_refs_expr(value, out);
+            }
+            StmtKind::Return(e) => {
+                if let Some(v) = e {
+                    Self::collect_variable_refs_expr(v, out);
+                }
+            }
+            StmtKind::Assign { value, .. } => {
+                Self::collect_variable_refs_expr(value, out);
+            }
+            StmtKind::For { iterator, body, .. } => {
+                Self::collect_variable_refs_expr(iterator, out);
+                for s in body {
+                    Self::collect_variable_refs_stmt(s, out);
+                }
+            }
+            StmtKind::While { cond, body } => {
+                Self::collect_variable_refs_expr(cond, out);
+                for s in body {
+                    Self::collect_variable_refs_stmt(s, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Collect all variable names referenced in an expression
+    fn collect_variable_refs_expr(expr: &Expr, out: &mut Vec<String>) {
+        match &expr.inner {
+            ExprKind::Variable(name) => {
+                out.push(name.clone());
+            }
+            ExprKind::BinOp(lhs, _, rhs) => {
+                Self::collect_variable_refs_expr(lhs, out);
+                Self::collect_variable_refs_expr(rhs, out);
+            }
+            ExprKind::UnOp(_, e) => {
+                Self::collect_variable_refs_expr(e, out);
+            }
+            ExprKind::FnCall(_, args) => {
+                for a in args {
+                    Self::collect_variable_refs_expr(a, out);
+                }
+            }
+            ExprKind::MethodCall(obj, _, args) => {
+                Self::collect_variable_refs_expr(obj, out);
+                for a in args {
+                    Self::collect_variable_refs_expr(a, out);
+                }
+            }
+            ExprKind::FieldAccess(obj, _) => {
+                Self::collect_variable_refs_expr(obj, out);
+            }
+            ExprKind::IndexAccess(obj, idx) => {
+                Self::collect_variable_refs_expr(obj, out);
+                for i in idx {
+                    Self::collect_variable_refs_expr(i, out);
+                }
+            }
+            ExprKind::IfExpr(cond, then_stmts, else_stmts) => {
+                Self::collect_variable_refs_expr(cond, out);
+                for s in then_stmts {
+                    Self::collect_variable_refs_stmt(s, out);
+                }
+                if let Some(es) = else_stmts {
+                    for s in es {
+                        Self::collect_variable_refs_stmt(s, out);
+                    }
+                }
+            }
+            ExprKind::Block(stmts) => {
+                for s in stmts {
+                    Self::collect_variable_refs_stmt(s, out);
+                }
+            }
+            ExprKind::Closure { body, .. } => {
+                for s in body {
+                    Self::collect_variable_refs_stmt(s, out);
+                }
+            }
+            ExprKind::Tuple(elems) => {
+                for e in elems {
+                    Self::collect_variable_refs_expr(e, out);
+                }
+            }
+            ExprKind::Range(start, end) => {
+                if let Some(s) = start { Self::collect_variable_refs_expr(s, out); }
+                if let Some(e) = end { Self::collect_variable_refs_expr(e, out); }
+            }
+            ExprKind::As(e, _) => {
+                Self::collect_variable_refs_expr(e, out);
+            }
+            _ => {} // Literals, etc.
         }
     }
 }

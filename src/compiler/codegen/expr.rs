@@ -2613,7 +2613,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 Ok((ok_val, ok_ty))
             }
 
-            ExprKind::Closure { args, return_type, body, captures: _ } => {
+            ExprKind::Closure { args, return_type, body, captures } => {
                 // Generate a unique anonymous function name using $ (invalid in TL identifiers)
                 let closure_id = self.next_closure_id();
                 let fn_name = format!("__tl_closure${}", closure_id);
@@ -2630,8 +2630,14 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // Determine return type
                 let ret_ty = return_type.clone().unwrap_or(Type::I64);
 
-                // Build LLVM function type
+                let has_captures = !captures.is_empty();
+                let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
+
+                // Build LLVM function type — add env_ptr as first arg if there are captures
                 let mut llvm_param_types: Vec<inkwell::types::BasicMetadataTypeEnum<'ctx>> = Vec::new();
+                if has_captures {
+                    llvm_param_types.push(ptr_type.into()); // env_ptr first
+                }
                 for pt in &param_types {
                     let llvm_ty = self.get_llvm_type(pt).unwrap_or(self.context.i64_type().into());
                     llvm_param_types.push(llvm_ty.into());
@@ -2646,6 +2652,61 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 let fn_val = self.module.add_function(&fn_name, fn_type, None);
 
+                // === Caller side: build env struct and store captured values ===
+                let env_ptr_val = if has_captures {
+                    // Calculate size: sum of all captured value LLVM sizes
+                    let mut field_types: Vec<inkwell::types::BasicTypeEnum<'ctx>> = Vec::new();
+                    for (_, cty) in captures.iter() {
+                        let llvm_ty = self.get_llvm_type(cty)?;
+                        field_types.push(llvm_ty);
+                    }
+                    let env_struct_ty = self.context.struct_type(&field_types, false);
+                    let env_size = env_struct_ty.size_of().unwrap();
+
+                    // malloc
+                    let malloc_fn = self.module.get_function("malloc")
+                        .ok_or("malloc not found")?;
+                    let i64_type = self.context.i64_type();
+                    let env_size_i64 = self.builder.build_int_cast(env_size, i64_type, "env_size")
+                        .map_err(|e| e.to_string())?;
+                    let raw_env = self.builder.build_call(malloc_fn, &[env_size_i64.into()], "env_malloc")
+                        .map_err(|e| e.to_string())?;
+                    let env_ptr = match raw_env.try_as_basic_value() {
+                        inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
+                        _ => return Err("malloc returned no value".to_string()),
+                    };
+
+                    // Store captured values into env struct
+                    for (idx, (cap_name, cap_ty)) in captures.iter().enumerate() {
+                        // Look up captured variable in current scope
+                        let mut found = None;
+                        for scope in self.variables.iter().rev() {
+                            if let Some((val_ptr, _, _)) = scope.get(cap_name) {
+                                found = Some(*val_ptr);
+                                break;
+                            }
+                        }
+                        let cap_alloca = found.ok_or_else(|| {
+                            format!("Captured variable '{}' not found in scope", cap_name)
+                        })?;
+
+                        // Load the captured value
+                        let cap_llvm_ty = self.get_llvm_type(cap_ty)?;
+                        let cap_val = self.builder.build_load(cap_llvm_ty, cap_alloca.into_pointer_value(), &format!("load_cap_{}", cap_name))
+                            .map_err(|e| e.to_string())?;
+
+                        // Store into env struct at index
+                        let field_ptr = self.builder.build_struct_gep(env_struct_ty, env_ptr, idx as u32, &format!("env_field_{}", cap_name))
+                            .map_err(|e| e.to_string())?;
+                        self.builder.build_store(field_ptr, cap_val)
+                            .map_err(|e| e.to_string())?;
+                    }
+
+                    Some((env_ptr, env_struct_ty))
+                } else {
+                    None
+                };
+
                 // Save current state
                 let prev_block = self.builder.get_insert_block();
                 let prev_vars = self.variables.clone();
@@ -2656,10 +2717,48 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let entry = self.context.append_basic_block(fn_val, "entry");
                 self.builder.position_at_end(entry);
 
-                // Create new variable scope with args
+                // Create new variable scope
                 self.variables = vec![std::collections::HashMap::new()];
+
+                // === Callee side: extract captures from env_ptr ===
+                let param_offset = if has_captures { 1u32 } else { 0u32 };
+
+                if has_captures {
+                    let env_param = fn_val.get_nth_param(0).unwrap();
+                    env_param.set_name("env_ptr");
+
+                    // Build env struct type (same as caller side)
+                    let mut field_types: Vec<inkwell::types::BasicTypeEnum<'ctx>> = Vec::new();
+                    for (_, cty) in captures.iter() {
+                        let llvm_ty = self.get_llvm_type(cty)?;
+                        field_types.push(llvm_ty);
+                    }
+                    let env_struct_ty = self.context.struct_type(&field_types, false);
+                    let env_ptr_pv = env_param.into_pointer_value();
+
+                    // Extract each captured variable
+                    for (idx, (cap_name, cap_ty)) in captures.iter().enumerate() {
+                        let cap_llvm_ty = self.get_llvm_type(cap_ty)?;
+                        let field_ptr = self.builder.build_struct_gep(env_struct_ty, env_ptr_pv, idx as u32, &format!("env_{}", cap_name))
+                            .map_err(|e| e.to_string())?;
+                        let cap_val = self.builder.build_load(cap_llvm_ty, field_ptr, cap_name)
+                            .map_err(|e| e.to_string())?;
+
+                        // Alloca + store as local variable
+                        let alloca = self.builder.build_alloca(cap_llvm_ty, cap_name)
+                            .map_err(|e| e.to_string())?;
+                        self.builder.build_store(alloca, cap_val)
+                            .map_err(|e| e.to_string())?;
+                        self.variables.last_mut().unwrap().insert(
+                            cap_name.clone(),
+                            (alloca.into(), cap_ty.clone(), crate::compiler::codegen::CLEANUP_NONE),
+                        );
+                    }
+                }
+
+                // Bind regular arguments
                 for (i, (name, ty)) in param_names.iter().zip(param_types.iter()).enumerate() {
-                    let param = fn_val.get_nth_param(i as u32).unwrap();
+                    let param = fn_val.get_nth_param(i as u32 + param_offset).unwrap();
                     param.set_name(name);
                     let alloca = self.builder.build_alloca(param.get_type(), name)
                         .map_err(|e| e.to_string())?;
@@ -2702,8 +2801,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                     self.builder.position_at_end(prev);
                 }
 
-                // Return function pointer as the closure value
+                // Set pending_closure_env for Let binding to pick up
                 let fn_ptr = fn_val.as_global_value().as_pointer_value();
+                if let Some((env_ptr, _)) = env_ptr_val {
+                    self.pending_closure_env = Some(env_ptr);
+                }
+
+                // Return function pointer as the closure value
                 Ok((fn_ptr.into(), Type::Fn(param_types, Box::new(ret_ty))))
             }
 
@@ -7207,14 +7311,29 @@ impl<'ctx> CodeGenerator<'ctx> {
             if let Some((fn_ptr_alloca, var_ty)) = closure_info {
               if let Type::Fn(param_types, ret_ty) = var_ty {
                 // Load the function pointer from the variable
+                let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
                 let fn_ptr = self.builder.build_load(
-                    self.context.ptr_type(inkwell::AddressSpace::default()),
+                    ptr_type,
                     fn_ptr_alloca.into_pointer_value(),
                     "load_fn_ptr",
                 ).unwrap();
 
+                // Check if this closure has an env companion (__env_<name>)
+                let env_var_name = format!("__env_{}", name);
+                let mut env_ptr_opt = None;
+                for scope in self.variables.iter().rev() {
+                    if let Some((val, _, _)) = scope.get(&env_var_name) {
+                        let loaded = self.builder.build_load(ptr_type, val.into_pointer_value(), "load_env_ptr").unwrap();
+                        env_ptr_opt = Some(loaded);
+                        break;
+                    }
+                }
+
                 // Build LLVM function type for the call
                 let mut llvm_param_types: Vec<inkwell::types::BasicMetadataTypeEnum<'ctx>> = Vec::new();
+                if env_ptr_opt.is_some() {
+                    llvm_param_types.push(ptr_type.into()); // env_ptr first
+                }
                 for pt in &param_types {
                     let llvm_ty = self.get_llvm_type(pt)?;
                     llvm_param_types.push(llvm_ty.into());
@@ -7229,6 +7348,9 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 // Compile arguments
                 let mut compiled_args: Vec<inkwell::values::BasicMetadataValueEnum<'ctx>> = Vec::new();
+                if let Some(env_ptr) = env_ptr_opt {
+                    compiled_args.push(env_ptr.into()); // env_ptr first
+                }
                 for arg in args {
                     let (val, _) = self.compile_expr(arg)?;
                     compiled_args.push(val.into());

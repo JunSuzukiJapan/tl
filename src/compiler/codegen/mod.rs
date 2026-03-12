@@ -65,6 +65,9 @@ pub struct CodeGenerator<'ctx> {
     /// Used to check trait bounds during monomorphization.
     pub(crate) trait_registry: HashMap<String, std::collections::HashSet<String>>,
     pub(crate) closure_counter: usize,
+    /// Pending env_ptr from the most recently compiled closure with captures.
+    /// Consumed by Let binding to create __env_<varname> companion.
+    pub(crate) pending_closure_env: Option<inkwell::values::PointerValue<'ctx>>,
 }
 
 impl<'ctx> CodeGenerator<'ctx> {
@@ -118,6 +121,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 reg
             },
             closure_counter: 0,
+            pending_closure_env: None,
         };
 
         // Register all methods (instance and static)
