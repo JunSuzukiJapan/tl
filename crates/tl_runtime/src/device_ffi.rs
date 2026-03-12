@@ -1301,6 +1301,15 @@ pub extern "C" fn tl_device_tensor_dropout(
 ) -> *mut c_void {
     dispatch(|d| d.tensor_dropout(input, p, training))
 }
+/// @ffi_sig (Tensor*, f64, bool) -> Tensor*
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_device_tensor_dropout2d(
+    input: *mut c_void,
+    p: f64,
+    training: bool,
+) -> *mut c_void {
+    dispatch(|d| d.tensor_dropout2d(input, p, training))
+}
 /// @ffi_sig (Tensor*, usize, usize, usize) -> Tensor*
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_device_tensor_max_pool2d(

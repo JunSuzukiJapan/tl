@@ -148,6 +148,8 @@ pub fn register_tensor_types(manager: &mut TypeManager) {
     tensor.register_evaluated_instance_method("layer_norm", compile_tensor_layer_norm, vec![any_tensor.clone(), any_tensor.clone(), Type::F64], any_tensor.clone());
     // dropout(p, training) -> Tensor
     tensor.register_evaluated_instance_method("dropout", compile_tensor_dropout, vec![Type::F64, Type::Bool], any_tensor.clone());
+    // dropout2d(p, training) -> Tensor
+    tensor.register_evaluated_instance_method("dropout2d", compile_tensor_dropout2d, vec![Type::F64, Type::Bool], any_tensor.clone());
     // leaky_relu(negative_slope?) -> Tensor
     tensor.register_evaluated_instance_method("leaky_relu", compile_tensor_leaky_relu, vec![], any_tensor.clone());
     tensor.register_evaluated_instance_method("leaky_relu", compile_tensor_leaky_relu, vec![Type::F32], any_tensor.clone());
@@ -2089,6 +2091,19 @@ fn compile_tensor_dropout<'ctx>(
     let f = codegen.module.get_function("tl_tensor_dropout").ok_or("tl_tensor_dropout not found")?;
     let call = codegen.builder.build_call(f, &[obj.into(), args[0].0.into(), args[1].0.into()], "dropout_res").map_err(|e| e.to_string())?;
     let v = codegen.check_tensor_result(call, "dropout_error")?;
+    Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
+}
+
+fn compile_tensor_dropout2d<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj: BasicValueEnum<'ctx>,
+    _obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() < 2 { return Err("dropout2d requires (p, training) arguments".into()); }
+    let f = codegen.module.get_function("tl_tensor_dropout2d").ok_or("tl_tensor_dropout2d not found")?;
+    let call = codegen.builder.build_call(f, &[obj.into(), args[0].0.into(), args[1].0.into()], "dropout2d_res").map_err(|e| e.to_string())?;
+    let v = codegen.check_tensor_result(call, "dropout2d_error")?;
     Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
 }
 

@@ -2765,6 +2765,10 @@ pub fn declare_runtime_functions<'ctx>(
     module.add_function("tl_tensor_dropout", dropout_type, None);
     if let Some(f) = module.get_function("tl_tensor_dropout") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_dropout as *const () as usize); }
 
+    // tl_tensor_dropout2d(input, p, training) -> *mut (same sig as dropout)
+    module.add_function("tl_tensor_dropout2d", dropout_type, None);
+    if let Some(f) = module.get_function("tl_tensor_dropout2d") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_dropout2d as *const () as usize); }
+
     // tl_tensor_max_pool2d(input, kernel_size, stride, padding) -> *mut
     let pool2d_type = void_ptr.fn_type(
         &[void_ptr.into(), i64_type.into(), i64_type.into(), i64_type.into()],
