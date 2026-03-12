@@ -158,10 +158,7 @@ pub extern "C" fn tl_cpu_tensor_full(
     make_tensor(t)
 }
 
-pub extern "C" fn tl_cpu_tensor_eye(
-    n: usize,
-    req_grad: bool,
-) -> *mut OpaqueTensor {
+pub extern "C" fn tl_cpu_tensor_eye(n: usize, req_grad: bool) -> *mut OpaqueTensor {
     let numel = n * n;
     let mut data = vec![0.0f32; numel];
     for i in 0..n {
@@ -174,11 +171,7 @@ pub extern "C" fn tl_cpu_tensor_eye(
     make_tensor(t)
 }
 
-pub extern "C" fn tl_cpu_tensor_arange(
-    start: f64,
-    end: f64,
-    step: f64,
-) -> *mut OpaqueTensor {
+pub extern "C" fn tl_cpu_tensor_arange(start: f64, end: f64, step: f64) -> *mut OpaqueTensor {
     if step == 0.0 || (step > 0.0 && start >= end) || (step < 0.0 && start <= end) {
         // Empty tensor
         return make_tensor(CpuTensor::from_slice(&[], &[0], DType::F32));
@@ -188,11 +181,7 @@ pub extern "C" fn tl_cpu_tensor_arange(
     make_tensor(CpuTensor::from_slice(&data, &[len], DType::F32))
 }
 
-pub extern "C" fn tl_cpu_tensor_linspace(
-    start: f64,
-    end: f64,
-    steps: usize,
-) -> *mut OpaqueTensor {
+pub extern "C" fn tl_cpu_tensor_linspace(start: f64, end: f64, steps: usize) -> *mut OpaqueTensor {
     if steps == 0 {
         return make_tensor(CpuTensor::from_slice(&[] as &[f32], &[0], DType::F32));
     }
@@ -200,7 +189,9 @@ pub extern "C" fn tl_cpu_tensor_linspace(
         return make_tensor(CpuTensor::from_slice(&[start as f32], &[1], DType::F32));
     }
     let step = (end - start) / (steps - 1) as f64;
-    let data: Vec<f32> = (0..steps).map(|i| (start + step * i as f64) as f32).collect();
+    let data: Vec<f32> = (0..steps)
+        .map(|i| (start + step * i as f64) as f32)
+        .collect();
     make_tensor(CpuTensor::from_slice(&data, &[steps], DType::F32))
 }
 
@@ -218,10 +209,14 @@ pub extern "C" fn tl_cpu_tensor_rand(
     let mut hasher = DefaultHasher::new();
     std::time::SystemTime::now().hash(&mut hasher);
     let mut seed = hasher.finish();
-    let data: Vec<f32> = (0..numel).map(|_| {
-        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
-        ((seed >> 33) as f32) / (u32::MAX as f32)
-    }).collect();
+    let data: Vec<f32> = (0..numel)
+        .map(|_| {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            ((seed >> 33) as f32) / (u32::MAX as f32)
+        })
+        .collect();
     let mut t = CpuTensor::from_slice(&data, shape, DType::F32);
     if req_grad {
         t.enable_grad();
@@ -1361,28 +1356,20 @@ pub extern "C" fn tl_cpu_tensor_reshape_new(
 
 pub extern "C" fn tl_cpu_tensor_reshape_dims(
     t: *mut OpaqueTensor,
-    dim1: i64,
-    dim2: i64,
-    dim3: i64,
-    dim4: i64,
+    dims_ptr: *const i64,
+    rank: i64,
 ) -> *mut OpaqueTensor {
-    if t.is_null() {
+    if t.is_null() || dims_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+    let rank = rank as usize;
+    if rank == 0 || rank > 8 {
+        eprintln!("Warning: tl_cpu_tensor_reshape_dims: invalid rank={}", rank);
         return std::ptr::null_mut();
     }
     let tensor = unsafe { &*t };
-    let mut new_shape = Vec::new();
-    if dim1 > 0 {
-        new_shape.push(dim1 as usize);
-    }
-    if dim2 > 0 {
-        new_shape.push(dim2 as usize);
-    }
-    if dim3 > 0 {
-        new_shape.push(dim3 as usize);
-    }
-    if dim4 > 0 {
-        new_shape.push(dim4 as usize);
-    }
+    let dims_slice = unsafe { std::slice::from_raw_parts(dims_ptr, rank) };
+    let new_shape: Vec<usize> = dims_slice.iter().map(|&d| d as usize).collect();
     match tensor.reshape_impl(&new_shape) {
         Ok(res) => make_tensor(res),
         Err(e) => {

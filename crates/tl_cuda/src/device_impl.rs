@@ -792,17 +792,15 @@ impl IDevice for CudaDeviceImpl {
     fn tensor_reshape_dims(
         &self,
         t: *mut c_void,
-        d1: i64,
-        d2: i64,
-        d3: i64,
-        d4: i64,
+        dims_ptr: *const i64,
+        rank: i64,
     ) -> BackendResult<*mut c_void> {
-        let mut dims = Vec::new();
-        for &d in &[d1, d2, d3, d4] {
-            if d != 0 {
-                dims.push(d);
-            }
+        if dims_ptr.is_null() || rank <= 0 {
+            return Err(tl_backend::error::BackendError::ArgumentError(
+                "reshape_dims: null dims_ptr or invalid rank".into(),
+            ));
         }
+        let dims = unsafe { std::slice::from_raw_parts(dims_ptr, rank as usize) };
         Ok(v(ffi_ops::tl_cuda_reshape(p(t), dims.as_ptr(), dims.len())))
     }
     fn tensor_transpose(&self, t: *mut c_void, d0: usize, d1: usize) -> BackendResult<*mut c_void> {

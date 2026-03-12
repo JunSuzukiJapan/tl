@@ -208,7 +208,11 @@ pub extern "C" fn tl_device_tensor_linspace(start: f64, end: f64, steps: usize) 
 }
 /// @ffi_sig (usize, usize*, bool) -> Tensor*
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_device_tensor_rand(rank: usize, shape: *const usize, req_grad: bool) -> *mut c_void {
+pub extern "C" fn tl_device_tensor_rand(
+    rank: usize,
+    shape: *const usize,
+    req_grad: bool,
+) -> *mut c_void {
     dispatch(|d| d.tensor_rand(rank, shape, req_grad))
 }
 /// @ffi_sig (Tensor*) -> Tensor*
@@ -216,10 +220,14 @@ pub extern "C" fn tl_device_tensor_rand(rank: usize, shape: *const usize, req_gr
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_device_tensor_rand_like(t: *mut c_void) -> *mut c_void {
     let shape_t = tl_device_tensor_get_shape(t);
-    if shape_t.is_null() { return std::ptr::null_mut(); }
+    if shape_t.is_null() {
+        return std::ptr::null_mut();
+    }
     let rank = dispatch(|d| d.tensor_numel(shape_t)) as usize;
     let data_ptr = dispatch(|d| d.tensor_data(shape_t));
-    if data_ptr.is_null() || rank == 0 { return std::ptr::null_mut(); }
+    if data_ptr.is_null() || rank == 0 {
+        return std::ptr::null_mut();
+    }
     let dims_f32 = unsafe { std::slice::from_raw_parts(data_ptr, rank) };
     let dims_usize: Vec<usize> = dims_f32.iter().map(|&x| x as usize).collect();
     let result = dispatch(|d| d.tensor_rand(rank, dims_usize.as_ptr(), false));
@@ -231,10 +239,14 @@ pub extern "C" fn tl_device_tensor_rand_like(t: *mut c_void) -> *mut c_void {
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_device_tensor_randn_like(t: *mut c_void) -> *mut c_void {
     let shape_t = tl_device_tensor_get_shape(t);
-    if shape_t.is_null() { return std::ptr::null_mut(); }
+    if shape_t.is_null() {
+        return std::ptr::null_mut();
+    }
     let rank = dispatch(|d| d.tensor_numel(shape_t)) as usize;
     let data_ptr = dispatch(|d| d.tensor_data(shape_t));
-    if data_ptr.is_null() || rank == 0 { return std::ptr::null_mut(); }
+    if data_ptr.is_null() || rank == 0 {
+        return std::ptr::null_mut();
+    }
     let dims_f32 = unsafe { std::slice::from_raw_parts(data_ptr, rank) };
     let dims_usize: Vec<usize> = dims_f32.iter().map(|&x| x as usize).collect();
     let result = dispatch(|d| d.tensor_randn_debug(rank, dims_usize.as_ptr(), 0, false));
@@ -244,25 +256,41 @@ pub extern "C" fn tl_device_tensor_randn_like(t: *mut c_void) -> *mut c_void {
 /// @ffi_sig (Tensor*, Tensor*, Tensor*) -> Tensor*
 /// condition テンソルに基づいて x, y を選択
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_device_tensor_where_cond(cond: *mut c_void, x: *mut c_void, y: *mut c_void) -> *mut c_void {
+pub extern "C" fn tl_device_tensor_where_cond(
+    cond: *mut c_void,
+    x: *mut c_void,
+    y: *mut c_void,
+) -> *mut c_void {
     dispatch(|d| d.tensor_where_cond(cond, x, y))
 }
 /// @ffi_sig (Tensor*, Tensor*, f32) -> Tensor*
 /// mask > 0 の位置を value で置換
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_device_tensor_masked_fill(t: *mut c_void, mask: *mut c_void, value: f32) -> *mut c_void {
+pub extern "C" fn tl_device_tensor_masked_fill(
+    t: *mut c_void,
+    mask: *mut c_void,
+    value: f32,
+) -> *mut c_void {
     dispatch(|d| d.tensor_masked_fill(t, mask, value))
 }
 /// @ffi_sig (Tensor*, i64, bool) -> Tensor*
 /// var with dim (reduce_generic pattern)
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_device_tensor_var_dim(t: *mut c_void, dim: i64, _keepdim: bool) -> *mut c_void {
+pub extern "C" fn tl_device_tensor_var_dim(
+    t: *mut c_void,
+    dim: i64,
+    _keepdim: bool,
+) -> *mut c_void {
     dispatch(|d| d.tensor_var(t, dim as i32))
 }
 /// @ffi_sig (Tensor*, i64, bool) -> Tensor*
 /// std with dim (reduce_generic pattern)
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_device_tensor_std_dim(t: *mut c_void, dim: i64, _keepdim: bool) -> *mut c_void {
+pub extern "C" fn tl_device_tensor_std_dim(
+    t: *mut c_void,
+    dim: i64,
+    _keepdim: bool,
+) -> *mut c_void {
     dispatch(|d| d.tensor_std(t, dim as i32))
 }
 /// @ffi_sig (Tensor*, i32) -> Tensor*
@@ -277,7 +305,11 @@ pub extern "C" fn tl_device_tensor_std(t: *mut c_void, dim: i32) -> *mut c_void 
 }
 /// @ffi_sig (Tensor*, i64, bool) -> Tensor*
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_device_tensor_prod_dim(t: *mut c_void, dim: i64, _keepdim: bool) -> *mut c_void {
+pub extern "C" fn tl_device_tensor_prod_dim(
+    t: *mut c_void,
+    dim: i64,
+    _keepdim: bool,
+) -> *mut c_void {
     dispatch(|d| d.tensor_prod(t, dim as i32))
 }
 /// @ffi_sig (Tensor*) -> Tensor*
@@ -323,20 +355,33 @@ pub extern "C" fn tl_device_tensor_logical_not(t: *mut c_void) -> *mut c_void {
 /// @ffi_sig (Tensor*, *const i64, i64) -> Tensor*
 /// expand / broadcast_to: shape は dims 配列
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_device_tensor_expand(t: *mut c_void, dims: *const i64, rank: i64) -> *mut c_void {
+pub extern "C" fn tl_device_tensor_expand(
+    t: *mut c_void,
+    dims: *const i64,
+    rank: i64,
+) -> *mut c_void {
     let shape: Vec<usize> = unsafe { std::slice::from_raw_parts(dims, rank as usize) }
-        .iter().map(|&d| d as usize).collect();
+        .iter()
+        .map(|&d| d as usize)
+        .collect();
     dispatch(|d| d.tensor_broadcast_to(t, &shape))
 }
 /// @ffi_sig (Tensor*, Tensor*) -> Tensor*
 /// expand / broadcast_to: shape は Tensor<i64> (e.g. [3, 3] literal)
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_device_tensor_expand_new(t: *mut c_void, shape_tensor: *mut c_void) -> *mut c_void {
-    if shape_tensor.is_null() { return t; }
+pub extern "C" fn tl_device_tensor_expand_new(
+    t: *mut c_void,
+    shape_tensor: *mut c_void,
+) -> *mut c_void {
+    if shape_tensor.is_null() {
+        return t;
+    }
     // Read shape from shape tensor (contains i64 or f32 dims)
     let rank = dispatch(|d| d.tensor_numel(shape_tensor)) as usize;
     let data_ptr = dispatch(|d| d.tensor_data(shape_tensor));
-    if data_ptr.is_null() || rank == 0 { return t; }
+    if data_ptr.is_null() || rank == 0 {
+        return t;
+    }
     let dims_f32 = unsafe { std::slice::from_raw_parts(data_ptr, rank) };
     let shape: Vec<usize> = dims_f32.iter().map(|&x| x as usize).collect();
     dispatch(|d| d.tensor_broadcast_to(t, &shape))
@@ -384,7 +429,11 @@ pub extern "C" fn tl_device_tensor_nll_loss(a: *mut c_void, b: *mut c_void) -> *
 }
 /// @ffi_sig (Tensor*, Tensor*, Tensor*) -> Tensor*
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_device_tensor_linear(input: *mut c_void, weight: *mut c_void, bias: *mut c_void) -> *mut c_void {
+pub extern "C" fn tl_device_tensor_linear(
+    input: *mut c_void,
+    weight: *mut c_void,
+    bias: *mut c_void,
+) -> *mut c_void {
     dispatch(|d| d.tensor_linear(input, weight, bias))
 }
 /// @ffi_sig (Tensor*) -> Tensor*
@@ -399,27 +448,53 @@ pub extern "C" fn tl_device_tensor_hardsigmoid(t: *mut c_void) -> *mut c_void {
 }
 /// @ffi_sig (Tensor*, i64, Tensor*, Tensor*, f64) -> Tensor*
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_device_tensor_group_norm(input: *mut c_void, num_groups: i64, weight: *mut c_void, bias: *mut c_void, eps: f64) -> *mut c_void {
+pub extern "C" fn tl_device_tensor_group_norm(
+    input: *mut c_void,
+    num_groups: i64,
+    weight: *mut c_void,
+    bias: *mut c_void,
+    eps: f64,
+) -> *mut c_void {
     dispatch(|d| d.tensor_group_norm(input, num_groups, weight, bias, eps))
 }
 /// @ffi_sig (Tensor*, i64, i64) -> Tensor*
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_device_tensor_adaptive_avg_pool2d(input: *mut c_void, output_h: i64, output_w: i64) -> *mut c_void {
+pub extern "C" fn tl_device_tensor_adaptive_avg_pool2d(
+    input: *mut c_void,
+    output_h: i64,
+    output_w: i64,
+) -> *mut c_void {
     dispatch(|d| d.tensor_adaptive_avg_pool2d(input, output_h, output_w))
 }
 /// @ffi_sig (Tensor*, i64, i64, f32) -> Tensor*
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_device_tensor_pad(input: *mut c_void, pad_left: i64, pad_right: i64, value: f32) -> *mut c_void {
+pub extern "C" fn tl_device_tensor_pad(
+    input: *mut c_void,
+    pad_left: i64,
+    pad_right: i64,
+    value: f32,
+) -> *mut c_void {
     dispatch(|d| d.tensor_pad(input, pad_left, pad_right, value))
 }
 /// @ffi_sig (Tensor*, Tensor*, Tensor*, f64) -> Tensor*
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_device_tensor_instance_norm(input: *mut c_void, weight: *mut c_void, bias: *mut c_void, eps: f64) -> *mut c_void {
+pub extern "C" fn tl_device_tensor_instance_norm(
+    input: *mut c_void,
+    weight: *mut c_void,
+    bias: *mut c_void,
+    eps: f64,
+) -> *mut c_void {
     dispatch(|d| d.tensor_instance_norm(input, weight, bias, eps))
 }
 /// @ffi_sig (Tensor*, Tensor*, Tensor*, i64, i64) -> Tensor*
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_device_tensor_conv1d(input: *mut c_void, weight: *mut c_void, bias: *mut c_void, stride: i64, padding: i64) -> *mut c_void {
+pub extern "C" fn tl_device_tensor_conv1d(
+    input: *mut c_void,
+    weight: *mut c_void,
+    bias: *mut c_void,
+    stride: i64,
+    padding: i64,
+) -> *mut c_void {
     dispatch(|d| d.tensor_conv1d(input, weight, bias, stride, padding))
 }
 /// @ffi_sig (Tensor*, Tensor*) -> Tensor*
@@ -429,17 +504,34 @@ pub extern "C" fn tl_device_tensor_kl_div_loss(a: *mut c_void, b: *mut c_void) -
 }
 /// @ffi_sig (Tensor*, Tensor*, Tensor*, i64, i64, i64) -> Tensor*
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_device_tensor_conv_transpose2d(input: *mut c_void, weight: *mut c_void, bias: *mut c_void, stride: i64, padding: i64, output_padding: i64) -> *mut c_void {
+pub extern "C" fn tl_device_tensor_conv_transpose2d(
+    input: *mut c_void,
+    weight: *mut c_void,
+    bias: *mut c_void,
+    stride: i64,
+    padding: i64,
+    output_padding: i64,
+) -> *mut c_void {
     dispatch(|d| d.tensor_conv_transpose2d(input, weight, bias, stride, padding, output_padding))
 }
 /// @ffi_sig (Tensor*, i64, i64, i64) -> Tensor*
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_device_tensor_interpolate(input: *mut c_void, output_h: i64, output_w: i64, mode: i64) -> *mut c_void {
+pub extern "C" fn tl_device_tensor_interpolate(
+    input: *mut c_void,
+    output_h: i64,
+    output_w: i64,
+    mode: i64,
+) -> *mut c_void {
     dispatch(|d| d.tensor_interpolate(input, output_h, output_w, mode))
 }
 /// @ffi_sig (Tensor*, Tensor*, Tensor*, Tensor*) -> Tensor*
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_device_tensor_sdpa(q: *mut c_void, k: *mut c_void, v: *mut c_void, mask: *mut c_void) -> *mut c_void {
+pub extern "C" fn tl_device_tensor_sdpa(
+    q: *mut c_void,
+    k: *mut c_void,
+    v: *mut c_void,
+    mask: *mut c_void,
+) -> *mut c_void {
     dispatch(|d| d.tensor_scaled_dot_product_attention(q, k, v, mask))
 }
 /// @ffi_sig (Tensor*, i64) -> Tensor*
@@ -454,12 +546,19 @@ pub extern "C" fn tl_device_tensor_top_p_sample(logits: *mut c_void, p: f64) -> 
 }
 /// @ffi_sig (Tensor*, f64) -> Tensor*
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_device_tensor_temperature_scale(logits: *mut c_void, temperature: f64) -> *mut c_void {
+pub extern "C" fn tl_device_tensor_temperature_scale(
+    logits: *mut c_void,
+    temperature: f64,
+) -> *mut c_void {
     dispatch(|d| d.tensor_temperature_scale(logits, temperature))
 }
 /// @ffi_sig (Tensor*, Tensor*, f64) -> Tensor*
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_device_tensor_repetition_penalty(logits: *mut c_void, tokens: *mut c_void, penalty: f64) -> *mut c_void {
+pub extern "C" fn tl_device_tensor_repetition_penalty(
+    logits: *mut c_void,
+    tokens: *mut c_void,
+    penalty: f64,
+) -> *mut c_void {
     dispatch(|d| d.tensor_repetition_penalty(logits, tokens, penalty))
 }
 /// @ffi_sig (Tensor*, Tensor*) -> Tensor*
@@ -473,10 +572,14 @@ pub extern "C" fn tl_device_tensor_dot(a: *mut c_void, b: *mut c_void) -> *mut c
 pub extern "C" fn tl_device_tensor_zeros_like(t: *mut c_void) -> *mut c_void {
     // get shape tensor, extract dims, call zeros
     let shape_t = tl_device_tensor_get_shape(t);
-    if shape_t.is_null() { return std::ptr::null_mut(); }
+    if shape_t.is_null() {
+        return std::ptr::null_mut();
+    }
     let rank = dispatch(|d| d.tensor_numel(shape_t)) as usize;
     let data_ptr = dispatch(|d| d.tensor_data(shape_t));
-    if data_ptr.is_null() || rank == 0 { return std::ptr::null_mut(); }
+    if data_ptr.is_null() || rank == 0 {
+        return std::ptr::null_mut();
+    }
     // shape tensor contains f32 dims → convert to usize
     let dims_f32 = unsafe { std::slice::from_raw_parts(data_ptr, rank) };
     let dims_usize: Vec<usize> = dims_f32.iter().map(|&x| x as usize).collect();
@@ -489,10 +592,14 @@ pub extern "C" fn tl_device_tensor_zeros_like(t: *mut c_void) -> *mut c_void {
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_device_tensor_ones_like(t: *mut c_void) -> *mut c_void {
     let shape_t = tl_device_tensor_get_shape(t);
-    if shape_t.is_null() { return std::ptr::null_mut(); }
+    if shape_t.is_null() {
+        return std::ptr::null_mut();
+    }
     let rank = dispatch(|d| d.tensor_numel(shape_t)) as usize;
     let data_ptr = dispatch(|d| d.tensor_data(shape_t));
-    if data_ptr.is_null() || rank == 0 { return std::ptr::null_mut(); }
+    if data_ptr.is_null() || rank == 0 {
+        return std::ptr::null_mut();
+    }
     let dims_f32 = unsafe { std::slice::from_raw_parts(data_ptr, rank) };
     let dims_usize: Vec<usize> = dims_f32.iter().map(|&x| x as usize).collect();
     let result = dispatch(|d| d.tensor_ones(rank, dims_usize.as_ptr(), false));
@@ -503,16 +610,27 @@ pub extern "C" fn tl_device_tensor_ones_like(t: *mut c_void) -> *mut c_void {
 /// Vec<f32> と Vec<i64>(shape) からテンソルを生成
 /// data_vec, shape_vec はそれぞれ TL の Vec<f32>, Vec<i64> 構造体ポインタ
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_device_tensor_from_vec_f32(data_vec: *mut c_void, shape_vec: *mut c_void) -> *mut c_void {
+pub extern "C" fn tl_device_tensor_from_vec_f32(
+    data_vec: *mut c_void,
+    shape_vec: *mut c_void,
+) -> *mut c_void {
     if data_vec.is_null() || shape_vec.is_null() {
         return std::ptr::null_mut();
     }
     // JitVec layout: { ptr: *mut T, cap: i64, len: i64 }
     // Read shape vec
     #[repr(C)]
-    struct JitVecI64 { ptr: *const i64, cap: i64, len: i64 }
+    struct JitVecI64 {
+        ptr: *const i64,
+        cap: i64,
+        len: i64,
+    }
     #[repr(C)]
-    struct JitVecF32 { ptr: *const f32, cap: i64, len: i64 }
+    struct JitVecF32 {
+        ptr: *const f32,
+        cap: i64,
+        len: i64,
+    }
 
     let shape_jv = unsafe { &*(shape_vec as *const JitVecI64) };
     let data_jv = unsafe { &*(data_vec as *const JitVecF32) };
@@ -545,7 +663,11 @@ pub extern "C" fn tl_device_tensor_to_vec_f32(t: *mut c_void) -> *mut c_void {
 
     // Allocate JitVec struct on heap: { ptr: *mut f32, cap: i64, len: i64 }
     #[repr(C)]
-    struct JitVecF32 { ptr: *mut f32, cap: i64, len: i64 }
+    struct JitVecF32 {
+        ptr: *mut f32,
+        cap: i64,
+        len: i64,
+    }
     let jv = Box::new(JitVecF32 { ptr, cap, len });
     Box::into_raw(jv) as *mut c_void
 }
@@ -802,18 +924,28 @@ pub extern "C" fn tl_device_tensor_scale(a: *mut c_void, s: f32) -> *mut c_void 
 /// @ffi_sig (Tensor*, bool) -> void
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_device_tensor_set_requires_grad(t: *mut c_void, req_grad: bool) {
-    let _ = dispatch(|d| { let _ = d.tensor_set_requires_grad(t, req_grad); Ok(std::ptr::null_mut()) });
+    let _ = dispatch(|d| {
+        let _ = d.tensor_set_requires_grad(t, req_grad);
+        Ok(std::ptr::null_mut())
+    });
 }
 
 /// @ffi_sig (Tensor*, f64, f64) -> void
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_device_tensor_clip_grad_value(t: *mut c_void, min: f64, max: f64) {
-    let _ = dispatch(|d| { let _ = d.tensor_clip_grad_value(t, min, max); Ok(std::ptr::null_mut()) });
+    let _ = dispatch(|d| {
+        let _ = d.tensor_clip_grad_value(t, min, max);
+        Ok(std::ptr::null_mut())
+    });
 }
 
 /// @ffi_sig (Tensor*, f64, f64) -> f64
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_device_tensor_clip_grad_norm(t: *mut c_void, max_norm: f64, norm_type: f64) -> f64 {
+pub extern "C" fn tl_device_tensor_clip_grad_norm(
+    t: *mut c_void,
+    max_norm: f64,
+    norm_type: f64,
+) -> f64 {
     let mut norm = 0.0f64;
     let _ = dispatch(|d| {
         if let Ok(n) = d.tensor_clip_grad_norm(t, max_norm, norm_type) {
@@ -1055,17 +1187,14 @@ pub extern "C" fn tl_device_clear_grads() {
 pub extern "C" fn tl_device_tensor_reshape_new(a: *mut c_void, s: *mut c_void) -> *mut c_void {
     dispatch(|d| d.tensor_reshape_new(a, s))
 }
-/// @ffi_sig (Tensor*, i64, i64, i64, i64) -> Tensor*
-/// @ffi_sig (Tensor*, i64, i64, i64, i64) -> Tensor*
+/// @ffi_sig (Tensor*, i64*, i64) -> Tensor*
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_device_tensor_reshape_dims(
     a: *mut c_void,
-    d1: i64,
-    d2: i64,
-    d3: i64,
-    d4: i64,
+    dims_ptr: *const i64,
+    rank: i64,
 ) -> *mut c_void {
-    dispatch(|d| d.tensor_reshape_dims(a, d1, d2, d3, d4))
+    dispatch(|d| d.tensor_reshape_dims(a, dims_ptr, rank))
 }
 /// @ffi_sig (Tensor*, usize, usize) -> Tensor*
 #[unsafe(no_mangle)]
@@ -1599,7 +1728,9 @@ pub fn runtime_gpu_sync() {
             unsafe extern "C" {
                 fn cudaDeviceSynchronize() -> i32;
             }
-            unsafe { cudaDeviceSynchronize(); }
+            unsafe {
+                cudaDeviceSynchronize();
+            }
         }
     }
 }
@@ -1688,12 +1819,17 @@ pub extern "C" fn tl_device_tensor_split(
 /// @ffi_sig (Tensor*) -> Tensor*
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_inverse(t: *mut c_void) -> *mut c_void {
-    if t.is_null() { return std::ptr::null_mut(); }
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
     let data = read_runtime_tensor_to_f32_vec(t);
     let n_sq = data.len();
     let n = (n_sq as f64).sqrt() as usize;
     if n * n != n_sq || n == 0 {
-        eprintln!("Error: inverse requires square matrix, got {} elements", n_sq);
+        eprintln!(
+            "Error: inverse requires square matrix, got {} elements",
+            n_sq
+        );
         return std::ptr::null_mut();
     }
     // 拡大行列 [A | I]
@@ -1711,7 +1847,10 @@ pub extern "C" fn tl_tensor_inverse(t: *mut c_void) -> *mut c_void {
         let mut max_val = aug[col * 2 * n + col].abs();
         for row in (col + 1)..n {
             let v = aug[row * 2 * n + col].abs();
-            if v > max_val { max_val = v; max_row = row; }
+            if v > max_val {
+                max_val = v;
+                max_row = row;
+            }
         }
         if max_val < 1e-12 {
             eprintln!("Error: singular matrix in inverse");
@@ -1725,10 +1864,14 @@ pub extern "C" fn tl_tensor_inverse(t: *mut c_void) -> *mut c_void {
         }
         // 正規化
         let pivot = aug[col * 2 * n + col];
-        for j in 0..(2 * n) { aug[col * 2 * n + j] /= pivot; }
+        for j in 0..(2 * n) {
+            aug[col * 2 * n + j] /= pivot;
+        }
         // 消去
         for row in 0..n {
-            if row == col { continue; }
+            if row == col {
+                continue;
+            }
             let factor = aug[row * 2 * n + col];
             for j in 0..(2 * n) {
                 aug[row * 2 * n + j] -= factor * aug[col * 2 * n + j];
@@ -1750,7 +1893,9 @@ pub extern "C" fn tl_tensor_inverse(t: *mut c_void) -> *mut c_void {
 /// @ffi_sig (Tensor*) -> Tensor* (scalar)
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_det(t: *mut c_void) -> *mut c_void {
-    if t.is_null() { return std::ptr::null_mut(); }
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
     let data = read_runtime_tensor_to_f32_vec(t);
     let n_sq = data.len();
     let n = (n_sq as f64).sqrt() as usize;
@@ -1765,18 +1910,27 @@ pub extern "C" fn tl_tensor_det(t: *mut c_void) -> *mut c_void {
         let mut max_val = mat[col * n + col].abs();
         for row in (col + 1)..n {
             let v = mat[row * n + col].abs();
-            if v > max_val { max_val = v; max_row = row; }
+            if v > max_val {
+                max_val = v;
+                max_row = row;
+            }
         }
-        if max_val < 1e-12 { return create_runtime_tensor_f32(&[0.0], &[1]); }
+        if max_val < 1e-12 {
+            return create_runtime_tensor_f32(&[0.0], &[1]);
+        }
         if max_row != col {
-            for j in 0..n { mat.swap(col * n + j, max_row * n + j); }
+            for j in 0..n {
+                mat.swap(col * n + j, max_row * n + j);
+            }
             det = -det;
         }
         det *= mat[col * n + col];
         let pivot = mat[col * n + col];
         for row in (col + 1)..n {
             let factor = mat[row * n + col] / pivot;
-            for j in col..n { mat[row * n + j] -= factor * mat[col * n + j]; }
+            for j in col..n {
+                mat[row * n + j] -= factor * mat[col * n + j];
+            }
         }
     }
     create_runtime_tensor_f32(&[det], &[1])
@@ -1786,7 +1940,9 @@ pub extern "C" fn tl_tensor_det(t: *mut c_void) -> *mut c_void {
 /// @ffi_sig (Tensor*, Tensor*) -> Tensor*
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_solve(a: *mut c_void, b: *mut c_void) -> *mut c_void {
-    if a.is_null() || b.is_null() { return std::ptr::null_mut(); }
+    if a.is_null() || b.is_null() {
+        return std::ptr::null_mut();
+    }
     let a_data = read_runtime_tensor_to_f32_vec(a);
     let b_data = read_runtime_tensor_to_f32_vec(b);
     let n_sq = a_data.len();
@@ -1798,7 +1954,9 @@ pub extern "C" fn tl_tensor_solve(a: *mut c_void, b: *mut c_void) -> *mut c_void
     // 拡大行列 [A | b]
     let mut aug = vec![0.0f32; n * (n + 1)];
     for i in 0..n {
-        for j in 0..n { aug[i * (n + 1) + j] = a_data[i * n + j]; }
+        for j in 0..n {
+            aug[i * (n + 1) + j] = a_data[i * n + j];
+        }
         aug[i * (n + 1) + n] = b_data[i];
     }
     // 前進消去
@@ -1807,20 +1965,29 @@ pub extern "C" fn tl_tensor_solve(a: *mut c_void, b: *mut c_void) -> *mut c_void
         let mut max_val = aug[col * (n + 1) + col].abs();
         for row in (col + 1)..n {
             let v = aug[row * (n + 1) + col].abs();
-            if v > max_val { max_val = v; max_row = row; }
+            if v > max_val {
+                max_val = v;
+                max_row = row;
+            }
         }
         if max_val < 1e-12 {
             eprintln!("Error: singular matrix in solve");
             return std::ptr::null_mut();
         }
         if max_row != col {
-            for j in 0..(n + 1) { aug.swap(col * (n + 1) + j, max_row * (n + 1) + j); }
+            for j in 0..(n + 1) {
+                aug.swap(col * (n + 1) + j, max_row * (n + 1) + j);
+            }
         }
         let pivot = aug[col * (n + 1) + col];
-        for j in col..(n + 1) { aug[col * (n + 1) + j] /= pivot; }
+        for j in col..(n + 1) {
+            aug[col * (n + 1) + j] /= pivot;
+        }
         for row in (col + 1)..n {
             let factor = aug[row * (n + 1) + col];
-            for j in col..(n + 1) { aug[row * (n + 1) + j] -= factor * aug[col * (n + 1) + j]; }
+            for j in col..(n + 1) {
+                aug[row * (n + 1) + j] -= factor * aug[col * (n + 1) + j];
+            }
         }
     }
     // 後退代入
@@ -1840,13 +2007,17 @@ pub extern "C" fn tl_tensor_solve(a: *mut c_void, b: *mut c_void) -> *mut c_void
 pub extern "C" fn tl_tensor_svd_u(t: *mut c_void) -> *mut c_void {
     // 簡易実装: A = U S V^T → U = A V S^{-1}
     // フル SVD は複雑なので、まず stub として単位行列を返す
-    if t.is_null() { return std::ptr::null_mut(); }
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
     let data = read_runtime_tensor_to_f32_vec(t);
     let n_sq = data.len();
     let n = (n_sq as f64).sqrt() as usize;
     // 単位行列を返す (stub)
     let mut result = vec![0.0f32; n * n];
-    for i in 0..n { result[i * n + i] = 1.0; }
+    for i in 0..n {
+        result[i * n + i] = 1.0;
+    }
     create_runtime_tensor_f32(&result, &[n, n])
 }
 
@@ -1854,13 +2025,17 @@ pub extern "C" fn tl_tensor_svd_u(t: *mut c_void) -> *mut c_void {
 /// @ffi_sig (Tensor*) -> Tensor*
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_svd_s(t: *mut c_void) -> *mut c_void {
-    if t.is_null() { return std::ptr::null_mut(); }
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
     let data = read_runtime_tensor_to_f32_vec(t);
     let n_sq = data.len();
     let n = (n_sq as f64).sqrt() as usize;
     // stub: 対角要素を返す
     let mut result = vec![0.0f32; n];
-    for i in 0..n { result[i] = data[i * n + i].abs(); }
+    for i in 0..n {
+        result[i] = data[i * n + i].abs();
+    }
     result.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
     create_runtime_tensor_f32(&result, &[n])
 }
@@ -1876,13 +2051,17 @@ pub extern "C" fn tl_tensor_svd_v(t: *mut c_void) -> *mut c_void {
 /// @ffi_sig (Tensor*) -> Tensor*
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_eig_values(t: *mut c_void) -> *mut c_void {
-    if t.is_null() { return std::ptr::null_mut(); }
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
     let data = read_runtime_tensor_to_f32_vec(t);
     let n_sq = data.len();
     let n = (n_sq as f64).sqrt() as usize;
     // stub: 対角要素を返す
     let mut result = vec![0.0f32; n];
-    for i in 0..n { result[i] = data[i * n + i]; }
+    for i in 0..n {
+        result[i] = data[i * n + i];
+    }
     create_runtime_tensor_f32(&result, &[n])
 }
 
@@ -1892,4 +2071,3 @@ pub extern "C" fn tl_tensor_eig_values(t: *mut c_void) -> *mut c_void {
 pub extern "C" fn tl_tensor_eig_vectors(t: *mut c_void) -> *mut c_void {
     tl_tensor_svd_u(t) // stub: 単位行列
 }
-
