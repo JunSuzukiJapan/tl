@@ -2655,10 +2655,15 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // === Caller side: build env struct and store captured values ===
                 let env_ptr_val = if has_captures {
                     // Calculate size: sum of all captured value LLVM sizes
+                    // For mutable captures, store a pointer (for indirection)
                     let mut field_types: Vec<inkwell::types::BasicTypeEnum<'ctx>> = Vec::new();
-                    for (_, cty) in captures.iter() {
-                        let llvm_ty = self.get_llvm_type(cty)?;
-                        field_types.push(llvm_ty);
+                    for (_, cty, is_mut) in captures.iter() {
+                        if *is_mut {
+                            field_types.push(ptr_type.into()); // pointer to original alloca
+                        } else {
+                            let llvm_ty = self.get_llvm_type(cty)?;
+                            field_types.push(llvm_ty);
+                        }
                     }
                     let env_struct_ty = self.context.struct_type(&field_types, false);
                     let env_size = env_struct_ty.size_of().unwrap();
@@ -2677,7 +2682,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     };
 
                     // Store captured values into env struct
-                    for (idx, (cap_name, cap_ty)) in captures.iter().enumerate() {
+                    for (idx, (cap_name, cap_ty, is_mut)) in captures.iter().enumerate() {
                         // Look up captured variable in current scope
                         let mut found = None;
                         for scope in self.variables.iter().rev() {
@@ -2690,16 +2695,21 @@ impl<'ctx> CodeGenerator<'ctx> {
                             format!("Captured variable '{}' not found in scope", cap_name)
                         })?;
 
-                        // Load the captured value
-                        let cap_llvm_ty = self.get_llvm_type(cap_ty)?;
-                        let cap_val = self.builder.build_load(cap_llvm_ty, cap_alloca.into_pointer_value(), &format!("load_cap_{}", cap_name))
-                            .map_err(|e| e.to_string())?;
-
-                        // Store into env struct at index
                         let field_ptr = self.builder.build_struct_gep(env_struct_ty, env_ptr, idx as u32, &format!("env_field_{}", cap_name))
                             .map_err(|e| e.to_string())?;
-                        self.builder.build_store(field_ptr, cap_val)
-                            .map_err(|e| e.to_string())?;
+
+                        if *is_mut {
+                            // Mutable: store the alloca pointer itself
+                            self.builder.build_store(field_ptr, cap_alloca.into_pointer_value())
+                                .map_err(|e| e.to_string())?;
+                        } else {
+                            // Immutable: store a copy of the value
+                            let cap_llvm_ty = self.get_llvm_type(cap_ty)?;
+                            let cap_val = self.builder.build_load(cap_llvm_ty, cap_alloca.into_pointer_value(), &format!("load_cap_{}", cap_name))
+                                .map_err(|e| e.to_string())?;
+                            self.builder.build_store(field_ptr, cap_val)
+                                .map_err(|e| e.to_string())?;
+                        }
                     }
 
                     Some((env_ptr, env_struct_ty))
@@ -2729,30 +2739,45 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                     // Build env struct type (same as caller side)
                     let mut field_types: Vec<inkwell::types::BasicTypeEnum<'ctx>> = Vec::new();
-                    for (_, cty) in captures.iter() {
-                        let llvm_ty = self.get_llvm_type(cty)?;
-                        field_types.push(llvm_ty);
+                    for (_, cty, is_mut) in captures.iter() {
+                        if *is_mut {
+                            field_types.push(ptr_type.into());
+                        } else {
+                            let llvm_ty = self.get_llvm_type(cty)?;
+                            field_types.push(llvm_ty);
+                        }
                     }
                     let env_struct_ty = self.context.struct_type(&field_types, false);
                     let env_ptr_pv = env_param.into_pointer_value();
 
                     // Extract each captured variable
-                    for (idx, (cap_name, cap_ty)) in captures.iter().enumerate() {
+                    for (idx, (cap_name, cap_ty, is_mut)) in captures.iter().enumerate() {
                         let cap_llvm_ty = self.get_llvm_type(cap_ty)?;
                         let field_ptr = self.builder.build_struct_gep(env_struct_ty, env_ptr_pv, idx as u32, &format!("env_{}", cap_name))
                             .map_err(|e| e.to_string())?;
-                        let cap_val = self.builder.build_load(cap_llvm_ty, field_ptr, cap_name)
-                            .map_err(|e| e.to_string())?;
 
-                        // Alloca + store as local variable
-                        let alloca = self.builder.build_alloca(cap_llvm_ty, cap_name)
-                            .map_err(|e| e.to_string())?;
-                        self.builder.build_store(alloca, cap_val)
-                            .map_err(|e| e.to_string())?;
-                        self.variables.last_mut().unwrap().insert(
-                            cap_name.clone(),
-                            (alloca.into(), cap_ty.clone(), crate::compiler::codegen::CLEANUP_NONE),
-                        );
+                        if *is_mut {
+                            // Mutable: field contains a pointer to the original alloca.
+                            // Load the pointer and use it directly as the variable's alloca.
+                            let original_alloca = self.builder.build_load(ptr_type, field_ptr, &format!("mut_ptr_{}", cap_name))
+                                .map_err(|e| e.to_string())?;
+                            self.variables.last_mut().unwrap().insert(
+                                cap_name.clone(),
+                                (original_alloca, cap_ty.clone(), crate::compiler::codegen::CLEANUP_NONE),
+                            );
+                        } else {
+                            // Immutable: load value and store as local
+                            let cap_val = self.builder.build_load(cap_llvm_ty, field_ptr, cap_name)
+                                .map_err(|e| e.to_string())?;
+                            let alloca = self.builder.build_alloca(cap_llvm_ty, cap_name)
+                                .map_err(|e| e.to_string())?;
+                            self.builder.build_store(alloca, cap_val)
+                                .map_err(|e| e.to_string())?;
+                            self.variables.last_mut().unwrap().insert(
+                                cap_name.clone(),
+                                (alloca.into(), cap_ty.clone(), crate::compiler::codegen::CLEANUP_NONE),
+                            );
+                        }
                     }
                 }
 

@@ -541,7 +541,7 @@ pub enum ExprKind {
         args: Vec<(String, Option<Type>)>,   // arg name + optional type annotation
         return_type: Option<Type>,            // optional explicit return type
         body: Vec<Stmt>,                      // body statements
-        captures: Vec<(String, Type)>,        // captured variables (name + type), filled by semantic analysis
+        captures: Vec<(String, Type, bool)>,  // captured variables (name, type, is_mutable)
     },
 }
 

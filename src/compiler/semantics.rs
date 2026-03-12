@@ -3209,6 +3209,12 @@ impl SemanticAnalyzer {
                 used_vars.sort();
                 used_vars.dedup();
 
+                // Collect assigned variable names for mutable capture detection
+                let mut assigned_vars = Vec::new();
+                for stmt in body.iter() {
+                    Self::collect_assigned_vars_stmt(stmt, &mut assigned_vars);
+                }
+
                 // Filter: remove closure args and look up type in outer scopes
                 let closure_scope_depth = self.scopes.len(); // current = closure scope
                 for var_name in &used_vars {
@@ -3225,7 +3231,8 @@ impl SemanticAnalyzer {
                         }
                     }
                     if let Some(ty) = found_ty {
-                        captures.push((var_name.clone(), ty));
+                        let is_mutable = assigned_vars.contains(var_name);
+                        captures.push((var_name.clone(), ty, is_mutable));
                     }
                 }
 
@@ -7091,6 +7098,40 @@ impl SemanticAnalyzer {
             ExprKind::Block(stmts) => {
                 for s in stmts {
                     self.resolve_stmt_types(s);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Collect variable names that are assigned in a statement (for mutable capture detection)
+    fn collect_assigned_vars_stmt(stmt: &Stmt, out: &mut Vec<String>) {
+        match &stmt.inner {
+            StmtKind::Assign { lhs, .. } => {
+                // Extract the variable name from LValue
+                if let LValue::Variable(name) = lhs {
+                    out.push(name.clone());
+                }
+            }
+            StmtKind::For { body, .. } => {
+                for s in body { Self::collect_assigned_vars_stmt(s, out); }
+            }
+            StmtKind::While { body, .. } => {
+                for s in body { Self::collect_assigned_vars_stmt(s, out); }
+            }
+            StmtKind::Loop { body } => {
+                for s in body { Self::collect_assigned_vars_stmt(s, out); }
+            }
+            StmtKind::Expr(e) => {
+                // Check blocks inside expressions that may contain assignments
+                if let ExprKind::Block(stmts) = &e.inner {
+                    for s in stmts { Self::collect_assigned_vars_stmt(s, out); }
+                }
+                if let ExprKind::IfExpr(_, then_stmts, else_stmts) = &e.inner {
+                    for s in then_stmts { Self::collect_assigned_vars_stmt(s, out); }
+                    if let Some(es) = else_stmts {
+                        for s in es { Self::collect_assigned_vars_stmt(s, out); }
+                    }
                 }
             }
             _ => {}
