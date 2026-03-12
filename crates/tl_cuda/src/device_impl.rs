@@ -378,21 +378,45 @@ impl IDevice for CudaDeviceImpl {
         Ok(v(ffi_ops::make_tensor(ta.stack_impl(tb, dim as usize)?)))
     }
     // ========== autograd ==========
-    fn tensor_set_requires_grad(&self, _t: *mut c_void, _requires_grad: bool) -> BackendResult<()> {
-        // TODO: autograd 対応後に実装
+    fn tensor_set_requires_grad(&self, t: *mut c_void, requires_grad: bool) -> BackendResult<()> {
+        let tt = unsafe { &mut *p(t) };
+        if requires_grad {
+            tt.enable_grad();
+        } else if let Some(ref mut meta) = tt.autograd {
+            meta.requires_grad = false;
+        }
         Ok(())
     }
-    fn tensor_clip_grad_value(&self, _t: *mut c_void, _min: f64, _max: f64) -> BackendResult<()> {
-        // TODO: autograd 対応後に実装
+    fn tensor_clip_grad_value(&self, t: *mut c_void, min: f64, max: f64) -> BackendResult<()> {
+        let tt = unsafe { &mut *p(t) };
+        if let Some(ref mut meta) = tt.autograd {
+            if let Some(ref grad) = meta.grad {
+                let clipped = grad.clamp_impl(min as f32, max as f32)?;
+                meta.grad = Some(clipped);
+            }
+        }
         Ok(())
     }
     fn tensor_clip_grad_norm(
         &self,
-        _t: *mut c_void,
-        _max_norm: f64,
-        _norm_type: f64,
+        t: *mut c_void,
+        max_norm: f64,
+        norm_type: f64,
     ) -> BackendResult<f64> {
-        // TODO: autograd 対応後に実装
+        let tt = unsafe { &mut *p(t) };
+        if let Some(ref mut meta) = tt.autograd {
+            if let Some(ref grad) = meta.grad {
+                let total_norm_t = grad.norm_impl(norm_type as f32)?;
+                let total_norm_vec = total_norm_t.to_vec::<f32>();
+                let total_norm = total_norm_vec[0] as f64;
+                if total_norm > max_norm {
+                    let scale = max_norm / (total_norm + 1e-6);
+                    let scaled = grad.mul_scalar_impl(scale as f32)?;
+                    meta.grad = Some(scaled);
+                }
+                return Ok(total_norm);
+            }
+        }
         Ok(0.0)
     }
     // ========== メモリ管理 ==========
