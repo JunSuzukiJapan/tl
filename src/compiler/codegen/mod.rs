@@ -61,6 +61,9 @@ pub struct CodeGenerator<'ctx> {
     pub(crate) type_manager: type_manager::TypeManager,
     pub(crate) pending_functions: Vec<crate::compiler::ast::FunctionDef>,
     pub(crate) specialization_registry: specialization::SpecializationRegistry,
+    /// Trait registry: maps type name -> set of implemented trait names.
+    /// Used to check trait bounds during monomorphization.
+    pub(crate) trait_registry: HashMap<String, std::collections::HashSet<String>>,
 }
 
 impl<'ctx> CodeGenerator<'ctx> {
@@ -101,6 +104,18 @@ impl<'ctx> CodeGenerator<'ctx> {
             type_manager: type_manager::TypeManager::new(),
             pending_functions: Vec::new(),
             specialization_registry: specialization::SpecializationRegistry::new(),
+            trait_registry: {
+                let mut reg = HashMap::<String, std::collections::HashSet<String>>::new();
+                // PartialEq: types that support == operator
+                for ty in &["i64", "i32", "f32", "f64", "bool", "String", "u8", "usize"] {
+                    reg.entry(ty.to_string()).or_default().insert("PartialEq".to_string());
+                }
+                // PartialOrd: types that support < > <= >= operators
+                for ty in &["i64", "i32", "f32", "f64", "u8", "usize"] {
+                    reg.entry(ty.to_string()).or_default().insert("PartialOrd".to_string());
+                }
+                reg
+            },
         };
 
         // Register all methods (instance and static)
@@ -1017,6 +1032,56 @@ impl<'ctx> CodeGenerator<'ctx> {
         Ok(())
     }
 
+    /// Check if a method should be skipped based on its where clause in a concrete impl block.
+    /// Returns true if the method should be skipped (bounds not satisfied).
+    fn should_skip_concrete_method(&self, method: &crate::compiler::ast::FunctionDef, imp: &ImplBlock) -> bool {
+        let wc = match &method.where_clause {
+            Some(wc) => wc,
+            None => return false, // No where clause, don't skip
+        };
+
+        // Get base name and type args from target type
+        let base_name = imp.target_type.get_base_name();
+        // Parse base name to extract the non-mangled part (e.g., "Vec" from "Vec[Entry[i64][i64]]")
+        let simple_base = base_name.split('[').next().unwrap_or(&base_name).to_string();
+
+        // Look up original generic params for this type
+        let original_generics = self.generic_impls.get(&simple_base)
+            .and_then(|impls| impls.first())
+            .map(|i| i.generics.clone())
+            .unwrap_or_default();
+
+        if original_generics.is_empty() {
+            return false; // Not a generic type, can't check bounds
+        }
+
+        // Extract concrete type args from target_type
+        let type_args = match &imp.target_type {
+            Type::Struct(_, args) | Type::Enum(_, args) => args.clone(),
+            _ => {
+                // Try to extract from mangled name
+                let extracted = crate::compiler::ast::mangle_extract_args(&base_name);
+                self.parse_mangled_type_args_from_strs(&extracted)
+            }
+        };
+
+        // Check each predicate
+        for pred in &wc.predicates {
+            let concrete_type = self.resolve_generic_param(&pred.type_param, &type_args, &original_generics);
+            let type_name = self.concrete_type_to_trait_key(&concrete_type);
+
+            for bound in &pred.bounds {
+                let has_trait = self.trait_registry
+                    .get(&type_name)
+                    .map_or(false, |traits| traits.contains(&bound.trait_name));
+                if !has_trait {
+                    return true; // Bounds not satisfied, skip this method
+                }
+            }
+        }
+        false
+    }
+
     fn compile_impl_blocks(&mut self, impls: &[ImplBlock]) -> Result<(), String> {
         // Pass 1: Declare all methods (Prototypes) and register return types
         for imp in impls {
@@ -1048,6 +1113,11 @@ impl<'ctx> CodeGenerator<'ctx> {
 
 
             for method in &imp.methods {
+                // Skip methods whose trait bounds are not satisfied
+                if self.should_skip_concrete_method(method, imp) {
+                    continue;
+                }
+
                 let target_name = imp.target_type.get_base_name();
                 let simple_target = &target_name;
                 let mangled_name = if method.is_extern {
@@ -1165,6 +1235,10 @@ impl<'ctx> CodeGenerator<'ctx> {
 
 
             for method in &imp.methods {
+                // Skip methods whose trait bounds are not satisfied
+                if self.should_skip_concrete_method(method, imp) {
+                    continue;
+                }
                 let target_name = imp.target_type.get_base_name();
                 let simple_target = &target_name;
                 let mangled_name = if method.is_extern {

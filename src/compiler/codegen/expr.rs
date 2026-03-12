@@ -1098,7 +1098,7 @@ impl<'ctx> CodeGenerator<'ctx> {
     /// Parse type arguments from bracket-extracted strings (e.g., ["i64", "Entry[i64][i64]"])
     /// Each argument string may itself contain brackets for nested generics,
     /// but mangle_extract_args already handles nested extraction at the top level.
-    fn parse_mangled_type_args_from_strs(&self, arg_strs: &[&str]) -> Vec<Type> {
+    pub(crate) fn parse_mangled_type_args_from_strs(&self, arg_strs: &[&str]) -> Vec<Type> {
         let mut result = Vec::new();
         for s in arg_strs {
             let s = s.trim();

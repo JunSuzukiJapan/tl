@@ -128,4 +128,35 @@ impl<T> Vec<T> {
     fn clear(mut self) {
         self.len = 0;
     }
+
+    fn contains(self, item: T) -> bool where T: PartialEq {
+        let mut i: i64 = 0;
+        while i < self.len {
+            if self.ptr[i] == item {
+                return true;
+            }
+            i = i + 1;
+        }
+        false
+    }
+
+    fn sort(mut self) where T: PartialOrd {
+        let mut i: i64 = 1;
+        while i < self.len {
+            let key = self.ptr[i];
+            let mut j = i - 1;
+            while j >= 0 {
+                if self.ptr[j] > key {
+                    let p = self.ptr;
+                    p[j + 1] = p[j];
+                    j = j - 1;
+                } else {
+                    break;
+                }
+            }
+            let p = self.ptr;
+            p[j + 1] = key;
+            i = i + 1;
+        }
+    }
 }

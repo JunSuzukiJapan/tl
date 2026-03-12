@@ -3032,7 +3032,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             _ => Err(format!(
                 "Type mismatch in BinOp {:?}: {:?} vs {:?}",
                 op, lhs_type, rhs_type
-            )),
+            ))
         }
     }
     /// Deep clone a value (Tensor or Struct containing Tensors)

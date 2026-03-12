@@ -37,6 +37,11 @@ impl<'ctx> CodeGenerator<'ctx> {
         let method = target_method.ok_or_else(|| format!("Method {} not found in generic impls of {}", method_name, struct_name))?;
         let imp = target_impl.unwrap();
 
+        // Check trait bounds before monomorphization
+        if !self.check_method_trait_bounds(method, generic_args, &imp.generics) {
+            return Err(format!("Method {}.{} skipped: trait bounds not satisfied for {:?}", struct_name, method_name, generic_args));
+        }
+
         // Check and fix generic count - pad with default type if insufficient
         let mut final_generic_args = generic_args.to_vec();
         if imp.generics.len() > generic_args.len() {
@@ -1029,6 +1034,13 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Generate each method
         for imp in &impls {
             for method in &imp.methods {
+                // Check trait bounds before attempting monomorphization
+                if !self.check_method_trait_bounds(method, type_args, &imp.generics) {
+                    log::debug!("Skipping method {}.{}: trait bounds not satisfied for {:?}",
+                        base_name, method.name, type_args);
+                    continue;
+                }
+
                 // Skip if already generated
                 let mangled_name = crate::compiler::codegen::builtin_types::resolver::resolve_static_method_name(
                     base_name, &method.name, type_args
@@ -1050,6 +1062,80 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
         
         Ok(())
+    }
+
+    /// Check if a method's trait bounds are satisfied for the given type arguments.
+    /// Returns true if all bounds are satisfied (or if there are no bounds).
+    fn check_method_trait_bounds(
+        &self,
+        method: &crate::compiler::ast::FunctionDef,
+        type_args: &[Type],
+        impl_generics: &[String],
+    ) -> bool {
+        // If no bounds, always satisfied
+        if method.generic_bounds.is_empty() {
+            if let Some(ref wc) = method.where_clause {
+                // Check where clause predicates
+                for pred in &wc.predicates {
+                    // Map the type param to a concrete type
+                    let concrete_type = self.resolve_generic_param(&pred.type_param, type_args, impl_generics);
+                    let type_name = self.concrete_type_to_trait_key(&concrete_type);
+                    
+                    for bound in &pred.bounds {
+                        let trait_impls = self.trait_registry.get(&type_name);
+                        if !trait_impls.map_or(false, |traits| traits.contains(&bound.trait_name)) {
+                            return false;
+                        }
+                    }
+                }
+            }
+            return true;
+        }
+
+        // Check generic_bounds: Vec<(String, Vec<TraitBound>)>
+        for (param_name, bounds) in &method.generic_bounds {
+            let concrete_type = self.resolve_generic_param(param_name, type_args, impl_generics);
+            let type_name = self.concrete_type_to_trait_key(&concrete_type);
+            
+            for bound in bounds {
+                let trait_impls = self.trait_registry.get(&type_name);
+                if !trait_impls.map_or(false, |traits| traits.contains(&bound.trait_name)) {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    /// Resolve a generic parameter name to its concrete type.
+    pub(crate) fn resolve_generic_param(&self, param: &str, type_args: &[Type], impl_generics: &[String]) -> Type {
+        for (i, generic_name) in impl_generics.iter().enumerate() {
+            if generic_name == param {
+                if let Some(ty) = type_args.get(i) {
+                    return ty.clone();
+                }
+            }
+        }
+        // Not found — return as unresolved struct
+        Type::Struct(param.to_string(), vec![])
+    }
+
+    /// Convert a concrete type to a string key for trait_registry lookup.
+    pub(crate) fn concrete_type_to_trait_key(&self, ty: &Type) -> String {
+        match ty {
+            Type::I64 => "i64".to_string(),
+            Type::I32 => "i32".to_string(),
+            Type::F32 => "f32".to_string(),
+            Type::F64 => "f64".to_string(),
+            Type::Bool => "bool".to_string(),
+            Type::U8 => "u8".to_string(),
+            Type::Usize => "usize".to_string(),
+            Type::String(_) => "String".to_string(),
+            Type::Struct(name, _) => name.clone(),
+            Type::Enum(name, _) => name.clone(),
+            Type::UnifiedType { base_name, .. } => base_name.clone(),
+            _ => format!("{:?}", ty),
+        }
     }
 
 }

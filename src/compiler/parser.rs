@@ -1695,6 +1695,13 @@ fn parse_function_def(input: Input) -> IResult<Input, crate::compiler::ast::Func
             (input, Type::Void)
         };
 
+        // Parse optional where clause (e.g. `where T: PartialEq`)
+        let (input, where_clause) = if let Ok((rest, wc)) = parse_where_clause(input) {
+            (rest, Some(wc))
+        } else {
+            (input, None)
+        };
+
         let (input, body) = if is_extern {
             let (input, _) = expect_token(Token::SemiColon)(input)?;
             (input, vec![])
@@ -1709,7 +1716,7 @@ fn parse_function_def(input: Input) -> IResult<Input, crate::compiler::ast::Func
             body,
             generics,
             generic_bounds: vec![],
-            where_clause: None,
+            where_clause,
             is_extern,
             is_pub: false,
         }))
