@@ -2,13 +2,15 @@
 
 /*
  * Note: This grammar describes the structure of the TL language
- * as implemented in src/compiler/parser.rs and src/compiler/lexer.rs.
+ * as implemented in src/compiler/parser.rs and src/compiler/ast.rs.
  * It uses a standard EBNF notation.
  * - { ... } indicates repetition (0 or more times).
  * - [ ... ] indicates optional elements.
  * - ( ... ) indicates grouping.
  * - | indicates alternatives.
  * - "..." indicates terminal symbols (tokens).
+ *
+ * Last synchronized: 2026-03-13
  */
 
 /* ========================================================================== */
@@ -48,10 +50,16 @@ item          ::= function_def
 /* Declarations                                                               */
 /* ========================================================================== */
 
-/* Function Definition */
+/* Function Definition
+ *
+ * Note: &self restriction
+ *   Methods that take self MUST use &self (immutable borrow).
+ *   Mutable self (&mut self, mut self, self) are NOT supported.
+ *   This is by design — TL uses a functional style for method dispatch.
+ */
 function_def  ::= [ "pub" ] [ "extern" ] "fn" ident [ generic_params ] "(" [ fn_args ] ")" [ "->" type ] ( block | ";" ) ;
 
-fn_args       ::= "self" [ "," fn_arg_list ]
+fn_args       ::= "&self" [ "," fn_arg_list ]   /* &self only (no mut self) */
                 | fn_arg_list
                 | ; /* empty */
 
@@ -190,7 +198,7 @@ factor_op     ::= "*" | "/" | "%" ;
 
 cast_expr     ::= unary { "as" type } ;
 
-unary         ::= ( "-" | "!" | "not" | "?" ) unary
+unary         ::= ( "-" | "!" | "?" ) unary
                 | postfix ;
 
 postfix       ::= atom { postfix_op } ;
@@ -212,7 +220,8 @@ atom          ::= int_lit | float_lit | string_lit | char_lit | bool_lit
                 | tensor_comp_or_lit
                 | block
                 | if_expr
-                | match_expr ;
+                | match_expr
+                | closure_expr ;          /* Closure: |args| body */
 
 expr_or_tuple ::= /* empty */
                 | expr { "," expr } ;     /* (expr) = grouping, (expr, expr, ...) = tuple */
@@ -223,6 +232,22 @@ path_expr     ::= primitive_type "::" ident "(" [ expr_list ] ")"  /* Primitive 
                 | path ;                                            /* Enum variant (unit) */
 
 struct_init_fields ::= ident ":" expr { "," ident ":" expr } [ "," ] ;
+
+/* ── Closure Expression ──────────────────────────────────────────────────── */
+/*
+ * Closures capture variables from the enclosing scope.
+ * Syntax:
+ *   |x, y| x + y                               (single expression body)
+ *   |x: i64, y: i64| -> i64 { x + y }          (typed args, return type, block body)
+ *   || println("hello")                         (no args)
+ */
+closure_expr  ::= "|" [ closure_args ] "|" [ "->" type ] closure_body ;
+
+closure_args  ::= closure_arg { "," closure_arg } ;
+closure_arg   ::= ident [ ":" type ] ;         /* type annotation is optional */
+
+closure_body  ::= block                         /* { stmts; expr } */
+                | expr ;                         /* single expression */
 
 /* Tensor Literals & Comprehensions */
 tensor_comp_or_lit ::= "[" tensor_inner "]" ;
@@ -238,8 +263,10 @@ comp_item     ::= ident "<-" expr /* Generator */
 /* Types                                                                      */
 /* ========================================================================== */
 
-type          ::= primitive_type
+type          ::= fn_type
+                | primitive_type
                 | tensor_type
+                | grad_tensor_type
                 | ptr_type
                 | array_type
                 | tuple_type
@@ -253,11 +280,16 @@ primitive_type ::= "f32" | "f64"
 
 tensor_type   ::= "Tensor" "<" type "," int_lit ">" ;
 
+grad_tensor_type ::= "GradTensor" "<" type "," int_lit ">" ;
+
 ptr_type      ::= "ptr" "<" type ">" ;
 
 array_type    ::= "[" type ";" int_lit "]" ;
 
 tuple_type    ::= "(" [ type { "," type } ] ")" ;
+
+/* Function / Closure Type */
+fn_type       ::= "Fn" "(" [ type_list ] ")" "->" type ;
 
 path          ::= ident [ generic_args ] { "::" ident [ generic_args ] } ;
 
