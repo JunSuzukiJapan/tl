@@ -53,6 +53,21 @@ pub const SHADER_CAST_F32_TO_F16: &str = "cast_f32_to_f16";
 /// Shader 関数名 - Quantize
 pub const SHADER_DEQUANTIZE_Q4_K: &str = "dequantize_q4_k";
 
+/// Shader 関数名 - 活性化関数 (追加)
+pub const SHADER_LEAKY_RELU_F32: &str = "leaky_relu_f32";
+pub const SHADER_ELU_F32: &str = "elu_f32";
+pub const SHADER_MISH_F32: &str = "mish_f32";
+pub const SHADER_HARDSWISH_F32: &str = "hardswish_f32";
+pub const SHADER_HARDSIGMOID_F32: &str = "hardsigmoid_f32";
+
+/// Shader 関数名 - 論理演算
+pub const SHADER_LOGICAL_AND_F32: &str = "logical_and_f32";
+pub const SHADER_LOGICAL_OR_F32: &str = "logical_or_f32";
+pub const SHADER_LOGICAL_NOT_F32: &str = "logical_not_f32";
+
+/// Shader 関数名 - Fill
+pub const SHADER_FILL_F32: &str = "fill_f32";
+
 /// Shader 関数名 - 融合カーネル
 pub const SHADER_FUSED_SILU_MUL_F32: &str = "fused_silu_mul_f32";
 pub const SHADER_FUSED_ADD_RELU_F32: &str = "fused_add_relu_f32";
@@ -538,6 +553,101 @@ kernel void dequantize_q4_k(
             uchar val = qs_ptr[l] >> 4;
             y_ptr[32 + l] = d2 * val - min2;
         }
+    }
+}
+
+// ========== 活性化関数 (追加) ==========
+
+// LeakyReLU: max(slope*x, x)
+kernel void leaky_relu_f32(
+    device const float* a [[buffer(0)]],
+    constant float& slope [[buffer(1)]],
+    device float* out [[buffer(2)]],
+    uint id [[thread_position_in_grid]]
+) {
+    float x = a[id];
+    out[id] = (x > 0.0f) ? x : slope * x;
+}
+
+// ELU: x if x > 0, alpha*(exp(x)-1) otherwise
+kernel void elu_f32(
+    device const float* a [[buffer(0)]],
+    constant float& alpha [[buffer(1)]],
+    device float* out [[buffer(2)]],
+    uint id [[thread_position_in_grid]]
+) {
+    float x = a[id];
+    out[id] = (x > 0.0f) ? x : alpha * (exp(x) - 1.0f);
+}
+
+// Mish: x * tanh(softplus(x)) = x * tanh(log(1 + exp(x)))
+kernel void mish_f32(
+    device const float* a [[buffer(0)]],
+    device float* out [[buffer(1)]],
+    uint id [[thread_position_in_grid]]
+) {
+    float x = a[id];
+    out[id] = x * tanh(log(1.0f + exp(x)));
+}
+
+// HardSwish: x * clamp(x+3, 0, 6) / 6
+kernel void hardswish_f32(
+    device const float* a [[buffer(0)]],
+    device float* out [[buffer(1)]],
+    uint id [[thread_position_in_grid]]
+) {
+    float x = a[id];
+    out[id] = x * clamp(x + 3.0f, 0.0f, 6.0f) / 6.0f;
+}
+
+// HardSigmoid: clamp((x+3)/6, 0, 1)
+kernel void hardsigmoid_f32(
+    device const float* a [[buffer(0)]],
+    device float* out [[buffer(1)]],
+    uint id [[thread_position_in_grid]]
+) {
+    float x = a[id];
+    out[id] = clamp((x + 3.0f) / 6.0f, 0.0f, 1.0f);
+}
+
+// ========== 論理演算 ==========
+
+kernel void logical_and_f32(
+    device const float* a [[buffer(0)]],
+    device const float* b [[buffer(1)]],
+    device float* out [[buffer(2)]],
+    uint id [[thread_position_in_grid]]
+) {
+    out[id] = (a[id] != 0.0f && b[id] != 0.0f) ? 1.0f : 0.0f;
+}
+
+kernel void logical_or_f32(
+    device const float* a [[buffer(0)]],
+    device const float* b [[buffer(1)]],
+    device float* out [[buffer(2)]],
+    uint id [[thread_position_in_grid]]
+) {
+    out[id] = (a[id] != 0.0f || b[id] != 0.0f) ? 1.0f : 0.0f;
+}
+
+kernel void logical_not_f32(
+    device const float* a [[buffer(0)]],
+    device float* out [[buffer(1)]],
+    uint id [[thread_position_in_grid]]
+) {
+    out[id] = (a[id] == 0.0f) ? 1.0f : 0.0f;
+}
+
+// ========== Fill ==========
+
+kernel void fill_f32(
+    device float* out [[buffer(0)]],
+    constant float& value [[buffer(1)]],
+    constant uint& count [[buffer(2)]],
+    uint id [[thread_position_in_grid]]
+) {
+    if (id < count) {
+        out[id] = value;
     }
 }
 

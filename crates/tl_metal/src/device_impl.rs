@@ -227,42 +227,17 @@ impl IDevice for MetalDeviceImpl {
 
     fn tensor_logical_and(&self, a: *mut c_void, b: *mut c_void) -> BackendResult<*mut c_void> {
         let (ta, tb) = unsafe { (&*t(a), &*t(b)) };
-        let r: Vec<f32> = ta
-            .to_vec::<f32>()
-            .iter()
-            .zip(tb.to_vec::<f32>().iter())
-            .map(|(&x, &y)| if x != 0.0 && y != 0.0 { 1.0 } else { 0.0 })
-            .collect();
-        Ok(
-            ffi_ops::make_tensor(MetalTensor::from_slice(&r, ta.shape(), crate::DType::F32))
-                as *mut c_void,
-        )
+        Ok(ffi_ops::make_tensor(ta.logical_and_impl(tb)?) as *mut c_void)
     }
 
     fn tensor_logical_or(&self, a: *mut c_void, b: *mut c_void) -> BackendResult<*mut c_void> {
         let (ta, tb) = unsafe { (&*t(a), &*t(b)) };
-        let r: Vec<f32> = ta
-            .to_vec::<f32>()
-            .iter()
-            .zip(tb.to_vec::<f32>().iter())
-            .map(|(&x, &y)| if x != 0.0 || y != 0.0 { 1.0 } else { 0.0 })
-            .collect();
-        Ok(
-            ffi_ops::make_tensor(MetalTensor::from_slice(&r, ta.shape(), crate::DType::F32))
-                as *mut c_void,
-        )
+        Ok(ffi_ops::make_tensor(ta.logical_or_impl(tb)?) as *mut c_void)
     }
 
     fn tensor_logical_not(&self, tensor: *mut c_void) -> BackendResult<*mut c_void> {
         let tt = unsafe { &*t(tensor) };
-        let r: Vec<f32> = tt
-            .to_vec::<f32>()
-            .iter()
-            .map(|&x| if x == 0.0 { 1.0 } else { 0.0 })
-            .collect();
-        Ok(
-            ffi_ops::make_tensor(MetalTensor::from_slice(&r, tt.shape(), crate::DType::F32))
-                as *mut c_void,
+        Ok(ffi_ops::make_tensor(tt.logical_not_impl()?) as *mut c_void
         )
     }
 
@@ -272,41 +247,17 @@ impl IDevice for MetalDeviceImpl {
         negative_slope: f32,
     ) -> BackendResult<*mut c_void> {
         let tt = unsafe { &*t(tensor) };
-        let r: Vec<f32> = tt
-            .to_vec::<f32>()
-            .iter()
-            .map(|&x| if x > 0.0 { x } else { negative_slope * x })
-            .collect();
-        Ok(
-            ffi_ops::make_tensor(MetalTensor::from_slice(&r, tt.shape(), crate::DType::F32))
-                as *mut c_void,
-        )
+        Ok(ffi_ops::make_tensor(tt.leaky_relu_impl(negative_slope)?) as *mut c_void)
     }
 
     fn tensor_elu(&self, tensor: *mut c_void, alpha: f32) -> BackendResult<*mut c_void> {
         let tt = unsafe { &*t(tensor) };
-        let r: Vec<f32> = tt
-            .to_vec::<f32>()
-            .iter()
-            .map(|&x| if x > 0.0 { x } else { alpha * (x.exp() - 1.0) })
-            .collect();
-        Ok(
-            ffi_ops::make_tensor(MetalTensor::from_slice(&r, tt.shape(), crate::DType::F32))
-                as *mut c_void,
-        )
+        Ok(ffi_ops::make_tensor(tt.elu_impl(alpha)?) as *mut c_void)
     }
 
     fn tensor_mish(&self, tensor: *mut c_void) -> BackendResult<*mut c_void> {
         let tt = unsafe { &*t(tensor) };
-        let r: Vec<f32> = tt
-            .to_vec::<f32>()
-            .iter()
-            .map(|&x| x * (x.exp().ln_1p()).tanh())
-            .collect();
-        Ok(
-            ffi_ops::make_tensor(MetalTensor::from_slice(&r, tt.shape(), crate::DType::F32))
-                as *mut c_void,
-        )
+        Ok(ffi_ops::make_tensor(tt.mish_impl()?) as *mut c_void)
     }
 
     fn tensor_mse_loss(
@@ -335,19 +286,21 @@ impl IDevice for MetalDeviceImpl {
         target: *mut c_void,
     ) -> BackendResult<*mut c_void> {
         let (tp, tt) = unsafe { (&*t(pred), &*t(target)) };
-        let p = tp.to_vec::<f32>();
-        let y = tt.to_vec::<f32>();
-        let eps = 1e-7f32;
-        let sum: f32 = p
-            .iter()
-            .zip(y.iter())
-            .map(|(&pi, &yi)| -(yi * (pi + eps).ln() + (1.0 - yi) * (1.0 - pi + eps).ln()))
-            .sum();
-        let loss = sum / p.len() as f32;
-        Ok(
-            ffi_ops::make_tensor(MetalTensor::from_slice(&[loss], &[1], crate::DType::F32))
-                as *mut c_void,
-        )
+        // BCE = -mean(y*log(p+eps) + (1-y)*log(1-p+eps))
+        let eps_t = MetalTensor::from_slice(&vec![1e-7f32; tp.elem_count()], tp.shape(), crate::DType::F32);
+        let one_t = MetalTensor::from_slice(&vec![1.0f32; tp.elem_count()], tp.shape(), crate::DType::F32);
+        let p_eps = tp.add_impl(&eps_t)?;  // p + eps
+        let log_p = p_eps.log_impl()?;     // log(p + eps)
+        let term1 = tt.mul_impl(&log_p)?;  // y * log(p+eps)
+        let one_m_y = one_t.sub_impl(tt)?; // 1 - y
+        let one_m_p = one_t.sub_impl(tp)?; // 1 - p
+        let one_m_p_eps = one_m_p.add_impl(&eps_t)?; // 1-p+eps
+        let log_1mp = one_m_p_eps.log_impl()?;       // log(1-p+eps)
+        let term2 = one_m_y.mul_impl(&log_1mp)?;     // (1-y)*log(1-p+eps)
+        let sum_terms = term1.add_impl(&term2)?;      // y*log(p+eps) + (1-y)*log(1-p+eps)
+        let neg = sum_terms.neg_impl()?;              // negate
+        let result = neg.mean_impl(-1)?;              // mean
+        Ok(ffi_ops::make_tensor(result) as *mut c_void)
     }
 
     fn tensor_nll_loss(
@@ -356,14 +309,11 @@ impl IDevice for MetalDeviceImpl {
         target: *mut c_void,
     ) -> BackendResult<*mut c_void> {
         let (tp, tt) = unsafe { (&*t(pred), &*t(target)) };
-        let p = tp.to_vec::<f32>();
-        let y = tt.to_vec::<f32>();
-        let sum: f32 = p.iter().zip(y.iter()).map(|(&pi, &yi)| -pi * yi).sum();
-        let loss = sum / p.len() as f32;
-        Ok(
-            ffi_ops::make_tensor(MetalTensor::from_slice(&[loss], &[1], crate::DType::F32))
-                as *mut c_void,
-        )
+        // NLL = -mean(p * y)
+        let prod = tp.mul_impl(tt)?;
+        let neg = prod.neg_impl()?;
+        let result = neg.mean_impl(-1)?;
+        Ok(ffi_ops::make_tensor(result) as *mut c_void)
     }
 
     fn tensor_linear(
@@ -385,28 +335,12 @@ impl IDevice for MetalDeviceImpl {
 
     fn tensor_hardswish(&self, tensor: *mut c_void) -> BackendResult<*mut c_void> {
         let tt = unsafe { &*t(tensor) };
-        let r: Vec<f32> = tt
-            .to_vec::<f32>()
-            .iter()
-            .map(|&x| x * (x + 3.0).max(0.0).min(6.0) / 6.0)
-            .collect();
-        Ok(
-            ffi_ops::make_tensor(MetalTensor::from_slice(&r, tt.shape(), crate::DType::F32))
-                as *mut c_void,
-        )
+        Ok(ffi_ops::make_tensor(tt.hardswish_impl()?) as *mut c_void)
     }
 
     fn tensor_hardsigmoid(&self, tensor: *mut c_void) -> BackendResult<*mut c_void> {
         let tt = unsafe { &*t(tensor) };
-        let r: Vec<f32> = tt
-            .to_vec::<f32>()
-            .iter()
-            .map(|&x| ((x + 3.0) / 6.0).max(0.0).min(1.0))
-            .collect();
-        Ok(
-            ffi_ops::make_tensor(MetalTensor::from_slice(&r, tt.shape(), crate::DType::F32))
-                as *mut c_void,
-        )
+        Ok(ffi_ops::make_tensor(tt.hardsigmoid_impl()?) as *mut c_void)
     }
 
     fn tensor_group_norm(
@@ -550,14 +484,35 @@ impl IDevice for MetalDeviceImpl {
     fn tensor_dropout2d(
         &self,
         input: *mut c_void,
-        _p: f64,
-        _training: bool,
+        p: f64,
+        training: bool,
     ) -> BackendResult<*mut c_void> {
-        // Metal: passthrough (no random on GPU, use CPU for training dropout)
         let ti = unsafe { &*t(input) };
+        if !training {
+            // 推論時はそのまま返す
+            return Ok(ffi_ops::make_tensor(ti.contiguous()?) as *mut c_void);
+        }
+        // 学習時: チャネル単位で確率 p でドロップ
+        let data = ti.to_vec::<f32>();
+        let shape = ti.shape().to_vec();
+        let channels = if shape.len() >= 2 { shape[1] } else { 1 };
+        let spatial: usize = shape[2..].iter().product::<usize>().max(1);
+        let batch = if shape.len() >= 2 { shape[0] } else { 1 };
+        let mut result = data.clone();
+        let scale = 1.0 / (1.0 - p) as f32;
+        for b in 0..batch {
+            for c in 0..channels {
+                // 疑似乱数的にチャネルをドロップ
+                let drop = (c as f64 * 0.618 + b as f64) % 1.0 < p;
+                for s in 0..spatial {
+                    let idx = b * channels * spatial + c * spatial + s;
+                    result[idx] = if drop { 0.0 } else { result[idx] * scale };
+                }
+            }
+        }
         Ok(ffi_ops::make_tensor(MetalTensor::from_slice(
-            &ti.to_vec::<f32>(),
-            ti.shape(),
+            &result,
+            &shape,
             crate::DType::F32,
         )) as *mut c_void)
     }
@@ -864,14 +819,8 @@ impl IDevice for MetalDeviceImpl {
         temperature: f64,
     ) -> BackendResult<*mut c_void> {
         let tl = unsafe { &*t(logits) };
-        let data = tl.to_vec::<f32>();
-        let temp = temperature as f32;
-        let result: Vec<f32> = data.iter().map(|&v| v / temp).collect();
-        Ok(ffi_ops::make_tensor(MetalTensor::from_slice(
-            &result,
-            tl.shape(),
-            crate::DType::F32,
-        )) as *mut c_void)
+        let result = tl.div_scalar_impl(temperature as f32)?;
+        Ok(ffi_ops::make_tensor(result) as *mut c_void)
     }
 
     fn tensor_repetition_penalty(
@@ -903,23 +852,18 @@ impl IDevice for MetalDeviceImpl {
 
     fn tensor_dot(&self, a: *mut c_void, b: *mut c_void) -> BackendResult<*mut c_void> {
         let (ta, tb) = unsafe { (&*t(a), &*t(b)) };
-        let dot: f32 = ta
-            .to_vec::<f32>()
-            .iter()
-            .zip(tb.to_vec::<f32>().iter())
-            .map(|(&x, &y)| x * y)
-            .sum();
+        // dot product = sum(a * b) — 全GPU上で計算
+        let prod = ta.mul_impl(tb)?;
+        let dot_val = prod.sumall_impl()?;
         Ok(
-            ffi_ops::make_tensor(MetalTensor::from_slice(&[dot], &[1], crate::DType::F32))
+            ffi_ops::make_tensor(MetalTensor::from_slice(&[dot_val], &[1], crate::DType::F32))
                 as *mut c_void,
         )
     }
 
     fn tensor_fill_(&self, tensor: *mut c_void, value: f32) -> BackendResult<()> {
         let tt = unsafe { &*t(tensor) };
-        let numel: usize = tt.shape().iter().product();
-        // Create filled tensor and copy data
-        let filled = MetalTensor::from_slice(&vec![value; numel], tt.shape(), crate::DType::F32);
+        let filled = tt.fill_impl(value)?;
         unsafe {
             let dst = &mut *(tensor as *mut MetalTensor);
             *dst = filled;
