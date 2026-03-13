@@ -50,16 +50,10 @@ item          ::= function_def
 /* Declarations                                                               */
 /* ========================================================================== */
 
-/* Function Definition
- *
- * Note: &self restriction
- *   Methods that take self MUST use &self (immutable borrow).
- *   Mutable self (&mut self, mut self, self) are NOT supported.
- *   This is by design — TL uses a functional style for method dispatch.
- */
+/* Function Definition */
 function_def  ::= [ "pub" ] [ "extern" ] "fn" ident [ generic_params ] "(" [ fn_args ] ")" [ "->" type ] ( block | ";" ) ;
 
-fn_args       ::= "&self" [ "," fn_arg_list ]   /* &self only (no mut self) */
+fn_args       ::= "self" [ "," fn_arg_list ]
                 | fn_arg_list
                 | ; /* empty */
 
