@@ -188,19 +188,10 @@ impl IDevice for MetalDeviceImpl {
         Ok(ffi_ops::make_tensor(result) as *mut c_void)
     }
 
-    fn tensor_cumsum(&self, tensor: *mut c_void, _dim: i32) -> BackendResult<*mut c_void> {
+    fn tensor_cumsum(&self, tensor: *mut c_void, dim: i32) -> BackendResult<*mut c_void> {
         let tt = unsafe { &*t(tensor) };
-        // cumsum: GPU上でabs+pow+sum+pow_scalarの組合せ
-        // 小サイズテンソルではCPU計算が効率的
-        let data = tt.to_vec::<f32>();
-        let mut result = Vec::with_capacity(data.len());
-        let mut acc = 0.0f32;
-        for &x in &data {
-            acc += x;
-            result.push(acc);
-        }
-        let out = MetalTensor::from_slice(&result, tt.shape(), crate::DType::F32);
-        Ok(ffi_ops::make_tensor(out) as *mut c_void)
+        let result = tt.cumsum_impl(dim)?;
+        Ok(ffi_ops::make_tensor(result) as *mut c_void)
     }
 
     fn tensor_norm(&self, tensor: *mut c_void, p_val: f32, _dim: i32) -> BackendResult<*mut c_void> {
@@ -352,48 +343,8 @@ impl IDevice for MetalDeviceImpl {
         let ti = unsafe { &*t(input) };
         let tw = if !weight.is_null() { Some(unsafe { &*t(weight) }) } else { None };
         let tb = if !bias.is_null() { Some(unsafe { &*t(bias) }) } else { None };
-        // GPU ベースの group_norm: 各グループの mean/var をGPUで計算
-        let data = ti.to_vec::<f32>();
-        let shape = ti.shape().to_vec();
-        let channels = if shape.len() >= 2 { shape[1] } else { shape[0] };
-        let group_size = channels / num_groups as usize;
-        let mut result = data.clone();
-        let spatial: usize = shape[2..].iter().product::<usize>().max(1);
-        let batch = if shape.len() >= 2 { shape[0] } else { 1 };
-        let w_data = tw.map(|w| w.to_vec::<f32>());
-        let b_data = tb.map(|b| b.to_vec::<f32>());
-        for b_idx in 0..batch {
-            for g in 0..num_groups as usize {
-                let (start_c, end_c) = (g * group_size, g * group_size + group_size);
-                let mut vals = Vec::new();
-                for c in start_c..end_c {
-                    for s in 0..spatial {
-                        vals.push(data[b_idx * channels * spatial + c * spatial + s]);
-                    }
-                }
-                let mean: f32 = vals.iter().sum::<f32>() / vals.len() as f32;
-                let var: f32 =
-                    vals.iter().map(|v| (v - mean).powi(2)).sum::<f32>() / vals.len() as f32;
-                let std = (var + eps as f32).sqrt();
-                for c in start_c..end_c {
-                    for s in 0..spatial {
-                        let idx = b_idx * channels * spatial + c * spatial + s;
-                        let mut v = (result[idx] - mean) / std;
-                        if let Some(ref wd) = w_data {
-                            v *= wd[c];
-                        }
-                        if let Some(ref bd) = b_data {
-                            v += bd[c];
-                        }
-                        result[idx] = v;
-                    }
-                }
-            }
-        }
-        Ok(
-            ffi_ops::make_tensor(MetalTensor::from_slice(&result, &shape, crate::DType::F32))
-                as *mut c_void,
-        )
+        let result = ti.group_norm_impl(num_groups as usize, tw, tb, eps as f32)?;
+        Ok(ffi_ops::make_tensor(result) as *mut c_void)
     }
 
     fn tensor_adaptive_avg_pool2d(
@@ -403,35 +354,8 @@ impl IDevice for MetalDeviceImpl {
         output_w: i64,
     ) -> BackendResult<*mut c_void> {
         let ti = unsafe { &*t(input) };
-        let data = ti.to_vec::<f32>();
-        let shape = ti.shape().to_vec();
-        let (n, c, h, w) = (shape[0], shape[1], shape[2], shape[3]);
-        let (oh, ow) = (output_h as usize, output_w as usize);
-        let mut result = vec![0.0f32; n * c * oh * ow];
-        for bi in 0..n {
-            for ci in 0..c {
-                for oi in 0..oh {
-                    for oj in 0..ow {
-                        let (hs, he) = (oi * h / oh, (oi + 1) * h / oh);
-                        let (ws, we) = (oj * w / ow, (oj + 1) * w / ow);
-                        let mut sum = 0.0f32;
-                        let mut cnt = 0;
-                        for hi in hs..he {
-                            for wi in ws..we {
-                                sum += data[bi * c * h * w + ci * h * w + hi * w + wi];
-                                cnt += 1;
-                            }
-                        }
-                        result[bi * c * oh * ow + ci * oh * ow + oi * ow + oj] = sum / cnt as f32;
-                    }
-                }
-            }
-        }
-        Ok(ffi_ops::make_tensor(MetalTensor::from_slice(
-            &result,
-            &[n, c, oh, ow],
-            crate::DType::F32,
-        )) as *mut c_void)
+        let result = ti.adaptive_avg_pool2d_impl(output_h as usize, output_w as usize)?;
+        Ok(ffi_ops::make_tensor(result) as *mut c_void)
     }
 
     fn tensor_pad(
@@ -442,30 +366,8 @@ impl IDevice for MetalDeviceImpl {
         value: f32,
     ) -> BackendResult<*mut c_void> {
         let ti = unsafe { &*t(input) };
-        let data = ti.to_vec::<f32>();
-        let shape = ti.shape().to_vec();
-        let last = *shape.last().unwrap();
-        let new_last = last + pad_left as usize + pad_right as usize;
-        let outer: usize = shape[..shape.len() - 1].iter().product::<usize>().max(1);
-        let mut result = Vec::with_capacity(outer * new_last);
-        for o in 0..outer {
-            for _ in 0..pad_left {
-                result.push(value);
-            }
-            for i in 0..last {
-                result.push(data[o * last + i]);
-            }
-            for _ in 0..pad_right {
-                result.push(value);
-            }
-        }
-        let mut new_shape = shape;
-        *new_shape.last_mut().unwrap() = new_last;
-        Ok(ffi_ops::make_tensor(MetalTensor::from_slice(
-            &result,
-            &new_shape,
-            crate::DType::F32,
-        )) as *mut c_void)
+        let result = ti.pad_impl(pad_left as usize, pad_right as usize, value)?;
+        Ok(ffi_ops::make_tensor(result) as *mut c_void)
     }
 
     fn tensor_instance_norm(
@@ -529,40 +431,9 @@ impl IDevice for MetalDeviceImpl {
         padding: i64,
     ) -> BackendResult<*mut c_void> {
         let (ti, tw) = unsafe { (&*t(input), &*t(weight)) };
-        let inp = ti.to_vec::<f32>();
-        let w = tw.to_vec::<f32>();
-        let ishape = ti.shape().to_vec();
-        let wshape = tw.shape().to_vec();
-        let (batch, in_ch, in_len) = (ishape[0], ishape[1], ishape[2]);
-        let (out_ch, _wch, k_len) = (wshape[0], wshape[1], wshape[2]);
-        let (st, pad) = (stride as usize, padding as usize);
-        let out_len = (in_len + 2 * pad - k_len) / st + 1;
-        let mut result = vec![0.0f32; batch * out_ch * out_len];
-        for b in 0..batch {
-            for oc in 0..out_ch {
-                for ol in 0..out_len {
-                    let mut sum = 0.0f32;
-                    for ic in 0..in_ch {
-                        for ki in 0..k_len {
-                            let pos = ol * st + ki;
-                            if pos >= pad && pos < in_len + pad {
-                                sum += inp[b * in_ch * in_len + ic * in_len + (pos - pad)]
-                                    * w[oc * in_ch * k_len + ic * k_len + ki];
-                            }
-                        }
-                    }
-                    if !bias.is_null() {
-                        sum += unsafe { &*t(bias) }.to_vec::<f32>()[oc];
-                    }
-                    result[b * out_ch * out_len + oc * out_len + ol] = sum;
-                }
-            }
-        }
-        Ok(ffi_ops::make_tensor(MetalTensor::from_slice(
-            &result,
-            &[batch, out_ch, out_len],
-            crate::DType::F32,
-        )) as *mut c_void)
+        let tb = if !bias.is_null() { Some(unsafe { &*t(bias) }) } else { None };
+        let result = ti.conv1d_impl(tw, tb, stride as usize, padding as usize)?;
+        Ok(ffi_ops::make_tensor(result) as *mut c_void)
     }
 
     fn tensor_kl_div_loss(
@@ -601,57 +472,9 @@ impl IDevice for MetalDeviceImpl {
         output_padding: i64,
     ) -> BackendResult<*mut c_void> {
         let (ti, tw) = unsafe { (&*t(input), &*t(weight)) };
-        let inp = ti.to_vec::<f32>();
-        let w = tw.to_vec::<f32>();
-        let ishape = ti.shape().to_vec();
-        let wshape = tw.shape().to_vec();
-        let (batch, in_ch, ih, iw) = (ishape[0], ishape[1], ishape[2], ishape[3]);
-        let (_, out_ch, kh, kw) = (wshape[0], wshape[1], wshape[2], wshape[3]);
-        let (st, pad, opad) = (stride as usize, padding as usize, output_padding as usize);
-        let oh = (ih - 1) * st - 2 * pad + kh + opad;
-        let ow = (iw - 1) * st - 2 * pad + kw + opad;
-        let mut result = vec![0.0f32; batch * out_ch * oh * ow];
-        for b in 0..batch {
-            for ic in 0..in_ch {
-                for iy in 0..ih {
-                    for ix in 0..iw {
-                        let v = inp[b * in_ch * ih * iw + ic * ih * iw + iy * iw + ix];
-                        for ky in 0..kh {
-                            for kx in 0..kw {
-                                let oy = iy * st + ky;
-                                let ox = ix * st + kx;
-                                if oy >= pad && ox >= pad && oy - pad < oh && ox - pad < ow {
-                                    for oc in 0..out_ch {
-                                        result[b * out_ch * oh * ow
-                                            + oc * oh * ow
-                                            + (oy - pad) * ow
-                                            + (ox - pad)] += v * w
-                                            [ic * out_ch * kh * kw + oc * kh * kw + ky * kw + kx];
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        if !bias.is_null() {
-            let tb = unsafe { &*t(bias) }.to_vec::<f32>();
-            for b in 0..batch {
-                for oc in 0..out_ch {
-                    for y in 0..oh {
-                        for x in 0..ow {
-                            result[b * out_ch * oh * ow + oc * oh * ow + y * ow + x] += tb[oc];
-                        }
-                    }
-                }
-            }
-        }
-        Ok(ffi_ops::make_tensor(MetalTensor::from_slice(
-            &result,
-            &[batch, out_ch, oh, ow],
-            crate::DType::F32,
-        )) as *mut c_void)
+        let tb = if !bias.is_null() { Some(unsafe { &*t(bias) }) } else { None };
+        let result = ti.conv_transpose2d_impl(tw, tb, stride as usize, padding as usize, output_padding as usize)?;
+        Ok(ffi_ops::make_tensor(result) as *mut c_void)
     }
 
     fn tensor_interpolate(
@@ -662,41 +485,8 @@ impl IDevice for MetalDeviceImpl {
         mode: i64,
     ) -> BackendResult<*mut c_void> {
         let ti = unsafe { &*t(input) };
-        let data = ti.to_vec::<f32>();
-        let shape = ti.shape().to_vec();
-        let (n, c, h, w) = (shape[0], shape[1], shape[2], shape[3]);
-        let (oh, ow) = (output_h as usize, output_w as usize);
-        let mut result = vec![0.0f32; n * c * oh * ow];
-        for bi in 0..n {
-            for ci in 0..c {
-                for oi in 0..oh {
-                    for oj in 0..ow {
-                        let val = if mode == 0 {
-                            let si = (oi * h) / oh;
-                            let sj = (oj * w) / ow;
-                            data[bi * c * h * w + ci * h * w + si * w + sj]
-                        } else {
-                            let sy = oi as f32 * (h as f32 - 1.0) / (oh as f32 - 1.0).max(1.0);
-                            let sx = oj as f32 * (w as f32 - 1.0) / (ow as f32 - 1.0).max(1.0);
-                            let (y0, x0) = (sy.floor() as usize, sx.floor() as usize);
-                            let (y1, x1) = ((y0 + 1).min(h - 1), (x0 + 1).min(w - 1));
-                            let (fy, fx) = (sy - y0 as f32, sx - x0 as f32);
-                            let base = bi * c * h * w + ci * h * w;
-                            data[base + y0 * w + x0] * (1.0 - fy) * (1.0 - fx)
-                                + data[base + y0 * w + x1] * (1.0 - fy) * fx
-                                + data[base + y1 * w + x0] * fy * (1.0 - fx)
-                                + data[base + y1 * w + x1] * fy * fx
-                        };
-                        result[bi * c * oh * ow + ci * oh * ow + oi * ow + oj] = val;
-                    }
-                }
-            }
-        }
-        Ok(ffi_ops::make_tensor(MetalTensor::from_slice(
-            &result,
-            &[n, c, oh, ow],
-            crate::DType::F32,
-        )) as *mut c_void)
+        let result = ti.interpolate_impl(output_h as usize, output_w as usize, mode)?;
+        Ok(ffi_ops::make_tensor(result) as *mut c_void)
     }
 
     fn tensor_scaled_dot_product_attention(

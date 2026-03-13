@@ -68,6 +68,16 @@ pub const SHADER_LOGICAL_NOT_F32: &str = "logical_not_f32";
 /// Shader 関数名 - Fill
 pub const SHADER_FILL_F32: &str = "fill_f32";
 
+/// Shader 関数名 - NN操作
+pub const SHADER_CONV1D_F32: &str = "conv1d_f32";
+pub const SHADER_CONV_TRANSPOSE2D_F32: &str = "conv_transpose2d_f32";
+pub const SHADER_INTERPOLATE_NEAREST_F32: &str = "interpolate_nearest_f32";
+pub const SHADER_INTERPOLATE_BILINEAR_F32: &str = "interpolate_bilinear_f32";
+pub const SHADER_ADAPTIVE_AVG_POOL2D_F32: &str = "adaptive_avg_pool2d_f32";
+pub const SHADER_PAD_F32: &str = "pad_f32";
+pub const SHADER_CUMSUM_F32: &str = "cumsum_f32";
+pub const SHADER_GROUP_NORM_F32: &str = "group_norm_f32";
+
 /// Shader 関数名 - 融合カーネル
 pub const SHADER_FUSED_SILU_MUL_F32: &str = "fused_silu_mul_f32";
 pub const SHADER_FUSED_ADD_RELU_F32: &str = "fused_add_relu_f32";
@@ -770,6 +780,289 @@ kernel void fused_rotary_emb_f32(
     
     output[base + pair_idx] = x0 * cos_val - x1 * sin_val;
     output[base + pair_idx + half_dim] = x0 * sin_val + x1 * cos_val;
+}
+
+// ========== NN 操作 ==========
+
+// Conv1d: batch×out_ch×out_len の各要素を1スレッドで計算
+struct Conv1dParams {
+    uint batch;
+    uint in_ch;
+    uint in_len;
+    uint out_ch;
+    uint k_len;
+    uint stride;
+    uint padding;
+    uint out_len;
+};
+
+kernel void conv1d_f32(
+    device const float* input  [[buffer(0)]],
+    device const float* weight [[buffer(1)]],
+    device const float* bias   [[buffer(2)]],
+    device float* output       [[buffer(3)]],
+    constant Conv1dParams& p   [[buffer(4)]],
+    constant uint& has_bias    [[buffer(5)]],
+    uint id [[thread_position_in_grid]]
+) {
+    uint total = p.batch * p.out_ch * p.out_len;
+    if (id >= total) return;
+    uint ol = id % p.out_len;
+    uint oc = (id / p.out_len) % p.out_ch;
+    uint b  = id / (p.out_ch * p.out_len);
+    float sum = 0.0f;
+    for (uint ic = 0; ic < p.in_ch; ic++) {
+        for (uint ki = 0; ki < p.k_len; ki++) {
+            uint pos = ol * p.stride + ki;
+            if (pos >= p.padding && pos < p.in_len + p.padding) {
+                sum += input[b * p.in_ch * p.in_len + ic * p.in_len + (pos - p.padding)]
+                     * weight[oc * p.in_ch * p.k_len + ic * p.k_len + ki];
+            }
+        }
+    }
+    if (has_bias != 0) sum += bias[oc];
+    output[id] = sum;
+}
+
+// ConvTranspose2d: batch×out_ch×oh×ow の各要素を計算
+struct ConvTranspose2dParams {
+    uint batch;
+    uint in_ch;
+    uint ih;
+    uint iw;
+    uint out_ch;
+    uint kh;
+    uint kw;
+    uint stride;
+    uint padding;
+    uint oh;
+    uint ow;
+};
+
+kernel void conv_transpose2d_f32(
+    device const float* input  [[buffer(0)]],
+    device const float* weight [[buffer(1)]],
+    device const float* bias   [[buffer(2)]],
+    device float* output       [[buffer(3)]],
+    constant ConvTranspose2dParams& p [[buffer(4)]],
+    constant uint& has_bias    [[buffer(5)]],
+    uint id [[thread_position_in_grid]]
+) {
+    uint total = p.batch * p.out_ch * p.oh * p.ow;
+    if (id >= total) return;
+    uint ox = id % p.ow;
+    uint oy = (id / p.ow) % p.oh;
+    uint oc = (id / (p.ow * p.oh)) % p.out_ch;
+    uint b  = id / (p.out_ch * p.oh * p.ow);
+    float sum = 0.0f;
+    for (uint ic = 0; ic < p.in_ch; ic++) {
+        for (uint ky = 0; ky < p.kh; ky++) {
+            for (uint kx = 0; kx < p.kw; kx++) {
+                int iy_check = (int)(oy + p.padding) - (int)ky;
+                int ix_check = (int)(ox + p.padding) - (int)kx;
+                if (iy_check >= 0 && ix_check >= 0 &&
+                    iy_check % p.stride == 0 && ix_check % p.stride == 0) {
+                    uint iy = (uint)iy_check / p.stride;
+                    uint ix = (uint)ix_check / p.stride;
+                    if (iy < p.ih && ix < p.iw) {
+                        sum += input[b * p.in_ch * p.ih * p.iw + ic * p.ih * p.iw + iy * p.iw + ix]
+                             * weight[ic * p.out_ch * p.kh * p.kw + oc * p.kh * p.kw + ky * p.kw + kx];
+                    }
+                }
+            }
+        }
+    }
+    if (has_bias != 0) sum += bias[oc];
+    output[id] = sum;
+}
+
+// Interpolate Nearest: 各出力ピクセルが最近傍の入力ピクセルをコピー
+struct InterpolateParams {
+    uint batch;
+    uint channels;
+    uint in_h;
+    uint in_w;
+    uint out_h;
+    uint out_w;
+};
+
+kernel void interpolate_nearest_f32(
+    device const float* input  [[buffer(0)]],
+    device float* output       [[buffer(1)]],
+    constant InterpolateParams& p [[buffer(2)]],
+    uint id [[thread_position_in_grid]]
+) {
+    uint total = p.batch * p.channels * p.out_h * p.out_w;
+    if (id >= total) return;
+    uint oj = id % p.out_w;
+    uint oi = (id / p.out_w) % p.out_h;
+    uint c  = (id / (p.out_w * p.out_h)) % p.channels;
+    uint b  = id / (p.channels * p.out_h * p.out_w);
+    uint si = oi * p.in_h / p.out_h;
+    uint sj = oj * p.in_w / p.out_w;
+    output[id] = input[b * p.channels * p.in_h * p.in_w + c * p.in_h * p.in_w + si * p.in_w + sj];
+}
+
+// Interpolate Bilinear: 双線形補間
+kernel void interpolate_bilinear_f32(
+    device const float* input  [[buffer(0)]],
+    device float* output       [[buffer(1)]],
+    constant InterpolateParams& p [[buffer(2)]],
+    uint id [[thread_position_in_grid]]
+) {
+    uint total = p.batch * p.channels * p.out_h * p.out_w;
+    if (id >= total) return;
+    uint oj = id % p.out_w;
+    uint oi = (id / p.out_w) % p.out_h;
+    uint c  = (id / (p.out_w * p.out_h)) % p.channels;
+    uint b  = id / (p.channels * p.out_h * p.out_w);
+    float sy = (float)oi * ((float)p.in_h - 1.0f) / max((float)p.out_h - 1.0f, 1.0f);
+    float sx = (float)oj * ((float)p.in_w - 1.0f) / max((float)p.out_w - 1.0f, 1.0f);
+    uint y0 = (uint)floor(sy);
+    uint x0 = (uint)floor(sx);
+    uint y1 = min(y0 + 1, p.in_h - 1);
+    uint x1 = min(x0 + 1, p.in_w - 1);
+    float fy = sy - (float)y0;
+    float fx = sx - (float)x0;
+    uint base = b * p.channels * p.in_h * p.in_w + c * p.in_h * p.in_w;
+    output[id] = input[base + y0 * p.in_w + x0] * (1.0f - fy) * (1.0f - fx)
+               + input[base + y0 * p.in_w + x1] * (1.0f - fy) * fx
+               + input[base + y1 * p.in_w + x0] * fy * (1.0f - fx)
+               + input[base + y1 * p.in_w + x1] * fy * fx;
+}
+
+// Adaptive Average Pooling 2D
+kernel void adaptive_avg_pool2d_f32(
+    device const float* input  [[buffer(0)]],
+    device float* output       [[buffer(1)]],
+    constant InterpolateParams& p [[buffer(2)]],
+    uint id [[thread_position_in_grid]]
+) {
+    uint total = p.batch * p.channels * p.out_h * p.out_w;
+    if (id >= total) return;
+    uint oj = id % p.out_w;
+    uint oi = (id / p.out_w) % p.out_h;
+    uint c  = (id / (p.out_w * p.out_h)) % p.channels;
+    uint b  = id / (p.channels * p.out_h * p.out_w);
+    uint hs = oi * p.in_h / p.out_h;
+    uint he = (oi + 1) * p.in_h / p.out_h;
+    uint ws = oj * p.in_w / p.out_w;
+    uint we = (oj + 1) * p.in_w / p.out_w;
+    float sum = 0.0f;
+    uint cnt = 0;
+    uint base = b * p.channels * p.in_h * p.in_w + c * p.in_h * p.in_w;
+    for (uint hi = hs; hi < he; hi++) {
+        for (uint wi = ws; wi < we; wi++) {
+            sum += input[base + hi * p.in_w + wi];
+            cnt++;
+        }
+    }
+    output[id] = sum / (float)cnt;
+}
+
+// Pad: 最後の次元にパディングを追加
+struct PadParams {
+    uint outer;
+    uint old_last;
+    uint new_last;
+    uint pad_left;
+};
+
+kernel void pad_f32(
+    device const float* input  [[buffer(0)]],
+    device float* output       [[buffer(1)]],
+    constant PadParams& p      [[buffer(2)]],
+    constant float& pad_value  [[buffer(3)]],
+    uint id [[thread_position_in_grid]]
+) {
+    uint total = p.outer * p.new_last;
+    if (id >= total) return;
+    uint o = id / p.new_last;
+    uint j = id % p.new_last;
+    if (j < p.pad_left || j >= p.pad_left + p.old_last) {
+        output[id] = pad_value;
+    } else {
+        output[id] = input[o * p.old_last + (j - p.pad_left)];
+    }
+}
+
+// Cumsum: 各ローを並列に、ロー内は逐次累積
+struct CumsumParams {
+    uint outer;
+    uint inner;
+};
+
+kernel void cumsum_f32(
+    device const float* input  [[buffer(0)]],
+    device float* output       [[buffer(1)]],
+    constant CumsumParams& p   [[buffer(2)]],
+    uint id [[thread_position_in_grid]]
+) {
+    if (id >= p.outer) return;
+    uint base = id * p.inner;
+    float acc = 0.0f;
+    for (uint i = 0; i < p.inner; i++) {
+        acc += input[base + i];
+        output[base + i] = acc;
+    }
+}
+
+// GroupNorm: バッチ×グループごとに正規化
+struct GroupNormParams {
+    uint batch;
+    uint channels;
+    uint spatial;
+    uint num_groups;
+    uint group_size;
+    float eps;
+};
+
+kernel void group_norm_f32(
+    device const float* input  [[buffer(0)]],
+    device const float* weight [[buffer(1)]],
+    device const float* bias   [[buffer(2)]],
+    device float* output       [[buffer(3)]],
+    constant GroupNormParams& p [[buffer(4)]],
+    constant uint& has_weight  [[buffer(5)]],
+    constant uint& has_bias    [[buffer(6)]],
+    uint id [[thread_position_in_grid]]
+) {
+    // id = batch_idx * num_groups + group_idx
+    uint total = p.batch * p.num_groups;
+    if (id >= total) return;
+    uint b = id / p.num_groups;
+    uint g = id % p.num_groups;
+    uint start_c = g * p.group_size;
+    uint end_c = start_c + p.group_size;
+    uint group_elems = p.group_size * p.spatial;
+    // 平均計算
+    float mean = 0.0f;
+    for (uint c = start_c; c < end_c; c++) {
+        for (uint s = 0; s < p.spatial; s++) {
+            mean += input[b * p.channels * p.spatial + c * p.spatial + s];
+        }
+    }
+    mean /= (float)group_elems;
+    // 分散計算
+    float var = 0.0f;
+    for (uint c = start_c; c < end_c; c++) {
+        for (uint s = 0; s < p.spatial; s++) {
+            float diff = input[b * p.channels * p.spatial + c * p.spatial + s] - mean;
+            var += diff * diff;
+        }
+    }
+    var /= (float)group_elems;
+    float std_inv = 1.0f / sqrt(var + p.eps);
+    // 正規化 + affine
+    for (uint c = start_c; c < end_c; c++) {
+        for (uint s = 0; s < p.spatial; s++) {
+            uint idx = b * p.channels * p.spatial + c * p.spatial + s;
+            float v = (input[idx] - mean) * std_inv;
+            if (has_weight != 0) v *= weight[c];
+            if (has_bias != 0) v += bias[c];
+            output[idx] = v;
+        }
+    }
 }
 "#;
 
