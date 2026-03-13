@@ -14,4 +14,7 @@ pub mod special;
 pub mod nn;
 pub mod mps;
 pub mod llm;
+pub mod nn_shaders;
+pub mod fused;
+pub mod quantized;
 

@@ -24,6 +24,7 @@ pub mod ops {
     pub mod nn;
     pub mod quantized;
     pub mod fused;
+    pub mod nn_shaders;
 }
 pub mod shaders;
 pub mod fusion;
