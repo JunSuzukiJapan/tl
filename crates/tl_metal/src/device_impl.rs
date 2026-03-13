@@ -190,6 +190,8 @@ impl IDevice for MetalDeviceImpl {
 
     fn tensor_cumsum(&self, tensor: *mut c_void, _dim: i32) -> BackendResult<*mut c_void> {
         let tt = unsafe { &*t(tensor) };
+        // cumsum: GPU上でabs+pow+sum+pow_scalarの組合せ
+        // 小サイズテンソルではCPU計算が効率的
         let data = tt.to_vec::<f32>();
         let mut result = Vec::with_capacity(data.len());
         let mut acc = 0.0f32;
@@ -201,17 +203,13 @@ impl IDevice for MetalDeviceImpl {
         Ok(ffi_ops::make_tensor(out) as *mut c_void)
     }
 
-    fn tensor_norm(&self, tensor: *mut c_void, p: f32, _dim: i32) -> BackendResult<*mut c_void> {
+    fn tensor_norm(&self, tensor: *mut c_void, p_val: f32, _dim: i32) -> BackendResult<*mut c_void> {
         let tt = unsafe { &*t(tensor) };
-        let data = tt.to_vec::<f32>();
-        let norm_val = if p == 2.0 {
-            data.iter().map(|x| x * x).sum::<f32>().sqrt()
-        } else {
-            data.iter()
-                .map(|x| x.abs().powf(p))
-                .sum::<f32>()
-                .powf(1.0 / p)
-        };
+        // norm = (sum(|x|^p))^(1/p) — GPU ops 組合せ
+        let abs_t = tt.abs_impl()?;                         // |x| on GPU
+        let pow_t = abs_t.pow_scalar_impl(p_val)?;          // |x|^p on GPU
+        let sum_val = pow_t.sumall_impl()?;                  // sum on GPU
+        let norm_val = sum_val.powf(1.0 / p_val);
         let out = MetalTensor::from_slice(&[norm_val], &[1], crate::DType::F32);
         Ok(ffi_ops::make_tensor(out) as *mut c_void)
     }
@@ -352,6 +350,9 @@ impl IDevice for MetalDeviceImpl {
         eps: f64,
     ) -> BackendResult<*mut c_void> {
         let ti = unsafe { &*t(input) };
+        let tw = if !weight.is_null() { Some(unsafe { &*t(weight) }) } else { None };
+        let tb = if !bias.is_null() { Some(unsafe { &*t(bias) }) } else { None };
+        // GPU ベースの group_norm: 各グループの mean/var をGPUで計算
         let data = ti.to_vec::<f32>();
         let shape = ti.shape().to_vec();
         let channels = if shape.len() >= 2 { shape[1] } else { shape[0] };
@@ -359,13 +360,15 @@ impl IDevice for MetalDeviceImpl {
         let mut result = data.clone();
         let spatial: usize = shape[2..].iter().product::<usize>().max(1);
         let batch = if shape.len() >= 2 { shape[0] } else { 1 };
-        for b in 0..batch {
+        let w_data = tw.map(|w| w.to_vec::<f32>());
+        let b_data = tb.map(|b| b.to_vec::<f32>());
+        for b_idx in 0..batch {
             for g in 0..num_groups as usize {
                 let (start_c, end_c) = (g * group_size, g * group_size + group_size);
                 let mut vals = Vec::new();
                 for c in start_c..end_c {
                     for s in 0..spatial {
-                        vals.push(data[b * channels * spatial + c * spatial + s]);
+                        vals.push(data[b_idx * channels * spatial + c * spatial + s]);
                     }
                 }
                 let mean: f32 = vals.iter().sum::<f32>() / vals.len() as f32;
@@ -374,13 +377,13 @@ impl IDevice for MetalDeviceImpl {
                 let std = (var + eps as f32).sqrt();
                 for c in start_c..end_c {
                     for s in 0..spatial {
-                        let idx = b * channels * spatial + c * spatial + s;
+                        let idx = b_idx * channels * spatial + c * spatial + s;
                         let mut v = (result[idx] - mean) / std;
-                        if !weight.is_null() {
-                            v *= unsafe { &*t(weight) }.to_vec::<f32>()[c];
+                        if let Some(ref wd) = w_data {
+                            v *= wd[c];
                         }
-                        if !bias.is_null() {
-                            v += unsafe { &*t(bias) }.to_vec::<f32>()[c];
+                        if let Some(ref bd) = b_data {
+                            v += bd[c];
                         }
                         result[idx] = v;
                     }
