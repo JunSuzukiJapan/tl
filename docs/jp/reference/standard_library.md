@@ -41,6 +41,8 @@ let popped = v.pop();          // Option::Some(2)
 | `pop() -> Option<T>` | 末尾から取り出し |
 | `get(index) -> Option<T>` | インデックスで取得 |
 | `set(index, item: T)` | インデックスで更新 |
+| `map(f: Fn(T) -> U) -> Vec<U>` | 各要素に関数を適用 |
+| `filter(f: Fn(T) -> bool) -> Vec<T>` | 条件を満たす要素のみ残す |
 
 ### HashMap\<K, V\> — ハッシュマップ
 ```rust
@@ -56,6 +58,10 @@ let val = m.get("key").unwrap(); // 42
 | `is_empty() -> bool` | 空か |
 | `insert(key, value)` | 挿入 |
 | `get(key) -> Option<V>` | 検索 |
+| `remove(key)` | 削除 |
+| `contains_key(key) -> bool` | キーの存在判定 |
+| `keys() -> Vec<K>` | キー一覧 |
+| `values() -> Vec<V>` | 値一覧 |
 
 ### Option\<T\> — 値の有無
 ```rust
@@ -106,7 +112,32 @@ fn divide(a: i64, b: i64) -> Result<i64, String> {
 
 ---
 
-## 4. 標準クラス（静的メソッド）
+## 4. クロージャ（無名関数）
+
+TLはRustスタイルのクロージャをサポートします。
+
+```rust
+// 単一式
+let double = |x: i64| x * 2;
+
+// ブロック本体
+let add = |x: i64, y: i64| -> i64 { x + y };
+
+// 外部変数のキャプチャ
+let factor = 3;
+let mul = |x: i64| -> i64 { x * factor };
+
+// 高階関数へ渡す
+let nums = Vec::new();
+nums.push(1); nums.push(2); nums.push(3);
+let doubled = nums.map(|x: i64| -> i64 { x * 2 });
+```
+
+型表記: `Fn(i64, i64) -> i64`
+
+---
+
+## 5. 標準クラス（静的メソッド）
 
 ### Tensor
 - `Tensor::zeros(shape, requires_grad) -> Tensor`
@@ -151,41 +182,64 @@ fn divide(a: i64, b: i64) -> Result<i64, String> {
 
 ---
 
-## 5. Tensor インスタンスメソッド（抜粋）
+## 6. Tensor インスタンスメソッド（抜粋）
 
 #### 数学 (要素ごと)
 `abs()`, `neg()`, `relu()`, `gelu()`, `silu()`, `sigmoid()`, `tanh()`,
-`sin()`, `cos()`, `tan()`, `sqrt()`, `exp()`, `log()`, `pow(exp)`
+`sin()`, `cos()`, `tan()`, `sqrt()`, `exp()`, `log()`, `pow(exp)`,
+`leaky_relu(slope)`, `elu(alpha)`, `mish()`, `hardswish()`, `hardsigmoid()`
 
 #### 形状 & 操作
-- `reshape(...dims)`, `transpose(dim1, dim2)`, `slice(start, len)`
-- `len()`, `dim()`, `item()`, `item_i64()`
+- `reshape(shape)`, `view(shape)`, `transpose(d1, d2)`, `permute(dims)`
+- `flatten()`, `squeeze(dim)`, `unsqueeze(dim)`, `contiguous()`
+- `slice(start, len)`, `narrow(dim, start, len)`, `chunk(n, dim)`, `split(size, dim, idx)`
+- `cat(tensors, dim)`, `broadcast_to(shape)`, `expand(shape)`
+- `len()`, `dim()`, `ndim()`, `shape()`, `item()`, `item_i64()`
 
 #### リダクション & 統計
 `sum(dim?)`, `mean(dim?)`, `max(dim?)`, `min(dim?)`, `argmax(dim)`, `argmin(dim)`,
-`softmax(dim)`, `log_softmax(dim)`
+`softmax(dim)`, `log_softmax(dim)`, `prod()`, `var()`, `std()`, `cumsum(dim)`, `norm(p)`, `topk(k, dim)`
+
+#### ニューラルネットワーク
+- `matmul(other)`, `linear(weight, bias?)`
+- `conv1d(w, b?, stride, padding)`, `conv2d(w, padding, stride)`
+- `conv_transpose2d(w, b?, stride, padding, output_padding)`
+- `max_pool2d(k, s)`, `avg_pool2d(k, s)`, `adaptive_avg_pool2d(oh, ow)`
+- `interpolate(oh, ow, mode)`, `pad(left, right, value)`
+- `dropout(p, training)`, `dropout2d(p, training)`
+- `batch_norm(w, b, rm, rv, eps)`, `layer_norm(w, b, eps)`
+- `group_norm(groups, w?, b?, eps)`, `instance_norm(w?, b?, eps)`
+- `rms_norm(weight, eps)`, `embedding(weights)`, `cross_entropy(targets)`
+- `apply_rope(cos, sin, dim)`, `dot(other)`, `fill_(value)`
 
 #### 線形代数
-- `matmul(other)`, `tril(diagonal)`, `embedding(weights)`
-- `cross_entropy(targets)`, `conv2d(weight, padding, stride)`
-- `rms_norm(weight, eps)`, `apply_rope(cos, sin, dim)`
+- `inverse()`, `det()`, `solve(b)`, `svd_u()`, `svd_s()`, `svd_v()`, `eig_values()`, `eig_vectors()`
 
 #### 自動微分
 - `backward()`, `grad()`, `enable_grad()`, `detach()`, `clone()`
+- `freeze()`, `unfreeze()`, `clip_grad_norm(max)`, `clip_grad_value(val)`
 
 #### デバイス
-- `cuda()`, `cpu()`
+- `cuda()`, `cpu()`, `to(device)`
 
 ---
 
-## 6. スカラー型メソッド
+## 7. スカラー型メソッド
 
 ### String
-- `len()`, `contains(other)`, `concat(other)`, `char_at(index)`, `to_i64()`
+- `len()`, `is_empty()`, `contains(s)`, `starts_with(s)`, `ends_with(s)`
+- `split(sep)`, `trim()`, `replace(from, to)`, `substring(start, len)`
+- `concat(other)`, `index_of(s)`, `char_at(i)`
+- `to_uppercase()`, `to_lowercase()`
+- `to_i64()`, `to_f32()`, `to_f64()`
 
 ### F32 / F64
 数学関数: `abs`, `sin`, `cos`, `exp`, `log`, `sqrt`, `powf`, `floor`, `ceil`, `round` 等（全31関数）
+型変換: `to_i64()`, `to_f32()`, `to_f64()`, `to_string()`
+その他: `min(x)`, `max(x)`, `clamp(min, max)`
 
 ### I64 / I32
 - `abs()`, `signum()`, `is_positive()`, `is_negative()`
 - `div_euclid(x)`, `rem_euclid(x)`, `pow(x)`
+- `min(x)`, `max(x)`, `clamp(min, max)`
+- `to_f32()`, `to_f64()`, `to_string()`

@@ -5,6 +5,7 @@
 注意:
 - シグネチャは TL の形式で記述されています。
 - `Tensor<T, R>` は、要素型 `T`、ランク `R` のテンソルを意味します（ランクは動的な場合があります）。
+- `GradTensor<T, R>` は勾配追跡付きテンソルです（学習用）。
 - 多くの数値およびテンソルメソッドは、演算子（`+`, `-`, `*`, `/`, `%`）を介しても利用可能です。
 
 ---
@@ -123,52 +124,112 @@
 
 #### 形状とインデックス
 - `reshape(shape) -> Tensor`
+- `view(shape) -> Tensor`
 - `narrow(dim: i64, start: i64, len: i64) -> Tensor`
 - `slice(start: i64, len: i64) -> Tensor`
 - `transpose(dim1: i64, dim2: i64) -> Tensor`
 - `transpose_2d() -> Tensor`
+- `permute(dims) -> Tensor`
+- `contiguous() -> Tensor`
+- `flatten() -> Tensor`
+- `squeeze(dim: i64) -> Tensor`
+- `unsqueeze(dim: i64) -> Tensor`
+- `expand(shape) -> Tensor`
+- `broadcast_to(shape) -> Tensor`
+- `cat(tensors, dim: i64) -> Tensor`
+- `chunk(chunks: i64, dim: i64) -> Tensor`
+- `split(split_size: i64, dim: i64, idx: i64) -> Tensor`
+- `gather(dim: i64, index: Tensor) -> Tensor`
 - `len() -> i64`
 - `dim() -> i64`
-- `get_shape() -> Tensor` (形状テンソル)
+- `ndim() -> i64`
+- `shape() -> Tensor`
+- `get_shape() -> Tensor`
 - `get(i64...) -> f32`
 - `set(i64..., value: f32) -> void`
 
 #### リダクション (簡約)
 - `sum(dim?) -> Tensor`
 - `sum_dim(dim: i64, keepdim: bool) -> Tensor`
+- `sumall() -> f32`
 - `mean(dim?) -> Tensor`
+- `mean_dim(dim: i64) -> Tensor`
 - `max(dim?) -> Tensor`
+- `max_dim(dim: i64) -> Tensor`
 - `min(dim?) -> Tensor`
+- `min_dim(dim: i64) -> Tensor`
 - `argmax(dim: i64) -> Tensor`
 - `argmin(dim: i64) -> Tensor`
+- `prod() -> Tensor`
+- `var() -> Tensor`
+- `std() -> Tensor`
+- `cumsum(dim: i64) -> Tensor`
+- `norm(p: f32) -> Tensor`
+- `topk(k: i64, dim: i64) -> Tensor`
 
-#### 要素ごとの演算 / 活性化関数
+#### 要素ごとの演算
 - `relu()`, `gelu()`, `silu()`, `sigmoid()`, `tanh()`
+- `leaky_relu(negative_slope: f32) -> Tensor`
+- `elu(alpha: f32) -> Tensor`
+- `mish() -> Tensor`
+- `hardswish() -> Tensor`
+- `hardsigmoid() -> Tensor`
 - `exp()`, `log()`, `sqrt()`, `abs()`, `neg()`
 - `sin()`, `cos()`, `tan()`
-- `pow(exp)`, `pow(exp_tensor)`  
+- `pow(exp)`, `pow(exp_tensor)`
 - `clamp(min, max) -> Tensor`
 - `scale(s: f32) -> Tensor`
 
-#### 線形代数とニューラルネットワーク演算
+#### 論理演算
+- `logical_not() -> Tensor`
+
+#### ニューラルネットワーク演算
 - `matmul(other) -> Tensor`
 - `matmul_4d(other) -> Tensor`
-- `add_4d(other) -> Tensor`
-- `cat_4d(other) -> Tensor`
+- `linear(weight, bias?) -> Tensor`
+- `conv1d(weight, bias?, stride: i64, padding: i64) -> Tensor`
+- `conv2d(weight, padding: i64, stride: i64) -> Tensor`
+- `conv_transpose2d(weight, bias?, stride, padding, output_padding) -> Tensor`
+- `max_pool2d(kernel: i64, stride: i64) -> Tensor`
+- `avg_pool2d(kernel: i64, stride: i64) -> Tensor`
+- `adaptive_avg_pool2d(output_h: i64, output_w: i64) -> Tensor`
+- `interpolate(output_h: i64, output_w: i64, mode: i64) -> Tensor`
+- `pad(pad_left: i64, pad_right: i64, value: f32) -> Tensor`
+- `dropout(p: f32, training: bool) -> Tensor`
+- `dropout2d(p: f32, training: bool) -> Tensor`
+- `batch_norm(weight, bias, running_mean, running_var, eps) -> Tensor`
+- `layer_norm(weight, bias, eps) -> Tensor`
+- `group_norm(num_groups, weight?, bias?, eps) -> Tensor`
+- `instance_norm(weight?, bias?, eps) -> Tensor`
+- `rms_norm(weight, eps: f32) -> Tensor`
 - `embedding(weights) -> Tensor`
 - `cross_entropy(targets) -> Tensor`
-- `conv2d(weight, padding: i64, stride: i64) -> Tensor`
-- `tril(diagonal: i64) -> Tensor`
 - `softmax(dim: i64) -> Tensor`
 - `log_softmax(dim: i64) -> Tensor`
-- `rms_norm(weight, eps: f32) -> Tensor`
+- `tril(diagonal: i64) -> Tensor`
+- `masked_fill(mask, value) -> Tensor`
 - `apply_rope(cos, sin, dim: i64) -> Tensor`
 - `repeat_interleave(dim: i64, repeats: i64) -> Tensor`
+- `dot(other) -> Tensor`
+- `fill_(value: f32) -> Tensor`
+- `temperature_scale(temperature: f32) -> Tensor`
+
+#### 線形代数
+- `inverse() -> Tensor`
+- `det() -> Tensor`
+- `solve(b: Tensor) -> Tensor`
+- `svd_u() -> Tensor`, `svd_s() -> Tensor`, `svd_v() -> Tensor`
+- `eig_values() -> Tensor`, `eig_vectors() -> Tensor`
+
+#### サンプリング
 - `sample() -> i64`
+- `top_k_sample(k: i64, temperature: f32) -> i64`
+- `top_p_sample(p: f32, temperature: f32) -> i64`
+- `repetition_penalty(penalty: f32, previous_tokens: Tensor) -> Tensor`
 
 #### 算術演算 (メソッド形式)
 - `add(other)`, `sub(other)`, `mul(other)`, `div(other)`, `mod(other)`
-- `add_assign(other)`, `sub_assign(other)`, `mul_assign(other)`, `div_assign(other)`, `mod_assign(other)`
+- `add_assign(other)`, `sub_assign(other)`, `mul_assign(other)`, `div_assign(other)`
 
 #### 自動微分 (Autograd)
 - `backward() -> void`
@@ -176,17 +237,26 @@
 - `detach() -> Tensor`
 - `enable_grad() -> Tensor`
 - `clone() -> Tensor`
+- `shallow_clone() -> Tensor`
+- `freeze() -> void`
+- `unfreeze() -> void`
+- `clip_grad_norm(max_norm: f32) -> void`
+- `clip_grad_value(value: f32) -> void`
 
 #### デバイス
 - `cuda() -> Tensor`
 - `cpu() -> Tensor`
+- `to(device: String) -> Tensor`
 
-#### デバッグ / I/O
-- `print()`, `print_1()`, `print_2()`, `print_3()`
+#### I/O
+- `print()`, `display()`
 - `item() -> f32`
 - `item_i64() -> i64`
+- `to_f32() -> Tensor`
+- `to_i64() -> Tensor`
+- `save(path: String) -> void`
 
-#### 量子化 / その他
+#### 量子化
 - `matmul_quantized(weight) -> Tensor`
 - `cat_i64(other) -> Tensor`
 
@@ -200,6 +270,8 @@
 - `pop() -> Option<T>` — 末尾要素を取り出す
 - `get(index: i64) -> Option<T>` — インデックスで要素を取得
 - `set(index: i64, item: T) -> void` — インデックスで要素を更新
+- `map(f: Fn(T) -> U) -> Vec<U>` — 各要素に関数を適用
+- `filter(f: Fn(T) -> bool) -> Vec<T>` — 条件を満たす要素のみ残す
 
 ---
 
@@ -208,7 +280,10 @@
 - `is_empty() -> bool` — 空かどうか
 - `insert(key: K, value: V) -> void` — キーと値のペアを挿入
 - `get(key: K) -> Option<V>` — キーで値を検索
-- `remove(key: K) -> void` — キーに対応するエントリを削除（未実装）
+- `remove(key: K) -> void` — キーに対応するエントリを削除
+- `contains_key(key: K) -> bool` — キーが存在するか
+- `keys() -> Vec<K>` — キー一覧
+- `values() -> Vec<V>` — 値一覧
 
 ---
 
@@ -241,6 +316,12 @@
 二項演算:
 `atan2(x)`, `copysign(x)`, `hypot(x)`, `powf(x)`, `pow(x)`, `powi(x)`
 
+型変換:
+`to_i64() -> i64`, `to_f32() -> f32`, `to_f64() -> f64`, `to_string() -> String`
+
+その他:
+`min(x)`, `max(x)`, `clamp(min, max)`
+
 #### I64 / I32
 - `abs() -> int`
 - `signum() -> int`
@@ -249,15 +330,29 @@
 - `div_euclid(x) -> int`
 - `rem_euclid(x) -> int`
 - `pow(x) -> int`
+- `min(x) -> int`, `max(x) -> int`, `clamp(min, max) -> int`
+- `to_f32() -> f32`, `to_f64() -> f64`, `to_string() -> String`
 
 ---
 
 ### String (文字列)
 - `len() -> i64` — 文字列長
+- `is_empty() -> bool` — 空文字列か
 - `contains(other: String) -> bool` — 部分文字列を含むか
+- `starts_with(prefix: String) -> bool` — 前方一致
+- `ends_with(suffix: String) -> bool` — 後方一致
 - `concat(other: String) -> String` — 文字列結合
+- `split(sep: String) -> Vec<String>` — 文字列分割
+- `trim() -> String` — 前後の空白除去
+- `replace(from: String, to: String) -> String` — 文字列置換
+- `substring(start: i64, len: i64) -> String` — 部分文字列
+- `index_of(s: String) -> i64` — 検索（位置を返す、見つからない場合 -1）
+- `to_uppercase() -> String` — 大文字化
+- `to_lowercase() -> String` — 小文字化
 - `char_at(index: i64) -> Char` — 指定位置の文字
 - `to_i64() -> i64` — 整数にパース
+- `to_f32() -> f32` — 浮動小数点にパース
+- `to_f64() -> f64` — 浮動小数点にパース
 - `print() -> void` — 出力
 - `display() -> void` — 出力
 

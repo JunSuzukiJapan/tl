@@ -25,9 +25,10 @@ TensorLogic (TL) は、高性能なテンソル演算と論理プログラミン
 | `Char` | 単一文字 (`'a'`) |
 
 ### Tensor（テンソル）
-多次元配列を表す中核データ構造です。
+多次元配列を表す中核データ構造です。勾配追跡の有無を型で区別します。
 ```rust
-let t: Tensor = Tensor::zeros([2, 2], true);
+let t: Tensor = Tensor::zeros([2, 2], false);       // 勾配なし（推論用）
+let g: GradTensor = Tensor::zeros([2, 2], true);     // 勾配あり（学習用）
 ```
 
 ### Structs（構造体）
@@ -77,6 +78,14 @@ struct Pair<A, B> {
 - `Option<T>` — `Some(T)` または `None`
 - `Result<T, E>` — `Ok(T)` または `Err(E)`
 
+### Fn 型（関数 / クロージャ型）
+関数やクロージャの型を表現します。
+```rust
+fn apply(f: Fn(i64) -> i64, x: i64) -> i64 {
+    f(x)
+}
+```
+
 ## 3. 変数
 
 ### 不変変数（デフォルト）
@@ -121,7 +130,64 @@ pub fn public_function() { }
 pub struct PublicStruct { pub field: i64 }
 ```
 
-## 5. 制御フロー
+## 5. クロージャ（無名関数）
+
+TLはRustスタイルのクロージャをサポートします。外側のスコープの変数をキャプチャできます。
+
+### 基本構文
+
+```rust
+// 引数なし
+let greet = || println("Hello!");
+greet();
+
+// 単一式のクロージャ
+let double = |x: i64| x * 2;
+println("{}", double(5)); // 10
+
+// ブロック本体
+let complex = |x: i64, y: i64| -> i64 {
+    let sum = x + y;
+    sum * 2
+};
+```
+
+### 高階関数への受け渡し
+
+```rust
+let numbers = Vec::new();
+numbers.push(1);
+numbers.push(2);
+numbers.push(3);
+
+// map: 各要素に関数を適用
+let doubled = numbers.map(|x: i64| -> i64 { x * 2 });
+
+// filter: 条件を満たす要素のみ残す
+let evens = numbers.filter(|x: i64| -> bool { x % 2 == 0 });
+```
+
+### 変数キャプチャ
+
+```rust
+let factor = 3;
+let multiply = |x: i64| -> i64 { x * factor };  // factor をキャプチャ
+println("{}", multiply(5)); // 15
+```
+
+### 型注釈
+
+引数の型注釈は省略可能です（型推論で解決される場合）。戻り値の型も省略できます。
+
+```rust
+// 型注釈あり
+let add = |x: i64, y: i64| -> i64 { x + y };
+
+// 型注釈なし（型推論）
+let add = |x, y| x + y;
+```
+
+## 6. 制御フロー
 
 ### If 式
 ```rust
@@ -141,10 +207,17 @@ while i < 10 {
 // Range
 for i in 0..10 { print(i); }
 
+// 半開区間 (start..)
+for i in 0..5 { print(i); }
+
 // Vec
 let v = Vec::new();
 v.push(1); v.push(2);
 for item in v { print(item); }
+
+// Tensor
+let t = Tensor::zeros([5], false);
+for val in t { print(val); }
 ```
 
 ### loop ループ（無限ループ）
@@ -179,7 +252,7 @@ if let Option::Some(x) = maybe_value {
 }
 ```
 
-## 6. 演算子
+## 7. 演算子
 
 ### 算術演算子
 `+`, `-`, `*`, `/`, `%`
@@ -192,6 +265,9 @@ if let Option::Some(x) = maybe_value {
 
 ### ビット演算子
 `&` (AND), `|` (OR), `^` (XOR)
+
+### レンジ演算子
+`..` — レンジ (`0..10`, `0..`, `..10`)
 
 ### 型キャスト
 ```rust
@@ -207,7 +283,7 @@ fn read_file() -> Result<String, String> {
 }
 ```
 
-## 7. 構造体と impl ブロック
+## 8. 構造体と impl ブロック
 
 ```rust
 struct Point {
@@ -226,12 +302,21 @@ impl Point {
 }
 ```
 
-## 8. トレイト
+## 9. トレイト
 
-トレイトはRustと同様のインターフェース機構です。
+トレイトはRustと同様のインターフェース機構です。デフォルトメソッドもサポートします。
 ```rust
 trait Display {
     fn display(self) -> String;
+}
+
+trait Greetable {
+    fn name(self) -> String;
+    // デフォルトメソッド
+    fn greet(self) -> String {
+        let n = self.name();
+        n.concat(", hello!")
+    }
 }
 
 impl Display for Point {
@@ -247,7 +332,7 @@ impl Display for Point {
 - `IndexMut<Idx, Value>` — `[]` 書き込みアクセス
 - `Iterable<T>` — `for` ループのイテレータプロトコル（`len` + `get`）
 
-## 9. テンソル内包表記
+## 10. テンソル内包表記
 
 ```rust
 // 構文: [indices | clauses { body }]
@@ -256,7 +341,7 @@ let A = [i, j | i <- 0..5, j <- 0..5 { i + j }];
 
 暗黙的リダクション解析により、LHS に含まれないインデックスは自動的にリダクションインデックスとして検出されます（Einstein summation convention）。
 
-## 10. 論理プログラミング
+## 11. 論理プログラミング
 
 TLはDatalogスタイルの論理プログラミングを統合しています。
 
@@ -276,7 +361,7 @@ ancestor(X, Y) :- parent(X, Z), ancestor(Z, Y);
 ?- ancestor("Alice", Who);
 ```
 
-## 11. モジュールシステム
+## 12. モジュールシステム
 
 ```rust
 use math::{sin, cos};
