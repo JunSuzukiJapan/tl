@@ -25,9 +25,10 @@ TensorLogic (TL) is a statically typed programming language designed for high-pe
 | `Char` | Single character (`'a'`) |
 
 ### Tensor
-The core data structure representing multi-dimensional arrays.
+The core data structure representing multi-dimensional arrays. Types distinguish whether gradients are tracked.
 ```rust
-let t: Tensor = Tensor::zeros([2, 2], true);
+let t: Tensor = Tensor::zeros([2, 2], false);       // No gradient (inference)
+let g: GradTensor = Tensor::zeros([2, 2], true);     // With gradient (training)
 ```
 
 ### Structs
@@ -77,6 +78,14 @@ Built-in generic types:
 - `Option<T>` — `Some(T)` or `None`
 - `Result<T, E>` — `Ok(T)` or `Err(E)`
 
+### Fn Type (Function / Closure Type)
+Represents the type of functions and closures.
+```rust
+fn apply(f: Fn(i64) -> i64, x: i64) -> i64 {
+    f(x)
+}
+```
+
 ## 3. Variables
 
 ### Immutable Variables (Default)
@@ -121,30 +130,94 @@ pub fn public_function() { }
 pub struct PublicStruct { pub field: i64 }
 ```
 
-## 5. Control Flow
+## 5. Closures (Anonymous Functions)
 
-### If Expressions
+TL supports Rust-style closures that can capture variables from the enclosing scope.
+
+### Basic Syntax
+
+```rust
+// No arguments
+let greet = || println("Hello!");
+greet();
+
+// Single expression closure
+let double = |x: i64| x * 2;
+println("{}", double(5)); // 10
+
+// Block body
+let complex = |x: i64, y: i64| -> i64 {
+    let sum = x + y;
+    sum * 2
+};
+```
+
+### Passing to Higher-Order Functions
+
+```rust
+let numbers = Vec::new();
+numbers.push(1);
+numbers.push(2);
+numbers.push(3);
+
+// map: apply a function to each element
+let doubled = numbers.map(|x: i64| -> i64 { x * 2 });
+
+// filter: keep only elements satisfying a condition
+let evens = numbers.filter(|x: i64| -> bool { x % 2 == 0 });
+```
+
+### Variable Capture
+
+```rust
+let factor = 3;
+let multiply = |x: i64| -> i64 { x * factor };  // captures factor
+println("{}", multiply(5)); // 15
+```
+
+### Type Annotations
+
+Argument type annotations are optional (resolved by type inference). Return types can also be omitted.
+
+```rust
+// With type annotations
+let add = |x: i64, y: i64| -> i64 { x + y };
+
+// Without type annotations (type inference)
+let add = |x, y| x + y;
+```
+
+## 6. Control Flow
+
+### If Expression
 ```rust
 let result = if x > 0 { 1 } else { 0 };
 ```
 
-### While Loops
+### While Loop
 ```rust
 while i < 10 {
     i += 1;
 }
 ```
 
-### For Loops
-Can be used with any type that supports the iterator protocol (`len` + `get` methods).
+### For Loop
+Can be used with any type supporting the iterator protocol (`len` + `get` methods).
 ```rust
 // Range
 for i in 0..10 { print(i); }
+
+// Half-open range (start..)
+for i in 0..5 { print(i); }
 
 // Vec
 let v = Vec::new();
 v.push(1); v.push(2);
 for item in v { print(item); }
+
+// Tensor
+let t = Tensor::zeros([5], false);
+for val in t { print(val); }
 ```
 
 ### Loop (Infinite Loop)
@@ -162,7 +235,7 @@ for i in 0..10 {
 }
 ```
 
-### Match Expressions
+### Match Expression
 ```rust
 match value {
     Option::Some(x) => println("got: {}", x),
@@ -170,7 +243,7 @@ match value {
 }
 ```
 
-### If Let Expressions
+### If Let Expression
 ```rust
 if let Option::Some(x) = maybe_value {
     println("value is: {}", x);
@@ -179,7 +252,7 @@ if let Option::Some(x) = maybe_value {
 }
 ```
 
-## 6. Operators
+## 7. Operators
 
 ### Arithmetic Operators
 `+`, `-`, `*`, `/`, `%`
@@ -193,7 +266,10 @@ if let Option::Some(x) = maybe_value {
 ### Bitwise Operators
 `&` (AND), `|` (OR), `^` (XOR)
 
-### Type Casting
+### Range Operator
+`..` — Range (`0..10`, `0..`, `..10`)
+
+### Type Cast
 ```rust
 let x = 42 as f32;
 ```
@@ -207,7 +283,7 @@ fn read_file() -> Result<String, String> {
 }
 ```
 
-## 7. Structs and impl Blocks
+## 8. Structs and impl Blocks
 
 ```rust
 struct Point {
@@ -226,12 +302,21 @@ impl Point {
 }
 ```
 
-## 8. Traits
+## 9. Traits
 
-Traits provide an interface mechanism similar to Rust.
+Traits provide an interface mechanism similar to Rust. Default methods are also supported.
 ```rust
 trait Display {
     fn display(self) -> String;
+}
+
+trait Greetable {
+    fn name(self) -> String;
+    // Default method
+    fn greet(self) -> String {
+        let n = self.name();
+        n.concat(", hello!")
+    }
 }
 
 impl Display for Point {
@@ -247,7 +332,7 @@ impl Display for Point {
 - `IndexMut<Idx, Value>` — `[]` write access
 - `Iterable<T>` — Iterator protocol for `for` loops (`len` + `get`)
 
-## 9. Tensor Comprehensions
+## 10. Tensor Comprehensions
 
 ```rust
 // Syntax: [indices | clauses { body }]
@@ -256,12 +341,12 @@ let A = [i, j | i <- 0..5, j <- 0..5 { i + j }];
 
 Implicit reduction analysis automatically detects indices not present in the LHS as reduction indices (Einstein summation convention).
 
-## 10. Logic Programming
+## 11. Logic Programming
 
 TL integrates Datalog-style logic programming.
 
 ```rust
-// Relation declaration
+// Relation definition
 relation parent(entity, entity);
 
 // Fact definition
@@ -276,7 +361,7 @@ ancestor(X, Y) :- parent(X, Z), ancestor(Z, Y);
 ?- ancestor("Alice", Who);
 ```
 
-## 11. Module System
+## 12. Module System
 
 ```rust
 use math::{sin, cos};

@@ -8,14 +8,14 @@ For detailed API reference, see [functions_and_types.md](functions_and_types.md)
 ## 1. Global Functions
 
 ### IO & System
-- **`print(value, ...) -> void`** — Print without newline (`{}` formatting supported)
-- **`println(value, ...) -> void`** — Print with newline (`{}` formatting supported)
-- **`read_line(prompt: String) -> String`** — Read a line from stdin
-- **`panic(message: String) -> Never`** — Print error message and terminate
+- **`print(value, ...) -> void`** — Print without newline (`{}` format supported)
+- **`println(value, ...) -> void`** — Print with newline (`{}` format supported)
+- **`read_line(prompt: String) -> String`** — Read one line from stdin
+- **`panic(message: String) -> Never`** — Print error and terminate
 
 ### Command-Line Arguments
 - **`args_count() -> i64`** — Number of command-line arguments
-- **`args_get(index: i64) -> String`** — Get a command-line argument
+- **`args_get(index: i64) -> String`** — Get command-line argument
 
 ---
 
@@ -34,13 +34,15 @@ let popped = v.pop();          // Option::Some(2)
 |---|---|
 | `Vec::new() -> Vec<T>` | Create empty Vec |
 | `Vec::with_capacity(cap) -> Vec<T>` | Create Vec with capacity |
-| `len() -> i64` | Number of elements |
+| `len() -> i64` | Element count |
 | `capacity() -> i64` | Capacity |
-| `is_empty() -> bool` | Whether empty |
+| `is_empty() -> bool` | Is empty |
 | `push(item: T)` | Append to end |
 | `pop() -> Option<T>` | Remove from end |
 | `get(index) -> Option<T>` | Get by index |
-| `set(index, item: T)` | Update by index |
+| `set(index, item: T)` | Set by index |
+| `map(f: Fn(T) -> U) -> Vec<U>` | Apply function to each element |
+| `filter(f: Fn(T) -> bool) -> Vec<T>` | Keep elements matching condition |
 
 ### HashMap\<K, V\> — Hash Map
 ```rust
@@ -52,10 +54,14 @@ let val = m.get("key").unwrap(); // 42
 | Method | Description |
 |---|---|
 | `HashMap::new() -> HashMap<K, V>` | Create empty HashMap |
-| `len() -> i64` | Number of entries |
-| `is_empty() -> bool` | Whether empty |
+| `len() -> i64` | Entry count |
+| `is_empty() -> bool` | Is empty |
 | `insert(key, value)` | Insert |
-| `get(key) -> Option<V>` | Look up |
+| `get(key) -> Option<V>` | Lookup |
+| `remove(key)` | Remove |
+| `contains_key(key) -> bool` | Check key existence |
+| `keys() -> Vec<K>` | List of keys |
+| `values() -> Vec<V>` | List of values |
 
 ### Option\<T\> — Optional Value
 ```rust
@@ -70,8 +76,8 @@ match some_val {
 
 | Method | Description |
 |---|---|
-| `is_some() -> bool` | Whether `Some` |
-| `is_none() -> bool` | Whether `None` |
+| `is_some() -> bool` | Is `Some` |
+| `is_none() -> bool` | Is `None` |
 | `unwrap() -> T` | Extract value (panics on `None`) |
 | `unwrap_or(default: T) -> T` | Extract with default |
 
@@ -87,12 +93,12 @@ fn divide(a: i64, b: i64) -> Result<i64, String> {
 
 | Method | Description |
 |---|---|
-| `is_ok() -> bool` | Whether `Ok` |
-| `is_err() -> bool` | Whether `Err` |
+| `is_ok() -> bool` | Is `Ok` |
+| `is_err() -> bool` | Is `Err` |
 | `unwrap() -> T` | Extract value (panics on `Err`) |
 | `unwrap_err() -> E` | Extract error |
 
-`?` operator: Can be used with `Result` types; returns early on `Err`.
+`?` operator: Can be used with `Result` for early return on `Err`.
 
 ---
 
@@ -106,100 +112,107 @@ fn divide(a: i64, b: i64) -> Result<i64, String> {
 
 ---
 
-## 4. Standard Classes (Static Methods)
+## 4. Closures (Anonymous Functions)
 
-### Tensor
-- `Tensor::zeros(shape, requires_grad?) -> Tensor`
-- `Tensor::randn(shape, requires_grad?) -> Tensor`
-- `Tensor::ones(shape, requires_grad?) -> Tensor`
-- `Tensor::load(path: String) -> Tensor`
-- `Tensor::from_vec_u8(data: Vec<u8>, shape: Vec<i64>) -> Tensor`
-- `Tensor::clear_grads() -> void`
+TL supports Rust-style closures.
 
-### Param (Parameter Management)
-- `Param::save_all(path) -> void` — Save all parameters
-- `Param::load_all(path) -> void` — Load all parameters
-- `Param::register(t: Tensor) -> Tensor` — Register tensor as parameter
-- `Param::update_all(lr: f32) -> void` — Update all parameters
-- `Param::register_modules(root: Struct) -> void` — Register modules
-- `Param::checkpoint(method, input) -> Tensor` — Activation checkpoint
-- `Param::set_device(device) -> void` — Set compute device
+```rust
+// Single expression
+let double = |x: i64| x * 2;
 
-### File
-- `File::open(path, mode) -> File`
-- `File::exists(path) -> bool`
-- `File::read(path) -> String`
-- `File::write(path, content) -> bool`
-- `File::download(url, dest) -> bool`
+// Block body
+let add = |x: i64, y: i64| -> i64 { x + y };
 
-### Path
-- `Path::new(path) -> Path`
+// Variable capture
+let factor = 3;
+let mul = |x: i64| -> i64 { x * factor };
 
-### System
-- `System::time() -> f32`
-- `System::sleep(seconds) -> void`
-- `System::memory_mb() -> i64`
+// Passing to higher-order functions
+let nums = Vec::new();
+nums.push(1); nums.push(2); nums.push(3);
+let doubled = nums.map(|x: i64| -> i64 { x * 2 });
+```
 
-### Env
-- `Env::get(key) -> String`
-- `Env::set(key, value) -> void`
-
-### Http
-- `Http::get(url) -> String`
-- `Http::download(url, dest) -> bool`
-
-### Image
-- `Image::load_grayscale(path) -> Tensor`
+Type notation: `Fn(i64, i64) -> i64`
 
 ---
 
-## 5. Tensor Instance Methods (Excerpt)
+## 5. Standard Classes (Static Methods)
+
+### Tensor
+- `Tensor::zeros(shape, requires_grad) -> Tensor`
+- `Tensor::randn(shape, requires_grad) -> Tensor`
+- `Tensor::ones(shape, requires_grad) -> Tensor`
+- `Tensor::load(path: String) -> Tensor`
+
+### Param (Parameter Management)
+- `Param::save_all(path)`, `Param::load_all(path)`
+- `Param::register(t) -> Tensor`, `Param::update_all(lr)`
+- `Param::register_modules(root)`, `Param::checkpoint(method, input)`
+- `Param::set_device(device)`
+
+### File
+- `File::open(path, mode)`, `File::exists(path)`, `File::read(path)`, `File::write(path, content)`, `File::download(url, dest)`
+
+### Path, System, Env, Http, Image
+See [functions_and_types.md](functions_and_types.md) for full details.
+
+---
+
+## 6. Tensor Instance Methods (Excerpt)
 
 #### Math (Element-wise)
 `abs()`, `neg()`, `relu()`, `gelu()`, `silu()`, `sigmoid()`, `tanh()`,
-`sin()`, `cos()`, `tan()`, `sqrt()`, `exp()`, `log()`, `pow(exp)`
+`sin()`, `cos()`, `tan()`, `sqrt()`, `exp()`, `log()`, `pow(exp)`,
+`leaky_relu(slope)`, `elu(alpha)`, `mish()`, `hardswish()`, `hardsigmoid()`
 
 #### Shape & Operations
-- `reshape(...dims)`, `transpose(dim1, dim2)`, `slice(dim, start, len, stride)`
-- `squeeze(dim)`, `unsqueeze(dim)`, `flatten(dim)`, `permute(dims)`
-- `contiguous()`, `cat(other)`, `gather(indices)`
-- `len()`, `dim(d)`, `ndim()`, `shape()`, `item()`, `item_i64()`
+- `reshape(shape)`, `view(shape)`, `transpose(d1, d2)`, `permute(dims)`
+- `flatten()`, `squeeze(dim)`, `unsqueeze(dim)`, `contiguous()`
+- `slice(start, len)`, `narrow(dim, start, len)`, `chunk(n, dim)`, `split(size, dim, idx)`
+- `cat(tensors, dim)`, `broadcast_to(shape)`, `expand(shape)`
 
 #### Reductions & Statistics
 `sum(dim?)`, `mean(dim?)`, `max(dim?)`, `min(dim?)`, `argmax(dim)`, `argmin(dim)`,
-`softmax(dim)`, `log_softmax(dim)`
+`softmax(dim)`, `log_softmax(dim)`, `prod()`, `var()`, `std()`, `cumsum(dim)`, `norm(p)`, `topk(k, dim)`
+
+#### Neural Networks
+- `matmul(other)`, `linear(weight, bias?)`
+- `conv1d(w, b?, stride, padding)`, `conv2d(w, padding, stride)`, `conv_transpose2d(...)`
+- `max_pool2d(k, s)`, `avg_pool2d(k, s)`, `adaptive_avg_pool2d(oh, ow)`
+- `interpolate(oh, ow, mode)`, `pad(left, right, value)`
+- `dropout(p, training)`, `dropout2d(p, training)`
+- `batch_norm(...)`, `layer_norm(...)`, `group_norm(...)`, `instance_norm(...)`, `rms_norm(...)`
+- `embedding(weights)`, `cross_entropy(targets)`, `dot(other)`, `fill_(value)`
 
 #### Linear Algebra
-- `matmul(other)`, `tril(diagonal)`, `embedding(weights)`
-- `cross_entropy(targets)`, `conv2d(weight, padding, stride)`
-- `rms_norm(weight, eps)`, `apply_rope(cos, sin, dim)`
+- `inverse()`, `det()`, `solve(b)`, `svd_u()`, `svd_s()`, `svd_v()`, `eig_values()`, `eig_vectors()`
 
 #### Autograd
-- `backward()`, `grad()`, `enable_grad()`, `detach(requires_grad?)`, `clone()`, `shallow_clone()`
+- `backward()`, `grad()`, `enable_grad()`, `detach()`, `clone()`
+- `freeze()`, `unfreeze()`, `clip_grad_norm(max)`, `clip_grad_value(val)`
 
 #### Device
 - `cuda()`, `cpu()`, `to(device)`
 
-#### Comparison (Operator Form)
-- `==`, `!=`, `<`, `<=`, `>`, `>=` — Returns Tensor of `0.0` / `1.0` values
-
-#### Debug / I/O / Other
-- `print()`, `display()`, `save(path)`
-- `to_i64()` — Converts element type to i64
-- `dropout(p, training)` — Applies dropout
-- `sample(temperature, top_p)` — Samples from logits
-- `sumall()` — Reduces all elements to a scalar
-
 ---
 
-## 6. Scalar Type Methods
+## 7. Scalar Type Methods
 
 ### String
-- `len()`, `contains(other)`, `concat(other)`, `char_at(index)`, `to_i64()`
+- `len()`, `is_empty()`, `contains(s)`, `starts_with(s)`, `ends_with(s)`
+- `split(sep)`, `trim()`, `replace(from, to)`, `substring(start, len)`
+- `concat(other)`, `index_of(s)`, `char_at(i)`
+- `to_uppercase()`, `to_lowercase()`
+- `to_i64()`, `to_f32()`, `to_f64()`
 
 ### F32 / F64
-Math functions: `abs`, `sin`, `cos`, `exp`, `log`, `sqrt`, `powf`, `floor`, `ceil`, `round`, etc. (31 functions total)
+Math: `abs`, `sin`, `cos`, `exp`, `log`, `sqrt`, `powf`, `floor`, `ceil`, `round`, etc. (31 functions)
+Conversion: `to_i64()`, `to_f32()`, `to_f64()`, `to_string()`
+Other: `min(x)`, `max(x)`, `clamp(min, max)`
 
 ### I64 / I32
 - `abs()`, `signum()`, `is_positive()`, `is_negative()`
 - `div_euclid(x)`, `rem_euclid(x)`, `pow(x)`
+- `min(x)`, `max(x)`, `clamp(min, max)`
+- `to_f32()`, `to_f64()`, `to_string()`

@@ -5,6 +5,7 @@ This document lists the currently supported **global functions**, **types**, and
 Notes:
 - Signatures are written in TL notation.
 - `Tensor<T, R>` means a tensor with element type `T` and rank `R` (rank may be dynamic).
+- `GradTensor<T, R>` is a gradient-tracking tensor (for training).
 - Many numeric and tensor methods are also available via operators (`+`, `-`, `*`, `/`, `%`).
 
 ---
@@ -13,11 +14,11 @@ Notes:
 
 ### I/O
 - `print(value, ...) -> void`  
-  Prints without newline. When using `{}` formatting, the first argument must be a string literal.
+  Prints without newline. When using `{}` format, the first argument must be a string literal.
 - `println(value, ...) -> void`  
-  Prints with newline. When using `{}` formatting, the first argument must be a string literal.
+  Prints with newline. When using `{}` format, the first argument must be a string literal.
 - `read_line(prompt: String) -> String`  
-  Displays a prompt and reads a line from stdin.
+  Displays a prompt and reads one line from stdin.
 
 ### Args
 - `args_count() -> i64`  
@@ -40,26 +41,25 @@ Notes:
 - `Tensor::load(path: String) -> Tensor`
 
 ### Vec\<T\> (Static)
-- `Vec<T>::new() -> Vec<T>` — Creates an empty Vec
-- `Vec<T>::with_capacity(cap: i64) -> Vec<T>` — Creates a Vec with specified capacity
+- `Vec<T>::new() -> Vec<T>` — Create an empty Vec
+- `Vec<T>::with_capacity(cap: i64) -> Vec<T>` — Create a Vec with specified capacity
 
 ### HashMap\<K, V\> (Static)
-- `HashMap<K, V>::new() -> HashMap<K, V>` — Creates an empty HashMap
+- `HashMap<K, V>::new() -> HashMap<K, V>` — Create an empty HashMap
 
 ### Option\<T\> (Enum)
 - `Option::Some(value: T)` — Variant holding a value
-- `Option::None` — Variant with no value
+- `Option::None` — Variant without a value
 
 ### Result\<T, E\> (Enum)
-- `Result::Ok(value: T)` — Variant holding a success value
-- `Result::Err(error: E)` — Variant holding an error value
+- `Result::Ok(value: T)` — Success variant
+- `Result::Err(error: E)` — Error variant
 
 ### Param (Parameter Management)
 - `Param::save_all(path: String, format?: String) -> void`
 - `Param::load_all(path: String, format?: String) -> void`
 - `Param::save(target, path: String) -> void`
 - `Param::load(path: String) -> Tensor`
-- `Param::load(target, path: String) -> void`
 - `Param::add(name: String, t: Tensor) -> void`
 - `Param::register(t: Tensor) -> Tensor`
 - `Param::update_all(lr: f32) -> void`
@@ -123,186 +123,152 @@ Notes:
 
 #### Shape and Indexing
 - `reshape(shape) -> Tensor`
+- `view(shape) -> Tensor`
 - `narrow(dim: i64, start: i64, len: i64) -> Tensor`
 - `slice(start: i64, len: i64) -> Tensor`
 - `transpose(dim1: i64, dim2: i64) -> Tensor`
 - `transpose_2d() -> Tensor`
-- `len() -> i64`
-- `dim() -> i64`
-- `get_shape() -> Tensor`
-- `get(i64...) -> f32`
-- `set(i64..., value: f32) -> void`
+- `permute(dims) -> Tensor`
+- `contiguous() -> Tensor`
+- `flatten() -> Tensor`
+- `squeeze(dim: i64) -> Tensor`
+- `unsqueeze(dim: i64) -> Tensor`
+- `expand(shape) -> Tensor`
+- `broadcast_to(shape) -> Tensor`
+- `cat(tensors, dim: i64) -> Tensor`
+- `chunk(chunks: i64, dim: i64) -> Tensor`
+- `split(split_size: i64, dim: i64, idx: i64) -> Tensor`
+- `gather(dim: i64, index: Tensor) -> Tensor`
+- `len() -> i64`, `dim() -> i64`, `ndim() -> i64`
+- `shape() -> Tensor`, `get_shape() -> Tensor`
+- `get(i64...) -> f32`, `set(i64..., value: f32) -> void`
 
 #### Reductions
-- `sum(dim?) -> Tensor`
-- `sum_dim(dim: i64, keepdim: bool) -> Tensor`
-- `mean(dim?) -> Tensor`
-- `max(dim?) -> Tensor`
-- `min(dim?) -> Tensor`
-- `argmax(dim: i64) -> Tensor`
-- `argmin(dim: i64) -> Tensor`
+- `sum(dim?) -> Tensor`, `sum_dim(dim, keepdim) -> Tensor`, `sumall() -> f32`
+- `mean(dim?) -> Tensor`, `mean_dim(dim) -> Tensor`
+- `max(dim?) -> Tensor`, `max_dim(dim) -> Tensor`
+- `min(dim?) -> Tensor`, `min_dim(dim) -> Tensor`
+- `argmax(dim) -> Tensor`, `argmin(dim) -> Tensor`
+- `prod() -> Tensor`, `var() -> Tensor`, `std() -> Tensor`
+- `cumsum(dim) -> Tensor`, `norm(p) -> Tensor`, `topk(k, dim) -> Tensor`
 
-#### Element-wise Operations / Activation Functions
+#### Element-wise Operations
 - `relu()`, `gelu()`, `silu()`, `sigmoid()`, `tanh()`
+- `leaky_relu(negative_slope) -> Tensor`, `elu(alpha) -> Tensor`
+- `mish() -> Tensor`, `hardswish() -> Tensor`, `hardsigmoid() -> Tensor`
 - `exp()`, `log()`, `sqrt()`, `abs()`, `neg()`
-- `sin()`, `cos()`, `tan()`
-- `pow(exp)`, `pow(exp_tensor)`  
-- `clamp(min, max) -> Tensor`
-- `scale(s: f32) -> Tensor`
+- `sin()`, `cos()`, `tan()`, `pow(exp)`, `clamp(min, max) -> Tensor`, `scale(s) -> Tensor`
 
-#### Linear Algebra and Neural Network Operations
-- `matmul(other) -> Tensor`
-- `matmul_4d(other) -> Tensor`
-- `add_4d(other) -> Tensor`
-- `cat_4d(other) -> Tensor`
-- `embedding(weights) -> Tensor`
-- `cross_entropy(targets) -> Tensor`
-- `conv2d(weight, padding: i64, stride: i64) -> Tensor`
-- `tril(diagonal: i64) -> Tensor`
-- `softmax(dim: i64) -> Tensor`
-- `log_softmax(dim: i64) -> Tensor`
-- `rms_norm(weight, eps: f32) -> Tensor`
-- `apply_rope(cos, sin, dim: i64) -> Tensor`
-- `repeat_interleave(dim: i64, repeats: i64) -> Tensor`
-- `sample() -> i64`
+#### Logical Operations
+- `logical_not() -> Tensor`
 
-#### Arithmetic (Method Form)
+#### Neural Network Operations
+- `matmul(other)`, `matmul_4d(other)`, `linear(weight, bias?)`
+- `conv1d(weight, bias?, stride, padding)`, `conv2d(weight, padding, stride)`
+- `conv_transpose2d(weight, bias?, stride, padding, output_padding)`
+- `max_pool2d(kernel, stride)`, `avg_pool2d(kernel, stride)`
+- `adaptive_avg_pool2d(output_h, output_w)`, `interpolate(output_h, output_w, mode)`
+- `pad(pad_left, pad_right, value)`, `dropout(p, training)`, `dropout2d(p, training)`
+- `batch_norm(w, b, rm, rv, eps)`, `layer_norm(w, b, eps)`
+- `group_norm(groups, w?, b?, eps)`, `instance_norm(w?, b?, eps)`, `rms_norm(w, eps)`
+- `embedding(weights)`, `cross_entropy(targets)`, `softmax(dim)`, `log_softmax(dim)`
+- `tril(diagonal)`, `masked_fill(mask, value)`, `apply_rope(cos, sin, dim)`
+- `repeat_interleave(dim, repeats)`, `dot(other)`, `fill_(value)`, `temperature_scale(temp)`
+
+#### Linear Algebra
+- `inverse()`, `det()`, `solve(b)`, `svd_u()`, `svd_s()`, `svd_v()`, `eig_values()`, `eig_vectors()`
+
+#### Sampling
+- `sample() -> i64`, `top_k_sample(k, temp) -> i64`, `top_p_sample(p, temp) -> i64`
+- `repetition_penalty(penalty, previous_tokens) -> Tensor`
+
+#### Arithmetic (Method form)
 - `add(other)`, `sub(other)`, `mul(other)`, `div(other)`, `mod(other)`
-- `add_assign(other)`, `sub_assign(other)`, `mul_assign(other)`, `div_assign(other)`, `mod_assign(other)`
+- `add_assign(other)`, `sub_assign(other)`, `mul_assign(other)`, `div_assign(other)`
 
 #### Autograd
-- `backward() -> void`
-- `grad() -> Tensor`
-- `detach() -> Tensor`
-- `enable_grad() -> Tensor`
-- `clone() -> Tensor`
+- `backward()`, `grad()`, `detach()`, `enable_grad()`, `clone()`, `shallow_clone()`
+- `freeze()`, `unfreeze()`, `clip_grad_norm(max_norm)`, `clip_grad_value(value)`
 
 #### Device
-- `cuda() -> Tensor`
-- `cpu() -> Tensor`
+- `cuda() -> Tensor`, `cpu() -> Tensor`, `to(device) -> Tensor`
 
-#### Debug / I/O
-- `print()`, `print_1()`, `print_2()`, `print_3()`
-- `item() -> f32`
-- `item_i64() -> i64`
-
-#### Quantization / Other
-- `matmul_quantized(weight) -> Tensor`
-- `cat_i64(other) -> Tensor`
+#### I/O
+- `print()`, `display()`, `item() -> f32`, `item_i64() -> i64`
+- `to_f32() -> Tensor`, `to_i64() -> Tensor`, `save(path) -> void`
 
 ---
 
 ### Vec\<T\> (Instance)
-- `len() -> i64` — Returns the number of elements
-- `capacity() -> i64` — Returns the capacity
-- `is_empty() -> bool` — Whether the vec is empty
-- `push(item: T) -> void` — Appends an element to the end
-- `pop() -> Option<T>` — Removes and returns the last element
-- `get(index: i64) -> Option<T>` — Gets an element by index
-- `set(index: i64, item: T) -> void` — Updates an element by index
+- `len() -> i64`, `capacity() -> i64`, `is_empty() -> bool`
+- `push(item: T)`, `pop() -> Option<T>`, `get(index) -> Option<T>`, `set(index, item: T)`
+- `map(f: Fn(T) -> U) -> Vec<U>` — Apply a function to each element
+- `filter(f: Fn(T) -> bool) -> Vec<T>` — Keep only elements satisfying a condition
 
 ---
 
 ### HashMap\<K, V\> (Instance)
-- `len() -> i64` — Returns the number of entries
-- `is_empty() -> bool` — Whether the map is empty
-- `insert(key: K, value: V) -> void` — Inserts a key-value pair
-- `get(key: K) -> Option<V>` — Looks up a value by key
-- `remove(key: K) -> void` — Removes an entry by key (not yet implemented)
+- `len() -> i64`, `is_empty() -> bool`
+- `insert(key, value)`, `get(key) -> Option<V>`, `remove(key)`
+- `contains_key(key) -> bool`, `keys() -> Vec<K>`, `values() -> Vec<V>`
 
 ---
 
 ### Option\<T\> (Instance)
-- `is_some() -> bool` — Whether it is `Some`
-- `is_none() -> bool` — Whether it is `None`
-- `unwrap() -> T` — Extracts the value (panics on `None`)
-- `unwrap_or(default: T) -> T` — Extracts the value (returns default on `None`)
+- `is_some() -> bool`, `is_none() -> bool`
+- `unwrap() -> T`, `unwrap_or(default: T) -> T`
 
 ---
 
 ### Result\<T, E\> (Instance)
-- `is_ok() -> bool` — Whether it is `Ok`
-- `is_err() -> bool` — Whether it is `Err`
-- `unwrap() -> T` — Extracts the value (panics on `Err`)
-- `unwrap_err() -> E` — Extracts the error (panics on `Ok`)
+- `is_ok() -> bool`, `is_err() -> bool`
+- `unwrap() -> T`, `unwrap_err() -> E`
 
-`?` operator: Can be used with `Result` types; returns early on `Err`.
+`?` operator: Can be used with `Result` types for early return on `Err`.
 
 ---
 
 ### Numeric Types (F32, F64, I32, I64)
 
 #### F32 / F64
-Unary operations:
-`abs`, `acos`, `acosh`, `asin`, `asinh`, `atan`, `atanh`, `cbrt`, `ceil`, `cos`, `cosh`,
+Unary: `abs`, `acos`, `acosh`, `asin`, `asinh`, `atan`, `atanh`, `cbrt`, `ceil`, `cos`, `cosh`,
 `exp`, `exp2`, `exp_m1`, `floor`, `fract`, `ln`, `ln_1p`, `log`, `log10`, `log2`, `recip`, `round`,
 `signum`, `sin`, `sinh`, `sqrt`, `tan`, `tanh`, `to_degrees`, `to_radians`, `trunc`
 
-Binary operations:
-`atan2(x)`, `copysign(x)`, `hypot(x)`, `powf(x)`, `pow(x)`, `powi(x)`
+Binary: `atan2(x)`, `copysign(x)`, `hypot(x)`, `powf(x)`, `pow(x)`, `powi(x)`
+
+Conversion: `to_i64()`, `to_f32()`, `to_f64()`, `to_string()`
+
+Other: `min(x)`, `max(x)`, `clamp(min, max)`
 
 #### I64 / I32
-- `abs() -> int`
-- `signum() -> int`
-- `is_positive() -> bool`
-- `is_negative() -> bool`
-- `div_euclid(x) -> int`
-- `rem_euclid(x) -> int`
-- `pow(x) -> int`
+- `abs()`, `signum()`, `is_positive()`, `is_negative()`
+- `div_euclid(x)`, `rem_euclid(x)`, `pow(x)`
+- `min(x)`, `max(x)`, `clamp(min, max)`
+- `to_f32()`, `to_f64()`, `to_string()`
 
 ---
 
 ### String
-- `len() -> i64` — String length
-- `contains(other: String) -> bool` — Whether it contains a substring
-- `concat(other: String) -> String` — String concatenation
-- `char_at(index: i64) -> Char` — Character at the given position
-- `to_i64() -> i64` — Parse as integer
-- `print() -> void` — Print
-- `display() -> void` — Display
+- `len()`, `is_empty()`, `contains(other)`, `starts_with(prefix)`, `ends_with(suffix)`
+- `split(sep) -> Vec<String>`, `trim()`, `replace(from, to)`, `substring(start, len)`
+- `concat(other)`, `index_of(s) -> i64`, `char_at(index) -> Char`
+- `to_uppercase()`, `to_lowercase()`
+- `to_i64()`, `to_f32()`, `to_f64()`, `print()`, `display()`
 
 ---
 
 ### File (Instance)
-- `read_string() -> String`
-- `write_string(s: String) -> void`
-- `read_to_end() -> Vec<u8>`
-- `write(bytes: Vec<u8>) -> void`
-- `close() -> void`
-- `free() -> void`
-
----
+- `read_string()`, `write_string(s)`, `read_to_end() -> Vec<u8>`, `write(bytes)`, `close()`, `free()`
 
 ### Path (Instance)
-- `join(part: String) -> Path`
-- `exists() -> bool`
-- `is_dir() -> bool`
-- `is_file() -> bool`
-- `to_string() -> String`
-- `free() -> void`
-
----
+- `join(part)`, `exists()`, `is_dir()`, `is_file()`, `to_string()`, `free()`
 
 ### Tokenizer (Instance)
-- `encode(text: String) -> Tensor<I64, 1>`
-- `decode(tokens: Tensor<I64, 1>) -> String`
-- `token_id(token: String) -> i64`
-- `vocab_size() -> i64`
-- `free() -> void`
-
----
+- `encode(text) -> Tensor<I64, 1>`, `decode(tokens) -> String`, `token_id(token) -> i64`, `vocab_size() -> i64`, `free()`
 
 ### KVCache (Instance)
-- `get_k(layer: i64) -> Tensor<F32, 0>`
-- `get_v(layer: i64) -> Tensor<F32, 0>`
-- `update(layer: i64, k: Tensor, v: Tensor) -> void`
-- `free() -> void`
-
----
+- `get_k(layer)`, `get_v(layer)`, `update(layer, k, v)`, `free()`
 
 ### Map (Instance)
-- `get(key: String) -> Tensor<F32, 0>`
-- `get_1d(key: String) -> Tensor<F32, 1>`
-- `get_quantized(key: String) -> i64`
-- `set(key: String, value: String) -> void`
-- `free() -> void`
+- `get(key)`, `get_1d(key)`, `get_quantized(key) -> i64`, `set(key, value)`, `free()`
