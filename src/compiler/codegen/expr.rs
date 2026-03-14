@@ -6232,7 +6232,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Detect BEFORE compile_expr(obj) so we have full AST access to the closure.
         // The element type comes from the closure argument's type annotation,
         // NOT from parsing mangled type names.
-        let closure_methods = ["map", "filter", "any", "all", "and_then", "unwrap_or_else", "map_err"];
+        let closure_methods = ["map", "filter", "any", "all", "and_then", "unwrap_or_else", "map_err", "reduce"];
         if closure_methods.contains(&method) && args.len() == 1 {
             if let ExprKind::Closure { args: closure_args, body, .. } = &args[0].inner {
                 // Get element type from the closure argument's type annotation
@@ -6272,6 +6272,21 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
 
         let (obj_val, obj_ty) = self.compile_expr(obj)?;
+
+        // === Vec.join(sep: String) -> String ===
+        if method == "join" && args.len() == 1 {
+            let is_vec = match &obj_ty {
+                Type::Struct(name, _) => {
+                    let base = mangle_base_name(name);
+                    base == "Vec"
+                }
+                _ => false,
+            };
+            if is_vec {
+                return self.compile_vec_join(obj_val, &obj_ty, args);
+            }
+        }
+
         self.emit_method_call(obj, obj_val, obj_ty, method, args)
     }
 
@@ -7308,8 +7323,261 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let result = self.builder.build_load(self.context.bool_type(), result_alloca, "result").unwrap();
                 Ok((result, Type::Bool))
             }
+            "reduce" => {
+                // reduce(|acc, x| expr) -> T
+                // acc starts with vec[0], loop from i=1 to len
+                let acc_alloca = self.builder.build_alloca(elem_llvm_ty, "acc").unwrap();
+
+                // Handle empty vec: return zero
+                let has_elements = self.builder.build_int_compare(
+                    inkwell::IntPredicate::SGT, len, zero, "has_elements",
+                ).unwrap();
+
+                let init_bb = self.context.append_basic_block(current_fn, "reduce_init");
+                let loop_bb = self.context.append_basic_block(current_fn, "reduce_loop");
+                let body_bb = self.context.append_basic_block(current_fn, "reduce_body");
+                let done_bb = self.context.append_basic_block(current_fn, "reduce_done");
+
+                self.builder.build_conditional_branch(has_elements, init_bb, done_bb).unwrap();
+
+                // Init: acc = vec[0]
+                self.builder.position_at_end(init_bb);
+                let first_addr = unsafe {
+                    self.builder.build_gep(elem_llvm_ty, data_ptr.into_pointer_value(), &[zero], "first_addr").unwrap()
+                };
+                let first_val = self.builder.build_load(elem_llvm_ty, first_addr, "first").unwrap();
+                self.builder.build_store(acc_alloca, first_val).unwrap();
+
+                // i = 1
+                let i_alloca = self.builder.build_alloca(i64_type, "i").unwrap();
+                self.builder.build_store(i_alloca, i64_type.const_int(1, false)).unwrap();
+                self.builder.build_unconditional_branch(loop_bb).unwrap();
+
+                // Loop check: i < len
+                self.builder.position_at_end(loop_bb);
+                let i_val = self.builder.build_load(i64_type, i_alloca, "i").unwrap().into_int_value();
+                let cond = self.builder.build_int_compare(
+                    inkwell::IntPredicate::SLT, i_val, len, "cond",
+                ).unwrap();
+                self.builder.build_conditional_branch(cond, body_bb, done_bb).unwrap();
+
+                // Body: acc = closure(acc, elem)
+                self.builder.position_at_end(body_bb);
+                let elem_addr = unsafe {
+                    self.builder.build_gep(elem_llvm_ty, data_ptr.into_pointer_value(), &[i_val], "elem_addr").unwrap()
+                };
+                let elem_val = self.builder.build_load(elem_llvm_ty, elem_addr, "elem").unwrap();
+                let acc_val = self.builder.build_load(elem_llvm_ty, acc_alloca, "acc_val").unwrap();
+
+                // Bind closure args (acc, x)
+                self.enter_scope();
+                let acc_name = closure_args.first().map(|(n, _)| n.as_str()).unwrap_or("acc");
+                let x_name = closure_args.get(1).map(|(n, _)| n.as_str()).unwrap_or("x");
+
+                let acc_arg = self.builder.build_alloca(elem_llvm_ty, acc_name).unwrap();
+                self.builder.build_store(acc_arg, acc_val).unwrap();
+                self.variables.last_mut().unwrap().insert(
+                    acc_name.to_string(),
+                    (acc_arg.into(), elem_ty.clone(), crate::compiler::codegen::CLEANUP_NONE),
+                );
+
+                let x_arg = self.builder.build_alloca(elem_llvm_ty, x_name).unwrap();
+                self.builder.build_store(x_arg, elem_val).unwrap();
+                self.variables.last_mut().unwrap().insert(
+                    x_name.to_string(),
+                    (x_arg.into(), elem_ty.clone(), crate::compiler::codegen::CLEANUP_NONE),
+                );
+
+                // Compile closure body
+                let mut result_val = None;
+                let body_len = closure_body.len();
+                for (idx, stmt) in closure_body.iter().enumerate() {
+                    if idx == body_len - 1 {
+                        if let crate::compiler::ast::StmtKind::Expr(e) = &stmt.inner {
+                            result_val = Some(self.compile_expr(e)?);
+                        } else {
+                            self.compile_stmt(stmt)?;
+                        }
+                    } else {
+                        self.compile_stmt(stmt)?;
+                    }
+                }
+                self.exit_scope();
+
+                let (new_acc, _) = result_val.unwrap_or((elem_llvm_ty.const_zero().into(), elem_ty.clone()));
+                self.builder.build_store(acc_alloca, new_acc).unwrap();
+
+                // i += 1
+                let next_i = self.builder.build_int_add(i_val, i64_type.const_int(1, false), "next_i").unwrap();
+                self.builder.build_store(i_alloca, next_i).unwrap();
+                self.builder.build_unconditional_branch(loop_bb).unwrap();
+
+                // Done
+                self.builder.position_at_end(done_bb);
+                let final_acc = self.builder.build_load(elem_llvm_ty, acc_alloca, "final_acc").unwrap();
+                Ok((final_acc, elem_ty.clone()))
+            }
             _ => Err(format!("Unknown Vec closure method: {}", method)),
         }
+    }
+
+    /// Vec.join(sep: String) -> String のインラインIR生成
+    fn compile_vec_join(
+        &mut self,
+        vec_val: BasicValueEnum<'ctx>,
+        vec_ty: &Type,
+        args: &[Expr],
+    ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+        let i64_type = self.context.i64_type();
+        let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
+        let string_type_tl = Type::String("String".to_string());
+
+        // Compile separator argument
+        let (sep_val, _sep_ty) = self.compile_expr(&args[0])?;
+
+        // Get Vec struct layout
+        let vec_type_name = vec_ty.codegen_name()
+            .ok_or_else(|| "Cannot get Vec codegen name".to_string())?;
+        let vec_struct_ty = *self.struct_types.get(&vec_type_name)
+            .ok_or_else(|| format!("Vec struct type {} not found", vec_type_name))?;
+        let vec_ptr = vec_val.into_pointer_value();
+
+        // Load ptr, len
+        let data_ptr_field = self.builder.build_struct_gep(vec_struct_ty, vec_ptr, 0, "data_ptr_field")
+            .map_err(|e| e.to_string())?;
+        let data_ptr = self.builder.build_load(ptr_type, data_ptr_field, "data_ptr").unwrap();
+
+        let len_field = self.builder.build_struct_gep(vec_struct_ty, vec_ptr, 2, "len_field")
+            .map_err(|e| e.to_string())?;
+        let len = self.builder.build_load(i64_type, len_field, "len").unwrap().into_int_value();
+
+        // Determine element type from Vec type params
+        let elem_ty = match vec_ty {
+            Type::Struct(_, params) if !params.is_empty() => params[0].clone(),
+            _ => Type::I64,
+        };
+        let elem_llvm_ty = self.get_llvm_type(&elem_ty)?;
+
+        // Determine the conversion function name based on element type
+        let to_string_fn_name: Option<&str> = match &elem_ty {
+            Type::I64 | Type::I32 => Some("tl_string_from_int"),
+            Type::F64 | Type::F32 => Some("tl_string_from_f64"),
+            Type::Bool => Some("tl_string_from_bool"),
+            Type::String(_) => None, // already a string
+            _ => Some("tl_string_from_int"), // fallback
+        };
+
+        let concat_fn = self.module.get_function("tl_string_concat")
+            .ok_or("tl_string_concat not found")?;
+
+        // Create empty string as initial result
+        let empty_str_fn = self.module.get_function("tl_string_new")
+            .ok_or("tl_string_new not found")?;
+        let empty_c_str = self.builder.build_global_string_ptr("", "empty_str").unwrap();
+        let init_str = self.builder.build_call(empty_str_fn, &[empty_c_str.as_pointer_value().into()], "init_str")
+            .map_err(|e| e.to_string())?;
+        let init_str_val = match init_str.try_as_basic_value() {
+            inkwell::values::ValueKind::Basic(v) => v,
+            _ => return Err("tl_string_new returned void".into()),
+        };
+
+        let result_alloca = self.builder.build_alloca(ptr_type, "join_result").unwrap();
+        self.builder.build_store(result_alloca, init_str_val).unwrap();
+
+        let current_fn = self.builder.get_insert_block().unwrap().get_parent().unwrap();
+        let zero = i64_type.const_zero();
+
+        let loop_bb = self.context.append_basic_block(current_fn, "join_loop");
+        let body_bb = self.context.append_basic_block(current_fn, "join_body");
+        let done_bb = self.context.append_basic_block(current_fn, "join_done");
+
+        let i_alloca = self.builder.build_alloca(i64_type, "i").unwrap();
+        self.builder.build_store(i_alloca, zero).unwrap();
+        self.builder.build_unconditional_branch(loop_bb).unwrap();
+
+        // Loop check
+        self.builder.position_at_end(loop_bb);
+        let i_val = self.builder.build_load(i64_type, i_alloca, "i").unwrap().into_int_value();
+        let cond = self.builder.build_int_compare(
+            inkwell::IntPredicate::SLT, i_val, len, "cond",
+        ).unwrap();
+        self.builder.build_conditional_branch(cond, body_bb, done_bb).unwrap();
+
+        // Body
+        self.builder.position_at_end(body_bb);
+
+        // If i > 0, append separator first
+        let is_not_first = self.builder.build_int_compare(
+            inkwell::IntPredicate::SGT, i_val, zero, "is_not_first",
+        ).unwrap();
+
+        let sep_bb = self.context.append_basic_block(current_fn, "join_sep");
+        let elem_bb = self.context.append_basic_block(current_fn, "join_elem");
+
+        self.builder.build_conditional_branch(is_not_first, sep_bb, elem_bb).unwrap();
+
+        // Append separator
+        self.builder.position_at_end(sep_bb);
+        let cur_str = self.builder.build_load(ptr_type, result_alloca, "cur_str").unwrap();
+        let with_sep = self.builder.build_call(concat_fn, &[cur_str.into(), sep_val.into()], "with_sep")
+            .map_err(|e| e.to_string())?;
+        let with_sep_val = match with_sep.try_as_basic_value() {
+            inkwell::values::ValueKind::Basic(v) => v,
+            _ => return Err("tl_string_concat returned void".into()),
+        };
+        self.builder.build_store(result_alloca, with_sep_val).unwrap();
+        self.builder.build_unconditional_branch(elem_bb).unwrap();
+
+        // Append element
+        self.builder.position_at_end(elem_bb);
+        let elem_addr = unsafe {
+            self.builder.build_gep(elem_llvm_ty, data_ptr.into_pointer_value(), &[i_val], "elem_addr").unwrap()
+        };
+        let elem_val = self.builder.build_load(elem_llvm_ty, elem_addr, "elem").unwrap();
+
+        // Convert element to string if needed
+        let elem_str = if let Some(fn_name) = to_string_fn_name {
+            let conv_fn = self.module.get_function(fn_name)
+                .ok_or_else(|| format!("{} not found", fn_name))?;
+            let conv_val = match &elem_ty {
+                Type::I32 => {
+                    let ext = self.builder.build_int_s_extend(elem_val.into_int_value(), i64_type, "ext").unwrap();
+                    ext.into()
+                }
+                Type::F32 => {
+                    let ext = self.builder.build_float_ext(elem_val.into_float_value(), self.context.f64_type(), "ext").unwrap();
+                    ext.into()
+                }
+                _ => elem_val,
+            };
+            let str_result = self.builder.build_call(conv_fn, &[conv_val.into()], "elem_str")
+                .map_err(|e| e.to_string())?;
+            match str_result.try_as_basic_value() {
+                inkwell::values::ValueKind::Basic(v) => v,
+                _ => return Err(format!("{} returned void", fn_name)),
+            }
+        } else {
+            elem_val
+        };
+
+        let cur_str2 = self.builder.build_load(ptr_type, result_alloca, "cur_str2").unwrap();
+        let appended = self.builder.build_call(concat_fn, &[cur_str2.into(), elem_str.into()], "appended")
+            .map_err(|e| e.to_string())?;
+        let appended_val = match appended.try_as_basic_value() {
+            inkwell::values::ValueKind::Basic(v) => v,
+            _ => return Err("tl_string_concat returned void".into()),
+        };
+        self.builder.build_store(result_alloca, appended_val).unwrap();
+
+        // i += 1
+        let next_i = self.builder.build_int_add(i_val, i64_type.const_int(1, false), "next_i").unwrap();
+        self.builder.build_store(i_alloca, next_i).unwrap();
+        self.builder.build_unconditional_branch(loop_bb).unwrap();
+
+        // Done
+        self.builder.position_at_end(done_bb);
+        let final_result = self.builder.build_load(ptr_type, result_alloca, "join_result").unwrap();
+        Ok((final_result, string_type_tl))
     }
 
 
