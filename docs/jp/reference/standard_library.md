@@ -10,8 +10,19 @@
 ### IO & システム
 - **`print(value, ...) -> void`** — 改行なし出力（`{}` フォーマット対応）
 - **`println(value, ...) -> void`** — 改行付き出力（`{}` フォーマット対応）
+- **`format(template, ...) -> String`** — フォーマット文字列を構築して返す（`{}` プレースホルダ対応）
 - **`read_line(prompt: String) -> String`** — 標準入力から一行読み取り
 - **`panic(message: String) -> Never`** — エラーメッセージを出力してプログラム終了
+
+> [!TIP]
+> **`format()` は StringBuilder / StringBuffer の代用として使えます。**
+> 複数の値を結合して文字列を構築する場合、`format("name={}, age={}", name, age)` のように記述できます。
+> Python の f-string や Rust の `format!()` と同様のパターンです。
+
+### ユーティリティ
+- **`assert(cond: bool, msg: String) -> void`** — 条件が `false` なら `msg` を出力して panic
+- **`random() -> f64`** — 0.0〜1.0 の一様乱数
+- **`random_int(min: i64, max: i64) -> i64`** — `min`〜`max` の整数乱数
 
 ### コマンドライン引数
 - **`args_count() -> i64`** — コマンドライン引数の数
@@ -231,6 +242,7 @@ let doubled = nums.map(|x: i64| -> i64 { x * 2 });
 - `split(sep)`, `trim()`, `replace(from, to)`, `substring(start, len)`
 - `concat(other)`, `index_of(s)`, `char_at(i)`
 - `to_uppercase()`, `to_lowercase()`
+- `repeat(n)`, `chars()`
 - `to_i64()`, `to_f32()`, `to_f64()`
 
 ### F32 / F64

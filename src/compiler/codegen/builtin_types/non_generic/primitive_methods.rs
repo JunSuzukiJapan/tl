@@ -601,3 +601,87 @@ pub fn compile_i32_clamp<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'c
         .map_err(|e| e.to_string())?;
     Ok((res.into(), Type::I64))
 }
+
+// ========== Phase C: 数値型定数・判定メソッド ==========
+
+/// f64.is_nan() -> bool — LLVM fcmp uno で NaN 判定
+pub fn compile_f64_is_nan<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let val = o.into_float_value();
+    // fcmp uno (unordered): val != val is true iff val is NaN
+    let res = c.builder.build_float_compare(inkwell::FloatPredicate::UNO, val, val, "is_nan")
+        .map_err(|e| e.to_string())?;
+    Ok((res.into(), Type::Bool))
+}
+
+/// f64.is_inf() -> bool — |val| == infinity
+pub fn compile_f64_is_inf<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let val = o.into_float_value();
+    let abs_val = c.builder.build_float_neg(val, "neg_tmp").map_err(|e| e.to_string())?;
+    let is_neg = c.builder.build_float_compare(inkwell::FloatPredicate::OLT, val, c.context.f64_type().const_float(0.0), "is_neg")
+        .map_err(|e| e.to_string())?;
+    let abs = c.builder.build_select(is_neg, abs_val, val, "abs_val")
+        .map_err(|e| e.to_string())?.into_float_value();
+    let inf = c.context.f64_type().const_float(f64::INFINITY);
+    let res = c.builder.build_float_compare(inkwell::FloatPredicate::OEQ, abs, inf, "is_inf")
+        .map_err(|e| e.to_string())?;
+    Ok((res.into(), Type::Bool))
+}
+
+/// f32.is_nan() -> bool
+pub fn compile_f32_is_nan<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let val = o.into_float_value();
+    let res = c.builder.build_float_compare(inkwell::FloatPredicate::UNO, val, val, "is_nan")
+        .map_err(|e| e.to_string())?;
+    Ok((res.into(), Type::Bool))
+}
+
+/// f32.is_inf() -> bool
+pub fn compile_f32_is_inf<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let val = o.into_float_value();
+    let abs_val = c.builder.build_float_neg(val, "neg_tmp").map_err(|e| e.to_string())?;
+    let is_neg = c.builder.build_float_compare(inkwell::FloatPredicate::OLT, val, c.context.f32_type().const_float(0.0), "is_neg")
+        .map_err(|e| e.to_string())?;
+    let abs = c.builder.build_select(is_neg, abs_val, val, "abs_val")
+        .map_err(|e| e.to_string())?.into_float_value();
+    let inf = c.context.f32_type().const_float(f64::INFINITY);
+    let res = c.builder.build_float_compare(inkwell::FloatPredicate::OEQ, abs, inf, "is_inf")
+        .map_err(|e| e.to_string())?;
+    Ok((res.into(), Type::Bool))
+}
+
+/// F64::nan() -> f64
+pub fn compile_f64_nan<'ctx>(c: &mut CodeGenerator<'ctx>, _a: Vec<(BasicValueEnum<'ctx>, Type)>, _hint: Option<&Type>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let val = c.context.f64_type().const_float(f64::NAN);
+    Ok((val.into(), Type::F64))
+}
+
+/// F64::infinity() -> f64
+pub fn compile_f64_infinity<'ctx>(c: &mut CodeGenerator<'ctx>, _a: Vec<(BasicValueEnum<'ctx>, Type)>, _hint: Option<&Type>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let val = c.context.f64_type().const_float(f64::INFINITY);
+    Ok((val.into(), Type::F64))
+}
+
+/// F64::max_value() -> f64
+pub fn compile_f64_max_value<'ctx>(c: &mut CodeGenerator<'ctx>, _a: Vec<(BasicValueEnum<'ctx>, Type)>, _hint: Option<&Type>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let val = c.context.f64_type().const_float(f64::MAX);
+    Ok((val.into(), Type::F64))
+}
+
+/// F64::min_value() -> f64
+pub fn compile_f64_min_value<'ctx>(c: &mut CodeGenerator<'ctx>, _a: Vec<(BasicValueEnum<'ctx>, Type)>, _hint: Option<&Type>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let val = c.context.f64_type().const_float(f64::MIN);
+    Ok((val.into(), Type::F64))
+}
+
+/// I64::max_value() -> i64
+pub fn compile_i64_max_value<'ctx>(c: &mut CodeGenerator<'ctx>, _a: Vec<(BasicValueEnum<'ctx>, Type)>, _hint: Option<&Type>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let val = c.context.i64_type().const_int(i64::MAX as u64, false);
+    Ok((val.into(), Type::I64))
+}
+
+/// I64::min_value() -> i64
+pub fn compile_i64_min_value<'ctx>(c: &mut CodeGenerator<'ctx>, _a: Vec<(BasicValueEnum<'ctx>, Type)>, _hint: Option<&Type>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let val = c.context.i64_type().const_int(i64::MIN as u64, true);
+    Ok((val.into(), Type::I64))
+}
+

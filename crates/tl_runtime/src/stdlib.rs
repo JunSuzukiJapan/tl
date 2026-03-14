@@ -54,6 +54,9 @@ pub use crate::file_io::{
     tl_path_exists,
     tl_path_is_file,
     tl_path_is_dir,
+    tl_path_parent,
+    tl_path_file_name,
+    tl_path_extension,
 };
 
 /// Tensor stride を取得（スタブ）
@@ -76,10 +79,14 @@ pub use crate::file_io::{
     tl_file_write_string,
     tl_file_read_binary,
     tl_file_write_binary,
+    tl_file_append,
+    tl_file_delete,
+    tl_file_create_dir,
     tl_http_get,
     tl_http_download,
     tl_env_get,
     tl_env_set,
+    tl_system_exit,
 };
 
 // string_ffi から hash_string を re-export

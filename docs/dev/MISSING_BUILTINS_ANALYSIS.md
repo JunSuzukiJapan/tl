@@ -80,11 +80,11 @@
 | `reverse()` | 逆順 | ❌ 未実装 |
 | `extend(other)` | 結合 | ❌ 未実装 |
 | `slice(start, end) -> Vec<T>` | 部分取得 | ❌ 未実装 |
-| `map(fn) -> Vec<U>` | 変換 | ⚠️ TODOコメント（ジェネリック特殊化要） |
-| `filter(fn) -> Vec<T>` | フィルタリング | ⚠️ TODOコメント（ジェネリック特殊化要） |
+| `map(fn) -> Vec<U>` | 変換 | ✅ 実装済み (expr.rs compile_vec_closure_method) |
+| `filter(fn) -> Vec<T>` | フィルタリング | ✅ 実装済み (expr.rs compile_vec_closure_method) |
 | `reduce(fn) -> T` / `fold` | 畳み込み | ❌ 未実装 |
-| `any(fn) -> bool` | いずれかが条件を満たすか | ❌ 未実装 |
-| `all(fn) -> bool` | すべてが条件を満たすか | ❌ 未実装 |
+| `any(fn) -> bool` | いずれかが条件を満たすか | ✅ 実装済み (expr.rs compile_vec_closure_method) |
+| `all(fn) -> bool` | すべてが条件を満たすか | ✅ 実装済み (expr.rs compile_vec_closure_method) |
 | `enumerate()` | インデックス付き走査 | ❌ 未実装 |
 | `join(sep) -> String` | 文字列結合 | ❌ 未実装 |
 | `flatten()` | ネスト解除 | ❌ 未実装 |
@@ -109,7 +109,7 @@
 |---|---|---|
 | `unwrap_or(default) -> T` | デフォルト付き展開 | ✅ 実装済み (option.tl) |
 | `?` 演算子 | 早期リターン | ✅ 実装済み |
-| `map(fn) -> Option<U>` | 値の変換 | ⚠️ TODOコメント（ジェネリック特殊化要） |
+| `map(fn) -> Option<U>` | 値の変換 | ✅ 実装済み (expr.rs compile_option_map_method) |
 | `and_then(fn) -> Option<U>` | チェーン | ❌ 未実装 |
 | `or(other) -> Option<T>` | 代替値 | ❌ 未実装 |
 | `unwrap_or_else(fn) -> T` | 遅延デフォルト | ❌ 未実装 |
@@ -146,10 +146,10 @@
 |---|---|---|
 | `println(...)` | コンソール出力 | ✅ 実装済み |
 | `format(...)` | フォーマット文字列 | ✅ 実装済み |
-| `assert(cond, msg?)` | アサーション | ❌ 未実装 |
+| `assert(cond, msg?)` | アサーション | ✅ 実装済み |
 | `typeof(value)` | 型情報取得 | ❌ 未実装 |
-| `random() -> f64` | スカラー乱数 | ❌ 未実装 |
-| `random_int(min, max) -> i64` | 整数乱数 | ❌ 未実装 |
+| `random() -> f64` | スカラー乱数 | ✅ 実装済み |
+| `random_int(min, max) -> i64` | 整数乱数 | ✅ 実装済み |
 | `System::exit(code)` | プロセス終了 | ❌ 未実装 (コンパイラ未登録) |
 | `System::env()` / `System::platform()` | OS情報取得 | ❌ 未実装 |
 | `System::command(cmd)` | 外部コマンド実行 | ❌ 未実装 |
@@ -192,8 +192,7 @@
 2. **Option/Result**: `map`, `and_then`（同上）
 3. **Vec**: `reverse`, `extend`, `slice`, `index_of`, `join`
 4. **HashMap**: `entries`, `clear`, `get_or_default`
-5. **グローバル**: `assert`, `random`, `random_int`
-6. **数値型**: `NaN`, `INFINITY`, `is_nan()`, `MAX`/`MIN` 定数
+5. **数値型**: `NaN`, `INFINITY`, `is_nan()`, `MAX`/`MIN` 定数
 
 ### 将来の拡張
 - 型: `Set<T>`, `Deque<T>`, `Duration`, `DateTime`, `Regex`

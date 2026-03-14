@@ -426,3 +426,139 @@ pub extern "C" fn tl_env_set(name: *const c_char, value: *const c_char) {
         std::env::set_var(name_str.as_ref(), value_str.as_ref());
     }
 }
+
+// ========== Phase D: File/Path/System 拡張 ==========
+
+/// File::append(path, content) -> bool — ファイルに追記
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_file_append(path: *const c_char, content: *const c_char) -> bool {
+    unsafe {
+        if path.is_null() || content.is_null() {
+            return false;
+        }
+        let path_str = CStr::from_ptr(path).to_string_lossy();
+        let path_buf = expand_path(&path_str);
+        let content_str = CStr::from_ptr(content).to_string_lossy();
+
+        match std::fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(&path_buf)
+        {
+            Ok(mut file) => file.write_all(content_str.as_bytes()).is_ok(),
+            Err(_) => false,
+        }
+    }
+}
+
+/// File::delete(path) -> bool — ファイルまたはディレクトリを削除
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_file_delete(path: *const c_char) -> bool {
+    if path.is_null() {
+        return false;
+    }
+    let path_str = unsafe { CStr::from_ptr(path).to_string_lossy() };
+    let path_buf = expand_path(&path_str);
+
+    if path_buf.is_dir() {
+        std::fs::remove_dir_all(&path_buf).is_ok()
+    } else {
+        std::fs::remove_file(&path_buf).is_ok()
+    }
+}
+
+/// File::create_dir(path) -> bool — ディレクトリを再帰的に作成
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_file_create_dir(path: *const c_char) -> bool {
+    if path.is_null() {
+        return false;
+    }
+    let path_str = unsafe { CStr::from_ptr(path).to_string_lossy() };
+    let path_buf = expand_path(&path_str);
+    std::fs::create_dir_all(&path_buf).is_ok()
+}
+
+/// Path::parent() -> String — 親ディレクトリのパス
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_path_parent(p: *mut PathStruct) -> *mut StringStruct {
+    unsafe {
+        if p.is_null() || (*p).ptr.is_null() {
+            return std::ptr::null_mut();
+        }
+        let path_str = CStr::from_ptr((*p).ptr).to_string_lossy();
+        let path = std::path::Path::new(path_str.as_ref());
+        match path.parent() {
+            Some(parent) => {
+                let parent_str = parent.to_string_lossy();
+                let c_str = CString::new(parent_str.into_owned()).unwrap_or_else(|_| CString::new("").unwrap());
+                let ptr = c_str.into_raw();
+                let len = libc::strlen(ptr) as i64;
+                let layout = std::alloc::Layout::new::<StringStruct>();
+                let struct_ptr = std::alloc::alloc(layout) as *mut StringStruct;
+                (*struct_ptr).ptr = ptr;
+                (*struct_ptr).len = len;
+                struct_ptr
+            }
+            None => std::ptr::null_mut(),
+        }
+    }
+}
+
+/// Path::file_name() -> String — ファイル名部分
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_path_file_name(p: *mut PathStruct) -> *mut StringStruct {
+    unsafe {
+        if p.is_null() || (*p).ptr.is_null() {
+            return std::ptr::null_mut();
+        }
+        let path_str = CStr::from_ptr((*p).ptr).to_string_lossy();
+        let path = std::path::Path::new(path_str.as_ref());
+        match path.file_name() {
+            Some(name) => {
+                let name_str = name.to_string_lossy();
+                let c_str = CString::new(name_str.into_owned()).unwrap_or_else(|_| CString::new("").unwrap());
+                let ptr = c_str.into_raw();
+                let len = libc::strlen(ptr) as i64;
+                let layout = std::alloc::Layout::new::<StringStruct>();
+                let struct_ptr = std::alloc::alloc(layout) as *mut StringStruct;
+                (*struct_ptr).ptr = ptr;
+                (*struct_ptr).len = len;
+                struct_ptr
+            }
+            None => std::ptr::null_mut(),
+        }
+    }
+}
+
+/// Path::extension() -> String — 拡張子
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_path_extension(p: *mut PathStruct) -> *mut StringStruct {
+    unsafe {
+        if p.is_null() || (*p).ptr.is_null() {
+            return std::ptr::null_mut();
+        }
+        let path_str = CStr::from_ptr((*p).ptr).to_string_lossy();
+        let path = std::path::Path::new(path_str.as_ref());
+        match path.extension() {
+            Some(ext) => {
+                let ext_str = ext.to_string_lossy();
+                let c_str = CString::new(ext_str.into_owned()).unwrap_or_else(|_| CString::new("").unwrap());
+                let ptr = c_str.into_raw();
+                let len = libc::strlen(ptr) as i64;
+                let layout = std::alloc::Layout::new::<StringStruct>();
+                let struct_ptr = std::alloc::alloc(layout) as *mut StringStruct;
+                (*struct_ptr).ptr = ptr;
+                (*struct_ptr).len = len;
+                struct_ptr
+            }
+            None => std::ptr::null_mut(),
+        }
+    }
+}
+
+/// System::exit(code) — プロセス終了
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_system_exit(code: i64) {
+    std::process::exit(code as i32);
+}
+

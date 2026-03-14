@@ -2890,6 +2890,35 @@ pub fn declare_runtime_functions<'ctx>(
     let env_set_type = void_type.fn_type(&[i8_ptr.into(), i8_ptr.into()], false);
     module.add_function("tl_env_set", env_set_type, None);
 
+    // Phase D: File/Path/System 拡張
+    // tl_file_append(path: *const i8, content: *const i8) -> bool
+    let file_append_type = context.bool_type().fn_type(&[i8_ptr.into(), i8_ptr.into()], false);
+    module.add_function("tl_file_append", file_append_type, None);
+
+    // tl_file_delete(path: *const i8) -> bool
+    let file_delete_type = context.bool_type().fn_type(&[i8_ptr.into()], false);
+    module.add_function("tl_file_delete", file_delete_type, None);
+
+    // tl_file_create_dir(path: *const i8) -> bool
+    let file_create_dir_type = context.bool_type().fn_type(&[i8_ptr.into()], false);
+    module.add_function("tl_file_create_dir", file_create_dir_type, None);
+
+    // tl_path_parent(path: *mut Path) -> *mut String
+    let path_parent_type = i8_ptr.fn_type(&[void_ptr.into()], false);
+    module.add_function("tl_path_parent", path_parent_type, None);
+
+    // tl_path_file_name(path: *mut Path) -> *mut String
+    let path_file_name_type = i8_ptr.fn_type(&[void_ptr.into()], false);
+    module.add_function("tl_path_file_name", path_file_name_type, None);
+
+    // tl_path_extension(path: *mut Path) -> *mut String
+    let path_extension_type = i8_ptr.fn_type(&[void_ptr.into()], false);
+    module.add_function("tl_path_extension", path_extension_type, None);
+
+    // tl_system_exit(code: i64) -> void
+    let system_exit_type = void_type.fn_type(&[context.i64_type().into()], false);
+    module.add_function("tl_system_exit", system_exit_type, None);
+
     // System
     // tl_system_time() -> f32
     let system_time_type = context.f32_type().fn_type(&[], false);
@@ -2956,6 +2985,28 @@ pub fn declare_runtime_functions<'ctx>(
     }
     if let Some(f) = module.get_function("tl_system_sleep") {
         execution_engine.add_global_mapping(&f, runtime::stdlib::tl_system_sleep as *const () as usize);
+    }
+    // Phase D mappings
+    if let Some(f) = module.get_function("tl_file_append") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_file_append as *const () as usize);
+    }
+    if let Some(f) = module.get_function("tl_file_delete") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_file_delete as *const () as usize);
+    }
+    if let Some(f) = module.get_function("tl_file_create_dir") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_file_create_dir as *const () as usize);
+    }
+    if let Some(f) = module.get_function("tl_path_parent") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_path_parent as *const () as usize);
+    }
+    if let Some(f) = module.get_function("tl_path_file_name") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_path_file_name as *const () as usize);
+    }
+    if let Some(f) = module.get_function("tl_path_extension") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_path_extension as *const () as usize);
+    }
+    if let Some(f) = module.get_function("tl_system_exit") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_system_exit as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_read_line") {
         execution_engine.add_global_mapping(&f, runtime::stdlib::tl_read_line as *const () as usize);

@@ -259,4 +259,22 @@ impl<K, V> HashMap<K, V> {
         }
         result
     }
+
+    fn clear(mut self) {
+        let cap = self.entries.len();
+        let mut i = 0;
+        while i < cap {
+            self.entries[i] = Entry<K, V>::Empty;
+            i = i + 1;
+        }
+        self.len = 0;
+    }
+
+    fn get_or_default(self, key: K, default: V) -> V {
+        let result = self.get(key);
+        match (result) {
+            Option<V>::Some(v) => v,
+            Option<V>::None => default,
+        }
+    }
 }

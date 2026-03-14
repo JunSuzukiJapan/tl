@@ -21,14 +21,29 @@ impl<T, E> Result<T, E> {
     fn unwrap(self) -> T {
         match self {
             Result::Ok(x) => x,
-            Result::Err(e) => self.unwrap(), // Panic or loop
+            Result::Err(e) => {
+                panic("called unwrap() on Result::Err");
+            },
         }
     }
 
     fn unwrap_err(self) -> E {
         match self {
-            Result::Ok(x) => self.unwrap_err(), // Panic or loop
+            Result::Ok(x) => {
+                panic("called unwrap_err() on Result::Ok");
+            },
             Result::Err(e) => e,
         }
     }
+
+    fn unwrap_or(self, default: T) -> T {
+        match self {
+            Result::Ok(x) => x,
+            Result::Err(e) => default,
+        }
+    }
+
+    // NOTE: map, map_err, and_then, unwrap_or_else はクロージャ引数と
+    // メソッドレベルの型パラメータを必要とするため、
+    // expr.rs でのインライン実装が必要。
 }

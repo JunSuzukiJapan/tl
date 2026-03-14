@@ -37,8 +37,17 @@ impl<T> Option<T> {
         }
     }
 
+    fn or(self, other: Option<T>) -> Option<T> {
+        match self {
+            Option::Some(x) => Option::Some(x),
+            Option::None => other,
+        }
+    }
+
     // NOTE: map はメソッドレベルの型パラメータ U を必要とするため、
-    // .tl ファイルで定義すると monomorphize 時に U が解決できずエラーになる。
-    // 将来は codegen でインラインIR生成を追加して対応する予定。
+    // codegen の compile_option_map_method (expr.rs) でインラインIR生成している。
     // 使用例: opt.map(|x: i64| x * 2)
+
+    // NOTE: and_then, unwrap_or_else もクロージャ引数を取るため、
+    // expr.rs でのインライン実装が必要。
 }

@@ -160,9 +160,48 @@ impl<T> Vec<T> {
         }
     }
 
+    fn index_of(self, item: T) -> i64 where T: PartialEq {
+        let mut i: i64 = 0;
+        while i < self.len {
+            if self.ptr[i] == item {
+                return i;
+            }
+            i = i + 1;
+        }
+        -1
+    }
+
+    fn reverse(mut self) {
+        let mut lo: i64 = 0;
+        let mut hi: i64 = self.len - 1;
+        while lo < hi {
+            let p = self.ptr;
+            let tmp = p[lo];
+            p[lo] = p[hi];
+            p[hi] = tmp;
+            lo = lo + 1;
+            hi = hi - 1;
+        }
+    }
+
+    // TODO: extend, slice, clone は get().unwrap() → push() チェーンが
+    // monomorphize 時に Option<T> の unwrap 戻り値型が ptr として生成され、
+    // push(item: T) との型不一致を引き起こす問題がある。
+    // コンパイラの型伝播修正後に有効化する。
+    //
+    // fn extend(mut self, other: Vec<T>) { ... }
+    // fn slice(self, start: i64, end: i64) -> Vec<T> { ... }
+    // fn clone(self) -> Vec<T> { ... }
+
     // NOTE: map/filter/any/all はメソッドレベルの型パラメータ U を必要とするため、
     // .tl ファイルで定義すると monomorphize 時に U が解決できずエラーになる。
     // 代わりに codegen の compile_vec_closure_method (expr.rs) で
     // クロージャ構文から直接インラインIR を生成している。
     // 使用例: v.map(|x: i64| x * 2), v.filter(|x: i64| x % 2 == 0)
+
+    // NOTE: join(sep: String) -> String は T = String の場合のみ有効だが、
+    // ジェネリック型で特定の T に対する特殊化ができないため、
+    // compile_vec_closure_method と同様に expr.rs でインライン実装する必要がある。
+
+    // NOTE: reduce(fn) -> T も同様に expr.rs で実装する必要がある。
 }
