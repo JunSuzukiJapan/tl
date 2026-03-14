@@ -2962,6 +2962,65 @@ impl<'ctx> CodeGenerator<'ctx> {
                     Ok((res, Type::F32))
                 }
             }
+            (Type::F64, Type::F64) => {
+                let l = lhs.into_float_value();
+                let r = rhs.into_float_value();
+                let res: BasicValueEnum = match op {
+                    BinOp::Add => self
+                        .builder
+                        .build_float_add(l, r, "f64addtmp")
+                        .map(|v| v.into()),
+                    BinOp::Sub => self
+                        .builder
+                        .build_float_sub(l, r, "f64subtmp")
+                        .map(|v| v.into()),
+                    BinOp::Mul => self
+                        .builder
+                        .build_float_mul(l, r, "f64multmp")
+                        .map(|v| v.into()),
+                    BinOp::Div => self
+                        .builder
+                        .build_float_div(l, r, "f64divtmp")
+                        .map(|v| v.into()),
+                    BinOp::Mod => self
+                        .builder
+                        .build_float_rem(l, r, "f64modtmp")
+                        .map(|v| v.into()),
+
+                    BinOp::Eq => self
+                        .builder
+                        .build_float_compare(inkwell::FloatPredicate::OEQ, l, r, "f64eqtmp")
+                        .map(|v| v.into()),
+                    BinOp::Neq => self
+                        .builder
+                        .build_float_compare(inkwell::FloatPredicate::ONE, l, r, "f64neqtmp")
+                        .map(|v| v.into()),
+                    BinOp::Lt => self
+                        .builder
+                        .build_float_compare(inkwell::FloatPredicate::OLT, l, r, "f64lttmp")
+                        .map(|v| v.into()),
+                    BinOp::Gt => self
+                        .builder
+                        .build_float_compare(inkwell::FloatPredicate::OGT, l, r, "f64gttmp")
+                        .map(|v| v.into()),
+                    BinOp::Le => self
+                        .builder
+                        .build_float_compare(inkwell::FloatPredicate::OLE, l, r, "f64letmp")
+                        .map(|v| v.into()),
+                    BinOp::Ge => self
+                        .builder
+                        .build_float_compare(inkwell::FloatPredicate::OGE, l, r, "f64getmp")
+                        .map(|v| v.into()),
+                    _ => return Err("Unsupported f64 op".into()),
+                }
+                .map_err(|e| e.to_string())?;
+
+                if res.is_int_value() {
+                    Ok((res, Type::Bool))
+                } else {
+                    Ok((res, Type::F64))
+                }
+            }
             (Type::String(_), Type::String(_)) => self.compile_string_bin_op(lhs, rhs, op),
 
             (Type::Bool, Type::Bool) => {
@@ -3065,6 +3124,25 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 // Recurse with F32, F32
                 self.compile_bin_op(l_f32.into(), Type::F32, r.into(), Type::F32, op)
+            }
+            // Handling mixed types (F64 vs I64)
+            (Type::F64, Type::I64) => {
+                let l = lhs.into_float_value();
+                let r = rhs.into_int_value();
+                let r_f64 = self
+                    .builder
+                    .build_signed_int_to_float(r, self.context.f64_type(), "cast_r_f64")
+                    .map_err(|e| e.to_string())?;
+                self.compile_bin_op(l.into(), Type::F64, r_f64.into(), Type::F64, op)
+            }
+            (Type::I64, Type::F64) => {
+                let l = lhs.into_int_value();
+                let r = rhs.into_float_value();
+                let l_f64 = self
+                    .builder
+                    .build_signed_int_to_float(l, self.context.f64_type(), "cast_l_f64")
+                    .map_err(|e| e.to_string())?;
+                self.compile_bin_op(l_f64.into(), Type::F64, r.into(), Type::F64, op)
             }
             (Type::Tensor(inner, _), Type::F32) if **inner == Type::F32 => {
                  self.compile_tensor_scalar_op(lhs, lhs_type, rhs, rhs_type, op, true)

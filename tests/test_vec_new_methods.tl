@@ -377,11 +377,29 @@ fn test_join() {
         println("OK: join empty vec");
     } else {
         println("FAIL: join empty vec");
+    }
+
+    // Join strings
+    let mut words: Vec<String> = Vec::new();
+    words.push("hello");
+    words.push("world");
+    words.push("tl");
+    let joined6 = words.join(", ");
+    if joined6 == "hello, world, tl" {
+        println("OK: join strings");
+    } else {
+        println("FAIL: join strings");
         return;
     }
 
-    // NOTE: Vec<String>.join() has a known limitation with string pointer handling
-    // and is not tested here. Use Vec<i64>.join() for now.
+    // Join strings with empty sep
+    let joined7 = words.join("");
+    if joined7 == "helloworldtl" {
+        println("OK: join strings with empty sep");
+    } else {
+        println("FAIL: join strings with empty sep");
+        return;
+    }
 
     println("OK: join()");
 }

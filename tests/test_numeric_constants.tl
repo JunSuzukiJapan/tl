@@ -1,8 +1,8 @@
 // Tests for I64 and F64 numeric type constants and methods
-// Note: F64 BinOp (==, <=, etc.) has known codegen issues, so we test via is_nan/is_inf methods
 
 fn main() {
     test_i64_constants();
+    test_f64_constants();
     test_f64_is_nan();
     test_f64_is_inf();
 
@@ -31,6 +31,39 @@ fn test_i64_constants() {
     }
 
     println("OK: I64 constants");
+}
+
+// ===== F64 constants =====
+fn test_f64_constants() {
+    println("Testing F64 constants...");
+
+    let max = F64::max_value();
+    let zero_f64: f64 = 0.0 as f64;
+    if max <= zero_f64 {
+        println("FAIL: F64::max_value() should be positive");
+        return;
+    }
+
+    let min = F64::min_value();
+    if min >= zero_f64 {
+        println("FAIL: F64::min_value() should be negative");
+        return;
+    }
+
+    let nan = F64::nan();
+    // NaN != NaN (OEQ should be false for NaN)
+    if nan == nan {
+        println("FAIL: F64::nan() should not equal itself");
+        return;
+    }
+
+    let inf = F64::infinity();
+    if inf <= max {
+        println("FAIL: F64::infinity() should be > max_value");
+        return;
+    }
+
+    println("OK: F64 constants");
 }
 
 // ===== F64::is_nan =====
@@ -74,8 +107,11 @@ fn test_f64_is_inf() {
         return;
     }
 
-    // NOTE: F64 BinOp comparisons (nan == nan, etc.) have known codegen issues
-    // so we rely on is_nan()/is_inf() methods instead
+    let nan = F64::nan();
+    if nan.is_inf() {
+        println("FAIL: NaN.is_inf() should be false");
+        return;
+    }
 
     println("OK: f64.is_inf()");
 }

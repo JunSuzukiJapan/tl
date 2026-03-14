@@ -5650,8 +5650,12 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
 
             let (val, ty) = self.compile_match_arm_body(body)?;
-            if i == 0 {
-                result_type = ty.clone();
+            // Use the first non-Never/non-Void type as result_type
+            // This handles cases like unwrap_err where panic arm (Never) comes first
+            if result_type == Type::Void || result_type == Type::Never {
+                if ty != Type::Never {
+                    result_type = ty.clone();
+                }
             }
 
             self.exit_scope();
@@ -5667,23 +5671,16 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         self.builder.position_at_end(merge_block);
 
-        if result_type == Type::Void {
+        if result_type == Type::Void || incoming_vals.is_empty() {
             Ok((
                 self.context.i64_type().const_int(0, false).into(),
                 Type::Void,
             ))
         } else {
-            let phi_type: inkwell::types::BasicTypeEnum = match result_type {
-                Type::F32 => self.context.f32_type().into(),
-                Type::I64 => self.context.i64_type().into(),
-                Type::I32 | Type::Char(_) => self.context.i32_type().into(),
-                Type::Bool => self.context.bool_type().into(),
-                Type::String(_) => self.context.ptr_type(inkwell::AddressSpace::default()).into(),
-                _ => self
-                    .context
-                    .ptr_type(inkwell::AddressSpace::default())
-                    .into(),
-            };
+            // Determine phi type from the actual LLVM type of the first incoming value
+            // This is more reliable than using result_type, which may be Undefined
+            // from monomorphization issues
+            let phi_type: inkwell::types::BasicTypeEnum = incoming_vals[0].0.get_type();
             let phi = self.builder.build_phi(phi_type, "match_res").unwrap();
             let incomings: Vec<(
                 &dyn inkwell::values::BasicValue,
@@ -7453,7 +7450,13 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         // Determine element type from Vec type params
         let elem_ty = match vec_ty {
-            Type::Struct(_, params) if !params.is_empty() => params[0].clone(),
+            Type::Struct(name, params) if !params.is_empty() => params[0].clone(),
+            Type::Struct(name, _) if mangle_has_args(name) => {
+                // Monomorphized name like "Vec[String]" - extract type params from name
+                let extracted = mangle_extract_args(name);
+                let types = parse_mangled_type_strs(&extracted);
+                types.into_iter().next().unwrap_or(Type::I64)
+            }
             _ => Type::I64,
         };
         let elem_llvm_ty = self.get_llvm_type(&elem_ty)?;
@@ -7464,6 +7467,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             Type::F64 | Type::F32 => Some("tl_string_from_f64"),
             Type::Bool => Some("tl_string_from_bool"),
             Type::String(_) => None, // already a string
+            Type::Struct(name, _) if name == "String" => None, // String as Struct variant
             _ => Some("tl_string_from_int"), // fallback
         };
 
