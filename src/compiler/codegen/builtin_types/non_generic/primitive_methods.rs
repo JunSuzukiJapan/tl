@@ -685,3 +685,38 @@ pub fn compile_i64_min_value<'ctx>(c: &mut CodeGenerator<'ctx>, _a: Vec<(BasicVa
     Ok((val.into(), Type::I64))
 }
 
+/// I32::max_value() -> i32
+pub fn compile_i32_max_value<'ctx>(c: &mut CodeGenerator<'ctx>, _a: Vec<(BasicValueEnum<'ctx>, Type)>, _hint: Option<&Type>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let val = c.context.i32_type().const_int(i32::MAX as u64, false);
+    Ok((val.into(), Type::I32))
+}
+
+/// I32::min_value() -> i32
+pub fn compile_i32_min_value<'ctx>(c: &mut CodeGenerator<'ctx>, _a: Vec<(BasicValueEnum<'ctx>, Type)>, _hint: Option<&Type>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let val = c.context.i32_type().const_int(i32::MIN as u64, true);
+    Ok((val.into(), Type::I32))
+}
+
+/// F32::nan() -> f32
+pub fn compile_f32_nan<'ctx>(c: &mut CodeGenerator<'ctx>, _a: Vec<(BasicValueEnum<'ctx>, Type)>, _hint: Option<&Type>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let val = c.context.f32_type().const_float(f64::NAN);
+    Ok((val.into(), Type::F32))
+}
+
+/// F32::infinity() -> f32
+pub fn compile_f32_infinity<'ctx>(c: &mut CodeGenerator<'ctx>, _a: Vec<(BasicValueEnum<'ctx>, Type)>, _hint: Option<&Type>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let val = c.context.f32_type().const_float(f64::INFINITY);
+    Ok((val.into(), Type::F32))
+}
+
+/// F32::max_value() -> f32
+pub fn compile_f32_max_value<'ctx>(c: &mut CodeGenerator<'ctx>, _a: Vec<(BasicValueEnum<'ctx>, Type)>, _hint: Option<&Type>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let val = c.context.f32_type().const_float(f32::MAX as f64);
+    Ok((val.into(), Type::F32))
+}
+
+/// F32::min_value() -> f32
+pub fn compile_f32_min_value<'ctx>(c: &mut CodeGenerator<'ctx>, _a: Vec<(BasicValueEnum<'ctx>, Type)>, _hint: Option<&Type>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let val = c.context.f32_type().const_float(f32::MIN as f64);
+    Ok((val.into(), Type::F32))
+}

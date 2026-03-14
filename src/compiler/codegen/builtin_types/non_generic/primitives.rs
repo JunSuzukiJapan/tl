@@ -83,6 +83,10 @@ pub fn register_primitive_types(manager: &mut TypeManager) {
     f32_type.register_evaluated_instance_method("clamp", pm::compile_f32_clamp, vec![Type::F32, Type::F32], Type::F32);
     f32_type.register_evaluated_instance_method("is_nan", pm::compile_f32_is_nan, vec![], Type::Bool);
     f32_type.register_evaluated_instance_method("is_inf", pm::compile_f32_is_inf, vec![], Type::Bool);
+    f32_type.register_evaluated_static_method("nan", pm::compile_f32_nan, vec![], Type::F32);
+    f32_type.register_evaluated_static_method("infinity", pm::compile_f32_infinity, vec![], Type::F32);
+    f32_type.register_evaluated_static_method("max_value", pm::compile_f32_max_value, vec![], Type::F32);
+    f32_type.register_evaluated_static_method("min_value", pm::compile_f32_min_value, vec![], Type::F32);
     manager.register_type(f32_type);
 
     // ===== F64 =====
@@ -180,6 +184,8 @@ pub fn register_primitive_types(manager: &mut TypeManager) {
     i32_type.register_evaluated_instance_method("min", pm::compile_i32_min, vec![Type::I64], Type::I64);
     i32_type.register_evaluated_instance_method("max", pm::compile_i32_max, vec![Type::I64], Type::I64);
     i32_type.register_evaluated_instance_method("clamp", pm::compile_i32_clamp, vec![Type::I64, Type::I64], Type::I64);
+    i32_type.register_evaluated_static_method("max_value", pm::compile_i32_max_value, vec![], Type::I32);
+    i32_type.register_evaluated_static_method("min_value", pm::compile_i32_min_value, vec![], Type::I32);
     manager.register_type(i32_type);
     
     // ===== Bool =====
