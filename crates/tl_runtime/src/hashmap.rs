@@ -149,3 +149,82 @@ pub extern "C" fn tl_hashmap_free(map_handle: u64) {
         let _ = Box::from_raw(map);
     }
 }
+
+/// HashMap.keys() -> Vec<String> — 全キーを StringStruct ポインタの Vec として返す
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_hashmap_keys(map_handle: u64) -> *mut crate::string_ffi::VecStruct {
+    use crate::string_ffi::VecStruct;
+    let map = map_handle as *mut TLHashMap;
+
+    unsafe {
+        let layout = std::alloc::Layout::new::<VecStruct>();
+        let vec_ptr = std::alloc::alloc(layout) as *mut VecStruct;
+
+        if map.is_null() {
+            (*vec_ptr).ptr = std::ptr::null_mut();
+            (*vec_ptr).cap = 0;
+            (*vec_ptr).len = 0;
+            return vec_ptr;
+        }
+
+        let keys: Vec<&String> = (*map).inner.keys().collect();
+        let count = keys.len() as i64;
+
+        let ptr_size = std::mem::size_of::<*mut crate::StringStruct>();
+        let array_layout = std::alloc::Layout::from_size_align(
+            ptr_size * keys.len().max(1), 8
+        ).unwrap();
+        let array_ptr = std::alloc::alloc(array_layout) as *mut *mut crate::StringStruct;
+
+        for (i, key) in keys.iter().enumerate() {
+            let key_cstr = std::ffi::CString::new(key.as_str()).unwrap_or_default();
+            let str_struct = Box::into_raw(Box::new(crate::StringStruct {
+                ptr: key_cstr.into_raw(),
+                len: key.len() as i64,
+            }));
+            *array_ptr.add(i) = str_struct;
+        }
+
+        (*vec_ptr).ptr = array_ptr as *mut u8;
+        (*vec_ptr).cap = count;
+        (*vec_ptr).len = count;
+        vec_ptr
+    }
+}
+
+/// HashMap.values() -> Vec<i64> — 全バリュー (u64) を Vec に格納
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_hashmap_values(map_handle: u64) -> *mut crate::string_ffi::VecStruct {
+    use crate::string_ffi::VecStruct;
+    let map = map_handle as *mut TLHashMap;
+
+    unsafe {
+        let layout = std::alloc::Layout::new::<VecStruct>();
+        let vec_ptr = std::alloc::alloc(layout) as *mut VecStruct;
+
+        if map.is_null() {
+            (*vec_ptr).ptr = std::ptr::null_mut();
+            (*vec_ptr).cap = 0;
+            (*vec_ptr).len = 0;
+            return vec_ptr;
+        }
+
+        let values: Vec<u64> = (*map).inner.values().map(|&v| v as u64).collect();
+        let count = values.len() as i64;
+
+        let elem_size = std::mem::size_of::<u64>();
+        let array_layout = std::alloc::Layout::from_size_align(
+            elem_size * values.len().max(1), 8
+        ).unwrap();
+        let array_ptr = std::alloc::alloc(array_layout) as *mut u64;
+
+        for (i, &val) in values.iter().enumerate() {
+            *array_ptr.add(i) = val;
+        }
+
+        (*vec_ptr).ptr = array_ptr as *mut u8;
+        (*vec_ptr).cap = count;
+        (*vec_ptr).len = count;
+        vec_ptr
+    }
+}

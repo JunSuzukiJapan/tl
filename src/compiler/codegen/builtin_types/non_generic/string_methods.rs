@@ -324,3 +324,58 @@ pub fn compile_split<'ctx>(
     };
     Ok((res, Type::Struct("Vec".to_string(), vec![Type::String("String".to_string())])))
 }
+
+/// String.to_f64() -> f64
+pub fn compile_to_f64<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj: BasicValueEnum<'ctx>,
+    _obj_ty: Type,
+    _args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let fn_val = codegen.module.get_function("tl_string_to_f64")
+        .ok_or("tl_string_to_f64 not found")?;
+    let call = codegen.builder.build_call(fn_val, &[obj.into()], "to_f64_res")
+        .map_err(|e| e.to_string())?;
+    let res = match call.try_as_basic_value() {
+        ValueKind::Basic(v) => v,
+        _ => return Err("Invalid return from String.to_f64".into()),
+    };
+    Ok((res, Type::F64))
+}
+
+/// String.repeat(n: i64) -> String
+pub fn compile_repeat<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj: BasicValueEnum<'ctx>,
+    _obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 1 { return Err("String.repeat requires 1 argument".into()); }
+    let fn_val = codegen.module.get_function("tl_string_repeat")
+        .ok_or("tl_string_repeat not found")?;
+    let call = codegen.builder.build_call(fn_val, &[obj.into(), args[0].0.into()], "repeat_res")
+        .map_err(|e| e.to_string())?;
+    let res = match call.try_as_basic_value() {
+        ValueKind::Basic(v) => v,
+        _ => return Err("Invalid return from String.repeat".into()),
+    };
+    Ok((res, Type::String("String".to_string())))
+}
+
+/// String.chars() -> Vec<i64>
+pub fn compile_chars<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj: BasicValueEnum<'ctx>,
+    _obj_ty: Type,
+    _args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let fn_val = codegen.module.get_function("tl_string_chars")
+        .ok_or("tl_string_chars not found")?;
+    let call = codegen.builder.build_call(fn_val, &[obj.into()], "chars_res")
+        .map_err(|e| e.to_string())?;
+    let res = match call.try_as_basic_value() {
+        ValueKind::Basic(v) => v,
+        _ => return Err("Invalid return from String.chars".into()),
+    };
+    Ok((res, Type::Struct("Vec".to_string(), vec![Type::I64])))
+}

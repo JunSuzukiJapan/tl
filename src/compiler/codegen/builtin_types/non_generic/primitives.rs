@@ -27,6 +27,9 @@ pub fn register_primitive_types(manager: &mut TypeManager) {
     string.register_evaluated_instance_method("to_lowercase", string_methods::compile_to_lowercase, vec![], string_type.clone());
     string.register_evaluated_instance_method("index_of", string_methods::compile_index_of, vec![string_type.clone()], Type::I64);
     string.register_evaluated_instance_method("split", string_methods::compile_split, vec![string_type.clone()], Type::Struct("Vec".to_string(), vec![string_type.clone()]));
+    string.register_evaluated_instance_method("to_f64", string_methods::compile_to_f64, vec![], Type::F64);
+    string.register_evaluated_instance_method("repeat", string_methods::compile_repeat, vec![Type::I64], string_type.clone());
+    string.register_evaluated_instance_method("chars", string_methods::compile_chars, vec![], Type::Struct("Vec".to_string(), vec![Type::I64]));
     manager.register_type(string);
 
     // ===== F32 =====

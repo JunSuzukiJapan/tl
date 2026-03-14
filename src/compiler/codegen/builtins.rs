@@ -3284,6 +3284,41 @@ pub fn declare_runtime_functions<'ctx>(
         execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_split as *const () as usize);
     }
 
+    // tl_string_to_f64(s: *mut StringStruct) -> f64
+    let str_to_f64_type = f64_type.fn_type(&[i8_ptr.into()], false);
+    add_fn("tl_string_to_f64", str_to_f64_type);
+    if let Some(f) = module.get_function("tl_string_to_f64") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_to_f64 as *const () as usize);
+    }
+
+    // tl_string_repeat(s: *mut StringStruct, n: i64) -> *mut StringStruct
+    let str_repeat_type = i8_ptr.fn_type(&[i8_ptr.into(), i64_type.into()], false);
+    add_fn("tl_string_repeat", str_repeat_type);
+    if let Some(f) = module.get_function("tl_string_repeat") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_repeat as *const () as usize);
+    }
+
+    // tl_string_chars(s: *mut StringStruct) -> *mut VecStruct
+    let str_chars_type = i8_ptr.fn_type(&[i8_ptr.into()], false);
+    add_fn("tl_string_chars", str_chars_type);
+    if let Some(f) = module.get_function("tl_string_chars") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_chars as *const () as usize);
+    }
+
+    // tl_string_from_f64(f: f64) -> *mut StringStruct
+    let str_from_f64_type = i8_ptr.fn_type(&[f64_type.into()], false);
+    add_fn("tl_string_from_f64", str_from_f64_type);
+    if let Some(f) = module.get_function("tl_string_from_f64") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_from_f64 as *const () as usize);
+    }
+
+    // tl_string_from_bool(b: bool) -> *mut StringStruct
+    let str_from_bool_type = i8_ptr.fn_type(&[context.bool_type().into()], false);
+    add_fn("tl_string_from_bool", str_from_bool_type);
+    if let Some(f) = module.get_function("tl_string_from_bool") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_from_bool as *const () as usize);
+    }
+
     // tl_assert(cond: bool, msg: *mut StringStruct) -> void
     let assert_type = context.void_type().fn_type(&[context.bool_type().into(), i8_ptr.into()], false);
     add_fn("tl_assert", assert_type);

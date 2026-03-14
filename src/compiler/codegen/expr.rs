@@ -268,6 +268,7 @@ impl BuiltinManager {
         // IO functions
         self.register_uneval("print", compile_print_uneval);
         self.register_uneval("println", compile_println_uneval);
+        self.register_uneval("format", compile_format_uneval);
         self.register_uneval("read_line", compile_read_line_uneval);
         
         // Panic function - diverging, never returns
@@ -8320,6 +8321,156 @@ fn compile_println_uneval<'ctx>(
     args: &[Expr],
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
     compile_print_formatted(codegen, args, true)
+}
+
+/// format("pattern {}", args...) -> String
+/// println と同じフォーマット文字列解析を行い、結果を String として返す
+fn compile_format_uneval<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: &[Expr],
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.is_empty() {
+        // format() = empty string
+        return codegen.compile_string_literal("");
+    }
+
+    let concat_fn = codegen.module.get_function("tl_string_concat")
+        .ok_or("tl_string_concat not found")?;
+
+    // Check for format string
+    let fmt_str_opt = if let ExprKind::StringLiteral(s) = &args[0].inner {
+        if s.contains("{}") { Some(s.clone()) } else { None }
+    } else {
+        None
+    };
+
+    if let Some(fmt_str) = fmt_str_opt {
+        let parts: Vec<&str> = fmt_str.split("{}").collect();
+        let arg_count = args.len() - 1;
+        let placeholder_count = parts.len() - 1;
+
+        if arg_count != placeholder_count {
+            return Err(format!(
+                "Format string has {} placeholders but {} arguments were provided",
+                placeholder_count, arg_count
+            ));
+        }
+
+        // Start with first literal part
+        let (mut result, _) = codegen.compile_string_literal(parts[0])?;
+
+        for (i, part) in parts.iter().enumerate().skip(1) {
+            // Convert argument to string
+            let (arg_val, arg_ty) = codegen.compile_expr(&args[i])?;
+            let arg_str = compile_value_to_string(codegen, arg_val, &arg_ty)?;
+
+            // Concat result + arg_str
+            let call = codegen.builder.build_call(concat_fn, &[result.into(), arg_str.into()], "fmt_concat")
+                .map_err(|e| e.to_string())?;
+            result = match call.try_as_basic_value() {
+                inkwell::values::ValueKind::Basic(v) => v,
+                _ => return Err("concat returned void".into()),
+            };
+
+            // Concat literal part
+            if !part.is_empty() {
+                let (lit_str, _) = codegen.compile_string_literal(part)?;
+                let call = codegen.builder.build_call(concat_fn, &[result.into(), lit_str.into()], "fmt_concat")
+                    .map_err(|e| e.to_string())?;
+                result = match call.try_as_basic_value() {
+                    inkwell::values::ValueKind::Basic(v) => v,
+                    _ => return Err("concat returned void".into()),
+                };
+            }
+        }
+
+        Ok((result, Type::String("String".to_string())))
+    } else {
+        // No format string: format(value) = value.to_string()
+        if args.len() != 1 {
+            return Err("format requires format string or 1 argument".into());
+        }
+        let (val, ty) = codegen.compile_expr(&args[0])?;
+        let str_val = compile_value_to_string(codegen, val, &ty)?;
+        Ok((str_val, Type::String("String".to_string())))
+    }
+}
+
+/// 値を String に変換するヘルパー (format() 用)
+fn compile_value_to_string<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    val: BasicValueEnum<'ctx>,
+    ty: &Type,
+) -> Result<BasicValueEnum<'ctx>, String> {
+    match ty {
+        Type::String(_) => Ok(val), // already a string
+        Type::I64 => {
+            let fn_val = codegen.module.get_function("tl_string_from_int")
+                .ok_or("tl_string_from_int not found")?;
+            let call = codegen.builder.build_call(fn_val, &[val.into()], "i64_to_str")
+                .map_err(|e| e.to_string())?;
+            match call.try_as_basic_value() {
+                inkwell::values::ValueKind::Basic(v) => Ok(v),
+                _ => Err("tl_string_from_int returned void".into()),
+            }
+        }
+        Type::F64 => {
+            let fn_val = codegen.module.get_function("tl_string_from_f64")
+                .ok_or("tl_string_from_f64 not found")?;
+            let call = codegen.builder.build_call(fn_val, &[val.into()], "f64_to_str")
+                .map_err(|e| e.to_string())?;
+            match call.try_as_basic_value() {
+                inkwell::values::ValueKind::Basic(v) => Ok(v),
+                _ => Err("tl_string_from_f64 returned void".into()),
+            }
+        }
+        Type::Bool => {
+            let fn_val = codegen.module.get_function("tl_string_from_bool")
+                .ok_or("tl_string_from_bool not found")?;
+            let call = codegen.builder.build_call(fn_val, &[val.into()], "bool_to_str")
+                .map_err(|e| e.to_string())?;
+            match call.try_as_basic_value() {
+                inkwell::values::ValueKind::Basic(v) => Ok(v),
+                _ => Err("tl_string_from_bool returned void".into()),
+            }
+        }
+        Type::I32 | Type::F32 => {
+            // Cast to i64/f64 first, then convert
+            let i64_type = codegen.context.i64_type();
+            let casted = if matches!(ty, Type::I32) {
+                codegen.builder.build_int_s_extend(val.into_int_value(), i64_type, "i32_ext").unwrap().into()
+            } else {
+                let f64_type = codegen.context.f64_type();
+                codegen.builder.build_float_ext(val.into_float_value(), f64_type, "f32_ext").unwrap().into()
+            };
+            let fn_name = if matches!(ty, Type::I32) { "tl_string_from_int" } else { "tl_string_from_f64" };
+            let fn_val = codegen.module.get_function(fn_name)
+                .ok_or(format!("{} not found", fn_name))?;
+            let call = codegen.builder.build_call(fn_val, &[casted], "cast_to_str")
+                .map_err(|e| e.to_string())?;
+            match call.try_as_basic_value() {
+                inkwell::values::ValueKind::Basic(v) => Ok(v),
+                _ => Err("conversion returned void".into()),
+            }
+        }
+        _ => {
+            // Fallback: try tl_string_from_int (for Char, U8 etc.)
+            let fn_val = codegen.module.get_function("tl_string_from_int")
+                .ok_or("tl_string_from_int not found")?;
+            let i64_type = codegen.context.i64_type();
+            let int_val = if val.is_int_value() {
+                codegen.builder.build_int_s_extend_or_bit_cast(val.into_int_value(), i64_type, "to_i64").unwrap().into()
+            } else {
+                val.into()
+            };
+            let call = codegen.builder.build_call(fn_val, &[int_val], "fallback_to_str")
+                .map_err(|e| e.to_string())?;
+            match call.try_as_basic_value() {
+                inkwell::values::ValueKind::Basic(v) => Ok(v),
+                _ => Err("fallback conversion returned void".into()),
+            }
+        }
+    }
 }
 
 fn compile_read_line_uneval<'ctx>(

@@ -168,6 +168,22 @@ pub extern "C" fn tl_string_from_int(i: i64) -> *mut StringStruct {
     }
 }
 
+/// tl_string_from_f64: Convert f64 to string
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_string_from_f64(f: f64) -> *mut StringStruct {
+    unsafe {
+        make_string_struct(format!("{}", f))
+    }
+}
+
+/// tl_string_from_bool: Convert bool to string
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_string_from_bool(b: bool) -> *mut StringStruct {
+    unsafe {
+        make_string_struct(if b { "true".to_string() } else { "false".to_string() })
+    }
+}
+
 /// @ffi_sig (i64) -> String*
 /// 文字から文字列へ変換
 #[unsafe(no_mangle)]
@@ -459,4 +475,65 @@ pub extern "C" fn tl_min_f64(a: f64, b: f64) -> f64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_max_f64(a: f64, b: f64) -> f64 {
     if a > b { a } else { b }
+}
+
+/// String.to_f64() -> f64 — 文字列を f64 にパース。失敗時は 0.0
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_string_to_f64(s: *mut StringStruct) -> f64 {
+    unsafe {
+        if s.is_null() || (*s).ptr.is_null() {
+            return 0.0;
+        }
+        let s_str = CStr::from_ptr((*s).ptr).to_string_lossy();
+        s_str.parse::<f64>().unwrap_or(0.0)
+    }
+}
+
+/// String.repeat(n: i64) -> String — 文字列を n 回繰り返す
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_string_repeat(s: *mut StringStruct, n: i64) -> *mut StringStruct {
+    unsafe {
+        if s.is_null() || (*s).ptr.is_null() || n <= 0 {
+            return make_string_struct(String::new());
+        }
+        let s_str = CStr::from_ptr((*s).ptr).to_string_lossy();
+        let repeated = s_str.repeat(n as usize);
+        make_string_struct(repeated)
+    }
+}
+
+/// String.chars() -> Vec<i64> — 各文字の Unicode コードポイントを Vec に格納
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_string_chars(s: *mut StringStruct) -> *mut VecStruct {
+    unsafe {
+        let layout = std::alloc::Layout::new::<VecStruct>();
+        let vec_ptr = std::alloc::alloc(layout) as *mut VecStruct;
+
+        if s.is_null() || (*s).ptr.is_null() {
+            (*vec_ptr).ptr = std::ptr::null_mut();
+            (*vec_ptr).cap = 0;
+            (*vec_ptr).len = 0;
+            return vec_ptr;
+        }
+
+        let s_str = CStr::from_ptr((*s).ptr).to_string_lossy();
+        let chars: Vec<i64> = s_str.chars().map(|c| c as i64).collect();
+        let count = chars.len() as i64;
+
+        // i64 の配列を割り当て
+        let elem_size = std::mem::size_of::<i64>();
+        let array_layout = std::alloc::Layout::from_size_align(
+            elem_size * chars.len().max(1), 8
+        ).unwrap();
+        let array_ptr = std::alloc::alloc(array_layout) as *mut i64;
+
+        for (i, &cp) in chars.iter().enumerate() {
+            *array_ptr.add(i) = cp;
+        }
+
+        (*vec_ptr).ptr = array_ptr as *mut u8;
+        (*vec_ptr).cap = count;
+        (*vec_ptr).len = count;
+        vec_ptr
+    }
 }
