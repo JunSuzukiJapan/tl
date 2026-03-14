@@ -159,4 +159,10 @@ impl<T> Vec<T> {
             i = i + 1;
         }
     }
+
+    // NOTE: map/filter/any/all はメソッドレベルの型パラメータ U を必要とするため、
+    // .tl ファイルで定義すると monomorphize 時に U が解決できずエラーになる。
+    // 代わりに codegen の compile_vec_closure_method (expr.rs) で
+    // クロージャ構文から直接インラインIR を生成している。
+    // 使用例: v.map(|x: i64| x * 2), v.filter(|x: i64| x % 2 == 0)
 }

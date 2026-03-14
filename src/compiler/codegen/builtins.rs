@@ -3291,6 +3291,46 @@ pub fn declare_runtime_functions<'ctx>(
         execution_engine.add_global_mapping(&f, runtime::stdlib::tl_assert as *const () as usize);
     }
 
+    // tl_random() -> f64
+    let random_type = f64_type.fn_type(&[], false);
+    add_fn("tl_random", random_type);
+    if let Some(f) = module.get_function("tl_random") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_random as *const () as usize);
+    }
+
+    // tl_random_int(min: i64, max: i64) -> i64
+    let random_int_type = i64_type.fn_type(&[i64_type.into(), i64_type.into()], false);
+    add_fn("tl_random_int", random_int_type);
+    if let Some(f) = module.get_function("tl_random_int") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_random_int as *const () as usize);
+    }
+
+    // tl_min_i64(a: i64, b: i64) -> i64
+    let min_max_i64_type = i64_type.fn_type(&[i64_type.into(), i64_type.into()], false);
+    add_fn("tl_min_i64", min_max_i64_type);
+    if let Some(f) = module.get_function("tl_min_i64") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_min_i64 as *const () as usize);
+    }
+
+    // tl_max_i64(a: i64, b: i64) -> i64
+    add_fn("tl_max_i64", min_max_i64_type);
+    if let Some(f) = module.get_function("tl_max_i64") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_max_i64 as *const () as usize);
+    }
+
+    // tl_min_f64(a: f64, b: f64) -> f64
+    let min_max_f64_type = f64_type.fn_type(&[f64_type.into(), f64_type.into()], false);
+    add_fn("tl_min_f64", min_max_f64_type);
+    if let Some(f) = module.get_function("tl_min_f64") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_min_f64 as *const () as usize);
+    }
+
+    // tl_max_f64(a: f64, b: f64) -> f64
+    add_fn("tl_max_f64", min_max_f64_type);
+    if let Some(f) = module.get_function("tl_max_f64") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_max_f64 as *const () as usize);
+    }
+
     // tl_tensor_argmax(t, dim, keepdim) -> CTensorResult
     let argmax_type = c_tensor_result_type.fn_type(
         &[void_ptr.into(), i64_type.into(), context.bool_type().into()],

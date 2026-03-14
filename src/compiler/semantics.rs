@@ -5432,18 +5432,14 @@ impl SemanticAnalyzer {
 
                 if let Some(func) = self.functions.get(name).cloned() {
                     if args.len() != func.args.len() {
-                        // func.args is empty in current AST parser stub, need to fix that first to check properly
-                        // For now, skip arg checking if definitions are empty
-                        if !func.args.is_empty() {
-                            return self.err(
-                                SemanticError::ArgumentCountMismatch {
-                                    name: name.clone(),
-                                    expected: func.args.len(),
-                                    found: args.len(),
-                                },
-                                Some(expr.span.clone()),
-                            );
-                        }
+                        return self.err(
+                            SemanticError::ArgumentCountMismatch {
+                                name: name.clone(),
+                                expected: func.args.len(),
+                                found: args.len(),
+                            },
+                            Some(expr.span.clone()),
+                        );
                     }
 
                     let mut inferred_generics: HashMap<String, Type> = HashMap::new();

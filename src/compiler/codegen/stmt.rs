@@ -3205,15 +3205,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                     return self.emit_deep_clone(val, &Type::String(name.clone()));
                 }
 
-                // HACK: Built-in types (File) are opaque pointers
-                if name == "File" {
-                    // File handle cannot be deeply cloned easily. Return shallow copy (pointer).
-                    return Ok(val);
-                } else if name == "Path" {
-                    // Shallow copy for Path
-                    return Ok(val);
-                } else if name == "Env" || name == "Http" {
-                    // Virtual static classes or opaque
+                // Built-in opaque types: ARC参照カウントで共有所有権を管理
+                // File/Path: tl_ptr_acquire で参照カウントを増やす
+                //   (以降の汎用 Struct ARC パスにフォールスルー)
+                // Env/Http: ステートレスなシングルトン（内部状態を持たず、
+                //   グローバルな静的インスタンスへのポインタ）のため、
+                //   参照カウント操作は不要でポインタをそのまま返す
+                if name == "Env" || name == "Http" {
                     return Ok(val);
                 }
 

@@ -417,3 +417,46 @@ pub extern "C" fn tl_assert(cond: bool, msg: *mut StringStruct) {
         std::process::exit(1);
     }
 }
+
+// ========== グローバルユーティリティ関数 ==========
+
+/// random() -> f64 — [0.0, 1.0) の一様乱数
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_random() -> f64 {
+    use rand::Rng;
+    rand::thread_rng().r#gen::<f64>()
+}
+
+/// random_int(min: i64, max: i64) -> i64 — [min, max] の一様整数乱数
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_random_int(min: i64, max: i64) -> i64 {
+    use rand::Rng;
+    if min >= max {
+        return min;
+    }
+    rand::thread_rng().gen_range(min..=max)
+}
+
+/// min(a: i64, b: i64) -> i64
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_min_i64(a: i64, b: i64) -> i64 {
+    if a < b { a } else { b }
+}
+
+/// max(a: i64, b: i64) -> i64
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_max_i64(a: i64, b: i64) -> i64 {
+    if a > b { a } else { b }
+}
+
+/// min(a: f64, b: f64) -> f64
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_min_f64(a: f64, b: f64) -> f64 {
+    if a < b { a } else { b }
+}
+
+/// max(a: f64, b: f64) -> f64
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_max_f64(a: f64, b: f64) -> f64 {
+    if a > b { a } else { b }
+}

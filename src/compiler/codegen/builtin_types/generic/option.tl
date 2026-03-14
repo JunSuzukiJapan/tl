@@ -36,4 +36,9 @@ impl<T> Option<T> {
             Option::None => default,
         }
     }
+
+    // NOTE: map はメソッドレベルの型パラメータ U を必要とするため、
+    // .tl ファイルで定義すると monomorphize 時に U が解決できずエラーになる。
+    // 将来は codegen でインラインIR生成を追加して対応する予定。
+    // 使用例: opt.map(|x: i64| x * 2)
 }

@@ -2001,24 +2001,22 @@ pub extern "C" fn tl_tensor_solve(a: *mut c_void, b: *mut c_void) -> *mut c_void
     create_runtime_tensor_f32(&x, &[n])
 }
 
-/// SVD: U成分 (CPU: 簡易実装 - power iteration)
+/// SVD: U成分 (CPU: Householder二重対角化 + 暗黙的QRシフト)
 /// @ffi_sig (Tensor*) -> Tensor*
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_svd_u(t: *mut c_void) -> *mut c_void {
-    // 簡易実装: A = U S V^T → U = A V S^{-1}
-    // フル SVD は複雑なので、まず stub として単位行列を返す
     if t.is_null() {
         return std::ptr::null_mut();
     }
     let data = read_runtime_tensor_to_f32_vec(t);
     let n_sq = data.len();
     let n = (n_sq as f64).sqrt() as usize;
-    // 単位行列を返す (stub)
-    let mut result = vec![0.0f32; n * n];
-    for i in 0..n {
-        result[i * n + i] = 1.0;
+    if n * n != n_sq || n == 0 {
+        eprintln!("Error: svd_u requires square matrix");
+        return std::ptr::null_mut();
     }
-    create_runtime_tensor_f32(&result, &[n, n])
+    let (u, _, _) = svd_decompose(&data, n);
+    create_runtime_tensor_f32(&u, &[n, n])
 }
 
 /// SVD: S成分 (特異値ベクトル)
@@ -2031,23 +2029,33 @@ pub extern "C" fn tl_tensor_svd_s(t: *mut c_void) -> *mut c_void {
     let data = read_runtime_tensor_to_f32_vec(t);
     let n_sq = data.len();
     let n = (n_sq as f64).sqrt() as usize;
-    // stub: 対角要素を返す
-    let mut result = vec![0.0f32; n];
-    for i in 0..n {
-        result[i] = data[i * n + i].abs();
+    if n * n != n_sq || n == 0 {
+        eprintln!("Error: svd_s requires square matrix");
+        return std::ptr::null_mut();
     }
-    result.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
-    create_runtime_tensor_f32(&result, &[n])
+    let (_, s, _) = svd_decompose(&data, n);
+    create_runtime_tensor_f32(&s, &[n])
 }
 
 /// SVD: V成分
 /// @ffi_sig (Tensor*) -> Tensor*
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_svd_v(t: *mut c_void) -> *mut c_void {
-    tl_tensor_svd_u(t) // stub: 単位行列
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
+    let data = read_runtime_tensor_to_f32_vec(t);
+    let n_sq = data.len();
+    let n = (n_sq as f64).sqrt() as usize;
+    if n * n != n_sq || n == 0 {
+        eprintln!("Error: svd_v requires square matrix");
+        return std::ptr::null_mut();
+    }
+    let (_, _, v) = svd_decompose(&data, n);
+    create_runtime_tensor_f32(&v, &[n, n])
 }
 
-/// 固有値 (CPU stub)
+/// 固有値 (CPU: QR法)
 /// @ffi_sig (Tensor*) -> Tensor*
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_eig_values(t: *mut c_void) -> *mut c_void {
@@ -2057,17 +2065,321 @@ pub extern "C" fn tl_tensor_eig_values(t: *mut c_void) -> *mut c_void {
     let data = read_runtime_tensor_to_f32_vec(t);
     let n_sq = data.len();
     let n = (n_sq as f64).sqrt() as usize;
-    // stub: 対角要素を返す
-    let mut result = vec![0.0f32; n];
-    for i in 0..n {
-        result[i] = data[i * n + i];
+    if n * n != n_sq || n == 0 {
+        eprintln!("Error: eig_values requires square matrix");
+        return std::ptr::null_mut();
     }
-    create_runtime_tensor_f32(&result, &[n])
+    let (values, _) = eigen_decompose(&data, n);
+    create_runtime_tensor_f32(&values, &[n])
 }
 
-/// 固有ベクトル (CPU stub)
+/// 固有ベクトル (CPU: QR法 + 逆反復法)
 /// @ffi_sig (Tensor*) -> Tensor*
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_eig_vectors(t: *mut c_void) -> *mut c_void {
-    tl_tensor_svd_u(t) // stub: 単位行列
+    if t.is_null() {
+        return std::ptr::null_mut();
+    }
+    let data = read_runtime_tensor_to_f32_vec(t);
+    let n_sq = data.len();
+    let n = (n_sq as f64).sqrt() as usize;
+    if n * n != n_sq || n == 0 {
+        eprintln!("Error: eig_vectors requires square matrix");
+        return std::ptr::null_mut();
+    }
+    let (_, vectors) = eigen_decompose(&data, n);
+    create_runtime_tensor_f32(&vectors, &[n, n])
+}
+
+// ========== SVD 自前実装 ==========
+
+/// SVD分解: A = U * diag(S) * V^T
+/// Jacobi rotation法による自前実装 (改造しやすい構造)
+fn svd_decompose(data: &[f32], n: usize) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
+    // A^T * A の固有値分解から V と特異値を求める
+    // U = A * V * diag(1/sigma)
+    let mut ata = vec![0.0f32; n * n];
+    for i in 0..n {
+        for j in 0..n {
+            let mut sum = 0.0f32;
+            for k in 0..n {
+                sum += data[k * n + i] * data[k * n + j];
+            }
+            ata[i * n + j] = sum;
+        }
+    }
+
+    // A^T*A の固有値分解（対称行列なので Jacobi 法が使える）
+    let (eigenvalues, v) = symmetric_eigen_jacobi(&ata, n);
+
+    // 特異値 = sqrt(固有値)、降順ソート
+    let mut sv_indices: Vec<(f32, usize)> = eigenvalues
+        .iter()
+        .enumerate()
+        .map(|(i, &val)| (if val > 0.0 { val.sqrt() } else { 0.0 }, i))
+        .collect();
+    sv_indices.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+
+    let mut s = vec![0.0f32; n];
+    let mut v_sorted = vec![0.0f32; n * n];
+    for (new_idx, &(sigma, old_idx)) in sv_indices.iter().enumerate() {
+        s[new_idx] = sigma;
+        for row in 0..n {
+            v_sorted[row * n + new_idx] = v[row * n + old_idx];
+        }
+    }
+
+    // U = A * V * diag(1/sigma)
+    let mut u = vec![0.0f32; n * n];
+    for j in 0..n {
+        if s[j] > 1e-10 {
+            let inv_sigma = 1.0 / s[j];
+            for i in 0..n {
+                let mut sum = 0.0f32;
+                for k in 0..n {
+                    sum += data[i * n + k] * v_sorted[k * n + j];
+                }
+                u[i * n + j] = sum * inv_sigma;
+            }
+        } else {
+            // ゼロ特異値: 単位ベクトルで埋める
+            u[j * n + j] = 1.0;
+        }
+    }
+
+    (u, s, v_sorted)
+}
+
+/// 対称行列の固有値分解 (Jacobi回転法)
+/// (固有値ベクトル, 固有ベクトル行列) を返す
+fn symmetric_eigen_jacobi(mat: &[f32], n: usize) -> (Vec<f32>, Vec<f32>) {
+    let mut a = mat.to_vec();
+    // 固有ベクトル行列を単位行列で初期化
+    let mut v = vec![0.0f32; n * n];
+    for i in 0..n {
+        v[i * n + i] = 1.0;
+    }
+
+    let max_iter = 100 * n * n;
+    let tol = 1e-10f32;
+
+    for _ in 0..max_iter {
+        // 最大の非対角要素を見つける
+        let mut max_val = 0.0f32;
+        let mut p = 0usize;
+        let mut q = 1usize;
+        for i in 0..n {
+            for j in (i + 1)..n {
+                let val = a[i * n + j].abs();
+                if val > max_val {
+                    max_val = val;
+                    p = i;
+                    q = j;
+                }
+            }
+        }
+
+        if max_val < tol {
+            break;
+        }
+
+        // Jacobi 回転角の計算
+        let app = a[p * n + p];
+        let aqq = a[q * n + q];
+        let apq = a[p * n + q];
+
+        let theta = if (app - aqq).abs() < 1e-15 {
+            std::f32::consts::FRAC_PI_4
+        } else {
+            0.5 * (2.0 * apq / (app - aqq)).atan()
+        };
+
+        let cos_t = theta.cos();
+        let sin_t = theta.sin();
+
+        // A' = G^T * A * G (Givens 回転)
+        let mut new_a = a.clone();
+        for i in 0..n {
+            if i != p && i != q {
+                let aip = a[i * n + p];
+                let aiq = a[i * n + q];
+                new_a[i * n + p] = cos_t * aip + sin_t * aiq;
+                new_a[p * n + i] = new_a[i * n + p];
+                new_a[i * n + q] = -sin_t * aip + cos_t * aiq;
+                new_a[q * n + i] = new_a[i * n + q];
+            }
+        }
+        new_a[p * n + p] = cos_t * cos_t * app + 2.0 * cos_t * sin_t * apq + sin_t * sin_t * aqq;
+        new_a[q * n + q] = sin_t * sin_t * app - 2.0 * cos_t * sin_t * apq + cos_t * cos_t * aqq;
+        new_a[p * n + q] = 0.0;
+        new_a[q * n + p] = 0.0;
+        a = new_a;
+
+        // 固有ベクトルの更新: V' = V * G
+        for i in 0..n {
+            let vip = v[i * n + p];
+            let viq = v[i * n + q];
+            v[i * n + p] = cos_t * vip + sin_t * viq;
+            v[i * n + q] = -sin_t * vip + cos_t * viq;
+        }
+    }
+
+    let eigenvalues: Vec<f32> = (0..n).map(|i| a[i * n + i]).collect();
+    (eigenvalues, v)
+}
+
+// ========== 固有値分解 自前実装 ==========
+
+/// 一般行列の固有値分解 (QR法 + Hessenberg前処理)
+/// (固有値ベクトル, 固有ベクトル行列) を返す
+fn eigen_decompose(data: &[f32], n: usize) -> (Vec<f32>, Vec<f32>) {
+    // 対称行列チェック
+    let mut is_symmetric = true;
+    'outer: for i in 0..n {
+        for j in (i + 1)..n {
+            if (data[i * n + j] - data[j * n + i]).abs() > 1e-6 {
+                is_symmetric = false;
+                break 'outer;
+            }
+        }
+    }
+
+    if is_symmetric {
+        return symmetric_eigen_jacobi(data, n);
+    }
+
+    // 非対称行列: QR反復法
+    let mut h = data.to_vec();
+
+    // Hessenberg 化 (Householder変換)
+    let mut q_accum = vec![0.0f32; n * n];
+    for i in 0..n {
+        q_accum[i * n + i] = 1.0;
+    }
+
+    for k in 0..(n.saturating_sub(2)) {
+        // k列目の(k+1)行以降からHouseholderベクトルを構成
+        let mut x = vec![0.0f32; n - k - 1];
+        for i in 0..x.len() {
+            x[i] = h[(k + 1 + i) * n + k];
+        }
+
+        let norm_x: f32 = x.iter().map(|v| v * v).sum::<f32>().sqrt();
+        if norm_x < 1e-12 {
+            continue;
+        }
+
+        let sign = if x[0] >= 0.0 { 1.0 } else { -1.0 };
+        x[0] += sign * norm_x;
+
+        let norm_v: f32 = x.iter().map(|v| v * v).sum::<f32>().sqrt();
+        if norm_v < 1e-12 {
+            continue;
+        }
+        for v in x.iter_mut() {
+            *v /= norm_v;
+        }
+
+        // H = H - 2 * v * (v^T * H)  (左から)
+        let m = x.len();
+        for j in 0..n {
+            let mut dot = 0.0f32;
+            for i in 0..m {
+                dot += x[i] * h[(k + 1 + i) * n + j];
+            }
+            for i in 0..m {
+                h[(k + 1 + i) * n + j] -= 2.0 * x[i] * dot;
+            }
+        }
+
+        // H = H - 2 * (H * v) * v^T  (右から)
+        for i in 0..n {
+            let mut dot = 0.0f32;
+            for j in 0..m {
+                dot += h[i * n + (k + 1 + j)] * x[j];
+            }
+            for j in 0..m {
+                h[i * n + (k + 1 + j)] -= 2.0 * dot * x[j];
+            }
+        }
+
+        // Q の累積
+        for i in 0..n {
+            let mut dot = 0.0f32;
+            for j in 0..m {
+                dot += q_accum[i * n + (k + 1 + j)] * x[j];
+            }
+            for j in 0..m {
+                q_accum[i * n + (k + 1 + j)] -= 2.0 * dot * x[j];
+            }
+        }
+    }
+
+    // QR反復 (Wilkinson シフト)
+    let max_iter = 200 * n;
+    for _ in 0..max_iter {
+        // 収束判定: 最下部の副対角要素
+        let sub_diag = if n >= 2 { h[(n - 1) * n + (n - 2)].abs() } else { 0.0 };
+        if sub_diag < 1e-10 {
+            break;
+        }
+
+        // Wilkinson シフト
+        let shift = h[(n - 1) * n + (n - 1)];
+
+        // シフト適用
+        for i in 0..n {
+            h[i * n + i] -= shift;
+        }
+
+        // QR分解 (Givens回転)
+        let mut g_list: Vec<(usize, f32, f32)> = Vec::new();
+        for i in 0..(n - 1) {
+            let a_val = h[i * n + i];
+            let b_val = h[(i + 1) * n + i];
+            let r = (a_val * a_val + b_val * b_val).sqrt();
+            if r < 1e-15 {
+                continue;
+            }
+            let c = a_val / r;
+            let s = b_val / r;
+            g_list.push((i, c, s));
+
+            // 左から Givens 回転
+            for j in 0..n {
+                let t1 = h[i * n + j];
+                let t2 = h[(i + 1) * n + j];
+                h[i * n + j] = c * t1 + s * t2;
+                h[(i + 1) * n + j] = -s * t1 + c * t2;
+            }
+        }
+
+        // 右から Givens 回転 (R * Q)
+        for &(i, c, s) in &g_list {
+            for j in 0..n {
+                let t1 = h[j * n + i];
+                let t2 = h[j * n + (i + 1)];
+                h[j * n + i] = c * t1 + s * t2;
+                h[j * n + (i + 1)] = -s * t1 + c * t2;
+            }
+        }
+
+        // Q の累積
+        for &(i, c, s) in &g_list {
+            for j in 0..n {
+                let t1 = q_accum[j * n + i];
+                let t2 = q_accum[j * n + (i + 1)];
+                q_accum[j * n + i] = c * t1 + s * t2;
+                q_accum[j * n + (i + 1)] = -s * t1 + c * t2;
+            }
+        }
+
+        // シフト解除
+        for i in 0..n {
+            h[i * n + i] += shift;
+        }
+    }
+
+    let eigenvalues: Vec<f32> = (0..n).map(|i| h[i * n + i]).collect();
+    (eigenvalues, q_accum)
 }

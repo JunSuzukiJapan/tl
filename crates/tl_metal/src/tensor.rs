@@ -171,17 +171,53 @@ impl MetalTensor {
     /// 全て1で初期化
     pub fn ones(shape: &[usize], dtype: DType) -> Self {
         let tensor = Self::uninit(shape, dtype);
+        let count = tensor.elem_count();
         match dtype {
             DType::F32 => {
                 let ptr = tensor.buffer.contents() as *mut f32;
-                let count = tensor.elem_count();
                 unsafe {
                     for i in 0..count {
                         *ptr.add(i) = 1.0;
                     }
                 }
             }
-            _ => unimplemented!("ones for {:?}", dtype),
+            DType::I64 => {
+                let ptr = tensor.buffer.contents() as *mut i64;
+                unsafe {
+                    for i in 0..count {
+                        *ptr.add(i) = 1;
+                    }
+                }
+            }
+            DType::I32 => {
+                let ptr = tensor.buffer.contents() as *mut i32;
+                unsafe {
+                    for i in 0..count {
+                        *ptr.add(i) = 1;
+                    }
+                }
+            }
+            DType::U8 => {
+                let ptr = tensor.buffer.contents() as *mut u8;
+                unsafe {
+                    for i in 0..count {
+                        *ptr.add(i) = 1;
+                    }
+                }
+            }
+            _ => {
+                // F16/BF16/U32: 未サポート — F32 にフォールバック
+                eprintln!("Warning: ones for {:?} not supported, using F32 fallback", dtype);
+                let fallback = Self::uninit(shape, DType::F32);
+                let ptr = fallback.buffer.contents() as *mut f32;
+                let fc = fallback.elem_count();
+                unsafe {
+                    for i in 0..fc {
+                        *ptr.add(i) = 1.0;
+                    }
+                }
+                return fallback;
+            }
         }
         tensor
     }
@@ -204,7 +240,11 @@ impl MetalTensor {
                     }
                 }
             }
-            _ => unimplemented!("randn for {:?}", dtype),
+            _ => {
+                // 整数型/半精度: 乱数の意味が薄いため F32 で生成してフォールバック
+                eprintln!("Warning: randn for {:?} not directly supported, using F32 fallback", dtype);
+                return Self::randn(shape, DType::F32);
+            }
         }
         tensor
     }

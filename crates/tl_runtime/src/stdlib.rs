@@ -24,6 +24,12 @@ pub use crate::string_ffi::{
     tl_string_index_of,
     tl_string_split,
     tl_assert,
+    tl_random,
+    tl_random_int,
+    tl_min_i64,
+    tl_max_i64,
+    tl_min_f64,
+    tl_max_f64,
 };
 
 // system からの re-export
