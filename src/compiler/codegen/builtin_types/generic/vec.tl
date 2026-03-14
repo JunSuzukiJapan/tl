@@ -184,14 +184,46 @@ impl<T> Vec<T> {
         }
     }
 
-    // TODO: extend, slice, clone は get().unwrap() → push() チェーンが
-    // monomorphize 時に Option<T> の unwrap 戻り値型が ptr として生成され、
-    // push(item: T) との型不一致を引き起こす問題がある。
-    // コンパイラの型伝播修正後に有効化する。
-    //
-    // fn extend(mut self, other: Vec<T>) { ... }
-    // fn slice(self, start: i64, end: i64) -> Vec<T> { ... }
-    // fn clone(self) -> Vec<T> { ... }
+    fn extend(mut self, other: Vec<T>) {
+        let mut i: i64 = 0;
+        while i < other.len {
+            self.push(other.ptr[i]);
+            i = i + 1;
+        }
+    }
+
+    fn slice(self, start: i64, end: i64) -> Vec<T> {
+        let actual_start = if start < 0 { 0 } else { start };
+        let actual_end = if end > self.len { self.len } else { end };
+        let count = actual_end - actual_start;
+        if count <= 0 {
+            return Vec::new();
+        }
+        let mut result: Vec<T> = Vec::with_capacity(count);
+        let rp = result.ptr;
+        let mut i: i64 = 0;
+        while i < count {
+            rp[i] = self.ptr[actual_start + i];
+            i = i + 1;
+        }
+        result.len = count;
+        result
+    }
+
+    fn clone(self) -> Vec<T> {
+        if self.len == 0 {
+            return Vec::new();
+        }
+        let mut result: Vec<T> = Vec::with_capacity(self.len);
+        let rp = result.ptr;
+        let mut i: i64 = 0;
+        while i < self.len {
+            rp[i] = self.ptr[i];
+            i = i + 1;
+        }
+        result.len = self.len;
+        result
+    }
 
     // NOTE: map/filter/any/all はメソッドレベルの型パラメータ U を必要とするため、
     // .tl ファイルで定義すると monomorphize 時に U が解決できずエラーになる。
