@@ -6559,8 +6559,8 @@ impl SemanticAnalyzer {
                     }
                 };
 
-                // === Vec closure methods: map, filter, any, all ===
-                if (method_name == "map" || method_name == "filter" || method_name == "any" || method_name == "all")
+                // === Vec closure methods: map, filter, any, all, reduce ===
+                if (method_name == "map" || method_name == "filter" || method_name == "any" || method_name == "all" || method_name == "reduce")
                     && args.len() == 1
                 {
                     let is_vec = match &obj_type {
@@ -6602,6 +6602,120 @@ impl SemanticAnalyzer {
                             return match method_name.as_str() {
                                 "map" | "filter" => Ok(obj_type.clone()),
                                 "any" | "all" => Ok(Type::Bool),
+                                "reduce" => Ok(elem_ty),
+                                _ => unreachable!(),
+                            };
+                        }
+                    }
+                }
+
+                // === Vec::join(sep: String) -> String ===
+                if method_name == "join" && args.len() == 1 {
+                    let is_vec = match &obj_type {
+                        Type::Struct(name, _) if name.starts_with("Vec") => true,
+                        _ => obj_type.get_base_name() == "Vec",
+                    };
+                    if is_vec {
+                        // Check arg type
+                        let _arg_ty = self.check_expr(&mut args[0])?;
+                        return Ok(Type::String("String".to_string()));
+                    }
+                }
+
+                // === Option closure methods: map, and_then, unwrap_or_else ===
+                if (method_name == "map" || method_name == "and_then" || method_name == "unwrap_or_else")
+                    && args.len() == 1
+                {
+                    let is_option = match &obj_type {
+                        Type::Enum(name, _) => name == "Option",
+                        _ => false,
+                    };
+                    if is_option {
+                        if let ExprKind::Closure { args: closure_args, body, .. } = &mut args[0].inner {
+                            let elem_ty = match &obj_type {
+                                Type::Enum(_, type_args) => type_args.first().cloned().unwrap_or(Type::I64),
+                                _ => Type::I64,
+                            };
+
+                            self.enter_scope();
+                            for (arg_name, arg_type_opt) in closure_args.iter() {
+                                let arg_ty = arg_type_opt.clone().unwrap_or(elem_ty.clone());
+                                self.declare_variable(arg_name.clone(), arg_ty, false)?;
+                            }
+                            let mut last_ty = Type::Void;
+                            let body_len = body.len();
+                            for (idx, stmt) in body.iter_mut().enumerate() {
+                                if idx == body_len - 1 {
+                                    if let StmtKind::Expr(e) = &mut stmt.inner {
+                                        last_ty = self.check_expr(e)?;
+                                    } else {
+                                        self.check_stmt(stmt)?;
+                                    }
+                                } else {
+                                    self.check_stmt(stmt)?;
+                                }
+                            }
+                            self.exit_scope();
+
+                            return match method_name.as_str() {
+                                "map" => Ok(obj_type.clone()),       // Option<U>
+                                "and_then" => Ok(last_ty),            // closure returns Option<U>
+                                "unwrap_or_else" => Ok(elem_ty),      // T
+                                _ => unreachable!(),
+                            };
+                        }
+                    }
+                }
+
+                // === Result closure methods: map, map_err, and_then, unwrap_or_else ===
+                if (method_name == "map" || method_name == "map_err" || method_name == "and_then" || method_name == "unwrap_or_else")
+                    && args.len() == 1
+                {
+                    let is_result = match &obj_type {
+                        Type::Enum(name, _) => name == "Result",
+                        _ => false,
+                    };
+                    if is_result {
+                        if let ExprKind::Closure { args: closure_args, body, .. } = &mut args[0].inner {
+                            let (ok_ty, err_ty) = match &obj_type {
+                                Type::Enum(_, type_args) if type_args.len() >= 2 => {
+                                    (type_args[0].clone(), type_args[1].clone())
+                                }
+                                _ => (Type::I64, Type::I64),
+                            };
+
+                            // Bind closure arg with appropriate type
+                            let bind_ty = match method_name.as_str() {
+                                "map" | "and_then" => ok_ty.clone(),
+                                "map_err" => err_ty.clone(),
+                                "unwrap_or_else" => err_ty.clone(),
+                                _ => ok_ty.clone(),
+                            };
+
+                            self.enter_scope();
+                            for (arg_name, arg_type_opt) in closure_args.iter() {
+                                let arg_ty = arg_type_opt.clone().unwrap_or(bind_ty.clone());
+                                self.declare_variable(arg_name.clone(), arg_ty, false)?;
+                            }
+                            let mut last_ty = Type::Void;
+                            let body_len = body.len();
+                            for (idx, stmt) in body.iter_mut().enumerate() {
+                                if idx == body_len - 1 {
+                                    if let StmtKind::Expr(e) = &mut stmt.inner {
+                                        last_ty = self.check_expr(e)?;
+                                    } else {
+                                        self.check_stmt(stmt)?;
+                                    }
+                                } else {
+                                    self.check_stmt(stmt)?;
+                                }
+                            }
+                            self.exit_scope();
+
+                            return match method_name.as_str() {
+                                "map" | "map_err" => Ok(obj_type.clone()),  // Result<U, E> or Result<T, U>
+                                "and_then" => Ok(last_ty),                   // closure returns Result
+                                "unwrap_or_else" => Ok(ok_ty),               // T
                                 _ => unreachable!(),
                             };
                         }
