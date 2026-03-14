@@ -1099,48 +1099,6 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
     }
 
-    /// Parse type arguments from bracket-extracted strings (e.g., ["i64", "Entry[i64][i64]"])
-    /// Each argument string may itself contain brackets for nested generics,
-    /// but mangle_extract_args already handles nested extraction at the top level.
-    pub(crate) fn parse_mangled_type_args_from_strs(&self, arg_strs: &[&str]) -> Vec<Type> {
-        let mut result = Vec::new();
-        for s in arg_strs {
-            let s = s.trim();
-            if s.is_empty() { continue; }
-            // Check if this arg itself has brackets (nested generic)
-            let base = mangle_base_name(s);
-            let ty = match base.to_lowercase().as_str() {
-                "i64" => Type::I64,
-                "i32" => Type::I32,
-                "f32" => Type::F32,
-                "f64" => Type::F64,
-                "bool" => Type::Bool,
-                "u8" => Type::U8,
-                "u16" => Type::U16,
-                "u32" => Type::U32,
-                "usize" => Type::Usize,
-                "string" => Type::String("String".to_string()),
-                _ => {
-                    // For nested generics: parse inner args recursively
-                    if mangle_has_args(s) {
-                        let inner_args = mangle_extract_args(s);
-                        let nested = self.parse_mangled_type_args_from_strs(&inner_args);
-                        if let Some(_) = self.enum_defs.get(base) {
-                            Type::Enum(s.to_string(), nested)
-                        } else {
-                            Type::Struct(s.to_string(), nested)
-                        }
-                    } else if let Some(_) = self.enum_defs.get(s) {
-                        Type::Enum(s.to_string(), vec![])
-                    } else {
-                        Type::Struct(s.to_string(), vec![])
-                    }
-                }
-            };
-            result.push(ty);
-        }
-        result
-    }
 
     pub(crate) fn register_all_methods(&mut self) {
         // --- Tensor Instance Methods ---
@@ -1806,28 +1764,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // 0. specialized name handling
                 // Extract base name from mangled name (e.g., "Option_i64" -> "Option")
                 // and parse generics from mangled suffix if generics is empty
-                let (base_name, inferred_generics) = if generics.is_empty() && mangle_has_args(enum_name) {
+                let (base_name, inferred_generics) = if generics.is_empty() && enum_name.contains('[') {
                     let base = mangle_base_name(enum_name).to_string();
-                    let type_parts = mangle_extract_args(enum_name);
-                    if !type_parts.is_empty() {
-                        // Parse ALL type suffixes (e.g., ["i64", "i64"] -> [I64, I64])
-                        let inferred_types: Vec<Type> = type_parts.iter()
-                            .filter_map(|type_part| {
-                                match type_part.to_lowercase().as_str() {
-                                    "i64" => Some(Type::I64),
-                                    "f32" => Some(Type::F32),
-                                    "f64" => Some(Type::F64),
-                                    "bool" => Some(Type::Bool),
-                                    "string" => Some(Type::String("String".to_string())),
-                                    "" => None,  // Skip empty parts
-                                    other => Some(Type::Struct(other.to_string(), vec![])),
-                                }
-                            })
-                            .collect();
-                        (base, inferred_types)
-                    } else {
-                        (enum_name.clone(), generics.clone())
-                    }
+                    (base, generics.clone())
                 } else {
                     (enum_name.clone(), generics.clone())
                 };
@@ -2191,7 +2130,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // gets the correct generics. After monomorphization, enum_def.generics is empty
                 // and enum_def.name contains the full name like "Option<i64>".
                 // For proper type matching, we return (enum_def.name, []) as generics are baked into the name.
-                Ok((alloca.into(), Type::Enum(enum_def.name.clone(), vec![])))
+                Ok((alloca.into(), Type::Enum(enum_def.name.clone(), inferred_generics.clone())))
             }
             ExprKind::Match {
                 expr: subject_expr,
@@ -2915,18 +2854,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // Retrieve field type and substitute if necessary
                 let (_, field_ty_raw) = &struct_def.fields[field_idx];
                 
-                // If generic_args is empty but we have a mangled name, recover generics
-                let effective_generic_args = if generic_args.is_empty() && mangle_has_args(&base_name) {
-                    // Parse mangled name to recover generics
-                    let extracted = mangle_extract_args(&base_name);
-                    if !extracted.is_empty() {
-                        self.parse_mangled_type_args_from_strs(&extracted)
-                    } else {
-                        generic_args.clone()
-                    }
-                } else {
-                    generic_args.clone()
-                };
+                let effective_generic_args = generic_args.clone();
                 
                 let field_ty = if is_generic_base && !effective_generic_args.is_empty() {
                      self.substitute_type_generic(field_ty_raw, &struct_def.generics, &effective_generic_args)
@@ -2972,22 +2900,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 t
                             }
                             Err(_) => {
-                                // Last resort: try to infer generics from underscore suffix
-                                let extracted = mangle_extract_args(&base_name);
-                                if !extracted.is_empty() {
-                                    let inferred_ty = match extracted[0].to_lowercase().as_str() {
-                                        "u8" => Type::U8,
-                                        "i64" => Type::I64,
-                                        "f32" => Type::F32,
-                                        "f64" => Type::F64,
-                                        "string" => Type::String("String".to_string()),
-                                        _ => return Err(format!("LLVM struct type for {} not found", base_name)),
-                                    };
-                                    self.monomorphize_struct(&underscore_base, &[inferred_ty])
-                                        .map_err(|e| format!("Failed to monomorphize {}: {}", base_name, e))?
-                                } else {
-                                    return Err(format!("LLVM struct type for {} not found", base_name));
-                                }
+                                return Err(format!("Failed to monomorphize struct {} for FieldAccess", base_name));
                             }
                         }
                     } else {
@@ -3003,24 +2916,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                                     .map_err(|e| format!("Failed to monomorphize {} for FieldAccess: {}", underscore_base, e))?
                             }
                         } else {
-                            // Try to infer generics from underscore suffix (e.g., "Vec_u8" -> Vec<u8>)
-                            let extracted = mangle_extract_args(&base_name);
-                            if !extracted.is_empty() {
-                                let inferred_ty = match extracted[0].to_lowercase().as_str() {
-                                    "u8" => Type::U8,
-                                    "i64" => Type::I64,
-                                    "f32" => Type::F32,
-                                    "f64" => Type::F64,
-                                    "string" => Type::String("String".to_string()),
-                                    _ => return Err(format!("LLVM struct type for {} not found (tried {}, {}, {})", 
-                                        base_name, simple_struct_name, base_name, underscore_base)),
-                                };
-                                self.monomorphize_struct(&underscore_base, &[inferred_ty])
-                                    .map_err(|e| format!("Failed to monomorphize {}: {}", base_name, e))?
-                            } else {
-                                return Err(format!("LLVM struct type for {} not found (tried {}, {}, {})", 
-                                    base_name, simple_struct_name, base_name, underscore_base));
-                            }
+                            return Err(format!("LLVM struct type for {} not found (tried {}, {}, {})", 
+                                base_name, simple_struct_name, base_name, underscore_base));
                         }
                     }
                 };
@@ -4627,6 +4524,10 @@ impl<'ctx> CodeGenerator<'ctx> {
         args: &[Expr],
         target_type: &Type,
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+        // Normalize target_type to resolve Path types to Struct/Enum
+        let normalized_target = self.normalize_type(target_type);
+        let target_type = &normalized_target;
+        
         // Compatibility aliases for existing logic
         let is_grad_tensor_call = struct_name == "GradTensor";
         let type_name = if is_grad_tensor_call { "Tensor" } else { struct_name };
@@ -4657,7 +4558,11 @@ impl<'ctx> CodeGenerator<'ctx> {
             if let Some(variant_idx) = enum_def.variants.iter().position(|v| v.name == method) {
                 // If enum_def is still generic, monomorphize with default type
                 if !enum_def.generics.is_empty() {
-                    let default_generics = vec![Type::I64; enum_def.generics.len()];
+                    // Use type args from target_type if available, otherwise default to I64
+                    let default_generics = match target_type {
+                        Type::Struct(_, args) | Type::Enum(_, args) if !args.is_empty() => args.clone(),
+                        _ => vec![Type::I64; enum_def.generics.len()],
+                    };
                     let mangled = self.mangle_type_name(struct_name, &default_generics);
                     if let Some(specialized) = self.enum_defs.get(&mangled) {
                         enum_def = specialized.clone();
@@ -4670,7 +4575,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
                 // This is an enum variant constructor, compile it as EnumInit
                 return self.compile_enum_variant_as_static_method_call(
-                    &enum_def.name, method, args, variant_idx, &enum_def
+                    &enum_def.name, method, args, variant_idx, &enum_def, target_type
                 );
             }
         }
@@ -5483,17 +5388,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             _ => return Err(format!("Match on non-enum: {:?}", subject_ty)),
         };
         
-        // If generic_args is empty but enum_name is mangled, parse the mangled name
-        let generic_args: Vec<Type> = if raw_generic_args.is_empty() && mangle_has_args(enum_name) {
-            let extracted = mangle_extract_args(enum_name);
-            if !extracted.is_empty() {
-                self.parse_mangled_type_args_from_strs(&extracted)
-            } else {
-                raw_generic_args
-            }
-        } else {
-            raw_generic_args
-        };
+        let generic_args: Vec<Type> = raw_generic_args;
 
 
         // Ensure enum layout is generated
@@ -6520,8 +6415,10 @@ impl<'ctx> CodeGenerator<'ctx> {
             (base, parsed_generics)
         } else if mangle_has_args(&type_name) {
             let base = mangle_base_name(&type_name).to_string();
-            let extracted = mangle_extract_args(&type_name);
-            let parsed_generics = self.parse_mangled_type_args_from_strs(&extracted);
+            let parsed_generics = match &obj_ty {
+                Type::Struct(_, args) | Type::Enum(_, args) => args.clone(),
+                _ => vec![],
+            };
             (base, parsed_generics)
         } else {
             (type_name.clone(), vec![])
@@ -7450,13 +7347,8 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         // Determine element type from Vec type params
         let elem_ty = match vec_ty {
-            Type::Struct(name, params) if !params.is_empty() => params[0].clone(),
-            Type::Struct(name, _) if mangle_has_args(name) => {
-                // Monomorphized name like "Vec[String]" - extract type params from name
-                let extracted = mangle_extract_args(name);
-                let types = parse_mangled_type_strs(&extracted);
-                types.into_iter().next().unwrap_or(Type::I64)
-            }
+            Type::Struct(_name, params) if !params.is_empty() => params[0].clone(),
+            Type::Struct(_name, _) => Type::I64,
             _ => Type::I64,
         };
         let elem_llvm_ty = self.get_llvm_type(&elem_ty)?;
@@ -10853,6 +10745,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         args: &[crate::compiler::ast::Expr],
         variant_idx: usize,
         enum_def: &crate::compiler::ast::EnumDef,
+        target_type: &crate::compiler::ast::Type,
     ) -> Result<(inkwell::values::BasicValueEnum<'ctx>, crate::compiler::ast::Type), String> {
         use crate::compiler::ast::{Type, VariantKind};
         
@@ -10964,6 +10857,10 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
         }
         
-        Ok((alloca.into(), Type::Enum(enum_name.to_string(), vec![])))
+        let type_args = match target_type {
+            Type::Struct(_, a) | Type::Enum(_, a) => a.clone(),
+            _ => vec![],
+        };
+        Ok((alloca.into(), Type::Enum(enum_name.to_string(), type_args)))
     }
 }

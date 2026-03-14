@@ -1,5 +1,5 @@
 use super::CodeGenerator;
-use crate::compiler::ast::{Type, Expr, mangle_wrap_args, mangle_base_name, mangle_has_args, mangle_extract_args, parse_mangled_type_strs};
+use crate::compiler::ast::{Type, Expr, mangle_wrap_args, mangle_base_name, mangle_has_args};
 use crate::compiler::mangler::MANGLER;
 use crate::compiler::ast_subst::TypeSubstitutor;
 use inkwell::types::{BasicTypeEnum, StructType};
@@ -207,25 +207,10 @@ impl<'ctx> CodeGenerator<'ctx> {
         // First, try direct lookup
         let enum_def = if let Some(def) = self.enum_defs.get(enum_name) {
             def.clone()
-        } else if mangle_has_args(enum_name) && !enum_name.contains('<') {
+        } else if enum_name.contains('[') && !enum_name.contains('<') {
             // Try extracting base name from mangled name (e.g., "Option[i64]" -> "Option")
             let base_name = mangle_base_name(enum_name);
             if let Some(def) = self.enum_defs.get(base_name) {
-                // If generic_args is empty but the def needs generics, try to parse from name
-                if generic_args.is_empty() && !def.generics.is_empty() {
-                    // This is already monomorphized with a different naming scheme
-                    // Extract type args from bracket notation
-                    let arg_strs = mangle_extract_args(enum_name);
-                    let inferred_generics = parse_mangled_type_strs(&arg_strs);
-                    // Try to find or create the angle-bracket version
-                    let angle_name = self.mangle_type_name(base_name, &inferred_generics);
-                    if let Some(_existing) = self.enum_types.get(&angle_name) {
-                        // Already exists
-                        return Ok(angle_name);
-                    }
-                    // Recursively monomorphize with inferred generics
-                    return self.monomorphize_enum(base_name, &inferred_generics);
-                }
                 def.clone()
             } else {
                 return Err(format!("Enum {} not found (tried base {})", enum_name, base_name));
@@ -390,6 +375,9 @@ impl<'ctx> CodeGenerator<'ctx> {
     /// Example: `Vec` + `[i64]` -> `Vec[i64]`
     pub fn mangle_type_name(&self, base_name: &str, type_args: &[Type]) -> String {
         if type_args.is_empty() {
+            base_name.to_string()
+        } else if base_name.contains('[') {
+            // Already mangled: don't double-mangle
             base_name.to_string()
         } else {
             let args_str: Vec<String> = type_args.iter().map(|t| self.type_to_suffix(t)).collect();

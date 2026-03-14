@@ -1077,11 +1077,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Extract concrete type args from target_type
         let type_args = match &imp.target_type {
             Type::Struct(_, args) | Type::Enum(_, args) => args.clone(),
-            _ => {
-                // Try to extract from mangled name
-                let extracted = crate::compiler::ast::mangle_extract_args(&base_name);
-                self.parse_mangled_type_args_from_strs(&extracted)
-            }
+            _ => vec![],
         };
 
         // Check each predicate

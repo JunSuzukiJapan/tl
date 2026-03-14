@@ -94,7 +94,7 @@ impl TypeSubstitutor {
             Type::String(_) => "String".to_string(),
             Type::Char(_) => "Char".to_string(),
             Type::Struct(name, args) => {
-                if args.is_empty() {
+                if args.is_empty() || name.contains('[') {
                     name.clone()
                 } else {
                     let args_str: Vec<String> = args.iter().map(|t| self.type_to_suffix(t)).collect();
@@ -102,7 +102,7 @@ impl TypeSubstitutor {
                 }
             }
             Type::Enum(name, args) => {
-                if args.is_empty() {
+                if args.is_empty() || name.contains('[') {
                     name.clone()
                 } else {
                     let args_str: Vec<String> = args.iter().map(|t| self.type_to_suffix(t)).collect();
@@ -218,7 +218,7 @@ impl TypeSubstitutor {
                 ExprKind::EnumInit {
                     enum_name: new_enum_name,
                     variant_name: variant_name.clone(),
-                    generics: vec![], // Generics now encoded in enum_name
+                    generics: new_generics, // Preserve type args for codegen
                     payload: new_payload,
                 }
             }

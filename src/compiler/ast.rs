@@ -23,20 +23,7 @@ pub fn mangle_has_args(mangled: &str) -> bool {
     MANGLER.has_args(mangled)
 }
 
-/// マングル名からトップレベルの型引数文字列を抽出（後方互換ラッパー）
-pub fn mangle_extract_args(mangled: &str) -> Vec<&str> {
-    MANGLER.extract_args(mangled)
-}
 
-/// マングル型文字列を Type にパース（後方互換ラッパー）
-pub fn parse_mangled_type_str(s: &str) -> Type {
-    MANGLER.parse_type_str(s)
-}
-
-/// マングル型文字列のスライスを Vec<Type> にパース（後方互換ラッパー）
-pub fn parse_mangled_type_strs(strs: &[&str]) -> Vec<Type> {
-    MANGLER.parse_type_strs(strs)
-}
 
 /// Spanを持つラッパー型
 /// ASTノードに位置情報を付加するために使用
