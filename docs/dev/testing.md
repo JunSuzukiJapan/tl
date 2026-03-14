@@ -1,45 +1,50 @@
-# Testing Guide
+# テストガイド
 
-This document describes how to run tests for the TensorLogic (TL) compiler.
+TensorLogic (TL) コンパイラのテスト方法を説明します。
 
-## Running Unit Tests
-
-To run the standard Rust unit tests:
+## Rust ユニットテスト
 
 ```bash
-cargo test
+cargo test --workspace --exclude tl_cuda
 ```
 
-## Running Verification Script
+> [!NOTE]
+> `tl_cuda` はローカル環境では除外して実行します。
 
-For comprehensive testing of all `.tl` files in the project (examples and tests), use the `verify_tl_files.py` script. This script executes each file and checks for runtime errors (non-zero exit codes).
+## TL ファイル検証スクリプト
 
-### Basic Usage
+プロジェクト内の全 `.tl` ファイル (examples + tests) を逐次実行し、ランタイムエラーを検出します。
 
-Run all applicable `.tl` files sequentially:
+### 基本使用方法
 
 ```bash
 python3 scripts/verify_tl_files.py
 ```
 
-### Parallel Execution (Recommended)
+### 主要オプション
 
-To speed up execution, you can run tests in parallel using the `--parallel` option.
+| オプション | 説明 | デフォルト |
+|---|---|---|
+| `--timeout N` | 各ファイルのタイムアウト秒数 | 30 |
+| `--cooldown N` | テスト間のクールダウン秒数 | 1.0 |
+| `--static` | 静的コンパイルモードで実行 | JIT |
+| `--safe-mode` | 10テストごとにセーフティ休憩を挟む | 有効 |
+
+### 使用例
 
 ```bash
-# Run with 8 parallel threads
-python3 scripts/verify_tl_files.py --parallel 8
+# タイムアウトとクールダウンを指定
+python3 scripts/verify_tl_files.py --timeout 30 --cooldown 1.0
 ```
 
-### Options
+> [!CAUTION]
+> **並列実行は禁止**。JIT コンパイルの特性上、並列実行するとメモリが枯渇し不安定になります。
+> スクリプトは逐次実行を前提に設計されています。
 
-- `--parallel <N>`: Run N tests in parallel.
-- `--verbose`: Show output for all tests, not just failures.
+### 期待される失敗
 
-### Expected Failures
+`tests/fixtures/patterns/*` の一部ファイルはエラー報告のテスト用に設計されており、非ゼロ終了コードを返します。スクリプトの `should_skip` ロジックで適切にスキップされます。
 
-Some files in `tests/fixtures/patterns/*` are designed to fail (testing error reporting). The script may report these as failures or handle them if configured logic allows. Currently, the script reports non-zero exit codes as failures.
+## セグフォのデバッグ
 
-## Debugging Segfaults
-
-If you encounter segmentation faults, please refer to [Debugging Segfaults](../.agent/workflows/debug-segfault.md) (or `.agent/workflows/debug-segfault.md` in the repository).
+セグメンテーションフォールトが発生した場合は、`.agent/workflows/debug-segfault.md` を参照してください。

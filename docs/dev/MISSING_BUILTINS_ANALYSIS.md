@@ -1,10 +1,9 @@
 # TL言語 汎用言語化に向けた不足分析
 
-現在のTL言語の組み込み型・関数を、Python / Rust / Go 等の汎用言語と比較し、不足している要素をリストアップする。
-
 > [!NOTE]
+> **ステータス更新 (2026-03)**: 多くの項目が実装完了済み。
+> 各テーブルの「状態」列で実装状況を確認可能。
 > TL固有のドメイン（Tensor, Param, KVCache, VarBuilder, Map, Tokenizer, Image 等）は対象外。
-> 汎用プログラミングに必要な基盤機能に焦点を当てる。
 
 ---
 
@@ -12,197 +11,192 @@
 
 ### 1.1 コレクション型
 
-| 型 | 説明 | 優先度 |
+| 型 | 説明 | 状態 |
 |---|---|---|
-| `Set<T>` / `HashSet<T>` | 一意な要素の集合。重複排除・集合演算（和・積・差）に必須 | **高** |
-| `Tuple<T1, T2, ...>` | 異なる型の固定長組。多値返却に必要 | **高** |
-| `Deque<T>` / `VecDeque<T>` | 両端キュー。BFS等のアルゴリズムに必要 | 中 |
-| `SortedMap<K, V>` / `BTreeMap<K, V>` | 順序付きマップ。キーの順序走査が必要な場合 | 低 |
+| `Set<T>` / `HashSet<T>` | 一意な要素の集合 | ❌ 未実装 |
+| `Tuple<T1, T2, ...>` | 異なる型の固定長組 | ✅ 実装済み |
+| `Deque<T>` / `VecDeque<T>` | 両端キュー | ❌ 未実装 |
+| `SortedMap<K, V>` / `BTreeMap<K, V>` | 順序付きマップ | ❌ 未実装 |
 
 ### 1.2 文字列・テキスト関連
 
-| 型 | 説明 | 優先度 |
+| 型 | 説明 | 状態 |
 |---|---|---|
-| `Char` | 単独の文字型（`char_at`は返すが、型としての操作が不足） | **高** |
-| `StringBuilder` / `StringBuffer` | 効率的な文字列結合 | 中 |
-| `Regex` | 正規表現 | 中 |
+| `Char` | 単独の文字型 | ✅ 実装済み |
+| `StringBuilder` / `StringBuffer` | 効率的な文字列結合 | ❌ 未実装（`format()` で代替可能） |
+| `Regex` | 正規表現 | ❌ 未実装 |
 
 ### 1.3 並行処理
 
-| 型 | 説明 | 優先度 |
+| 型 | 説明 | 状態 |
 |---|---|---|
-| `Thread` / `Task` | スレッド / 非同期タスク | **高** |
-| `Mutex<T>` / `Lock<T>` | 排他制御 | **高** |
-| `Channel<T>` | スレッド間通信 | 中 |
-| `Atomic<T>` | アトミック操作 | 中 |
+| `Thread` / `Task` | スレッド / 非同期タスク | ❌ 未実装 |
+| `Mutex<T>` / `Lock<T>` | 排他制御 | ❌ 未実装 |
+| `Channel<T>` | スレッド間通信 | ❌ 未実装 |
+| `Atomic<T>` | アトミック操作 | ❌ 未実装 |
 
 ### 1.4 その他
 
-| 型 | 説明 | 優先度 |
+| 型 | 説明 | 状態 |
 |---|---|---|
-| `Duration` / `Instant` | 時間の表現（`System::time()`はf32を返すのみ） | 中 |
-| `Date` / `DateTime` | 日付・時刻 | 中 |
-| `Range<T>` を第一級の型として | for文で使えるが、変数に格納・関数に渡す等ができるか | 中 |
-| `Error` トレイト / 基底型 | エラー型の統一的なインターフェース | 中 |
+| `Duration` / `Instant` | 時間の表現 | ❌ 未実装（`System::time()` はf32を返すのみ） |
+| `Date` / `DateTime` | 日付・時刻 | ❌ 未実装 |
+| `Range<T>` を第一級の型として | 変数に格納可能 | ✅ for文 + イテレータプロトコルで対応 |
+| `Error` トレイト / 基底型 | エラー型の統一インターフェース | ❌ 未実装 |
 
 ---
 
-## 2. 不足している組み込み関数・メソッド
+## 2. 組み込み関数・メソッド
 
-### 2.1 String メソッド（現状: `len`, `contains`, `concat`, `char_at`, `to_i64`, `print`, `display`）
+### 2.1 String メソッド
 
-| メソッド | 説明 | 優先度 |
+| メソッド | 説明 | 状態 |
 |---|---|---|
-| `split(sep: String) -> Vec<String>` | 文字列分割 | **高** |
-| `trim() -> String` | 前後の空白除去 | **高** |
-| `starts_with(s: String) -> bool` | 前方一致 | **高** |
-| `ends_with(s: String) -> bool` | 後方一致 | **高** |
-| `replace(from, to) -> String` | 文字列置換 | **高** |
-| `to_uppercase() -> String` | 大文字化 | 中 |
-| `to_lowercase() -> String` | 小文字化 | 中 |
-| `substring(start, len) -> String` | 部分文字列 | **高** |
-| `index_of(s: String) -> i64` | 検索（位置を返す） | 中 |
-| `to_f64() -> f64` | 浮動小数点パース | 中 |
-| `repeat(n: i64) -> String` | 繰り返し | 低 |
-| `is_empty() -> bool` | 空文字列判定 | **高** |
-| `chars() -> Vec<Char>` | 文字列の文字配列化 | 中 |
-| `format(...)` | フォーマット文字列（変数を返す形） | 中 |
+| `split(sep) -> Vec<String>` | 文字列分割 | ✅ 実装済み |
+| `trim() -> String` | 前後の空白除去 | ✅ 実装済み |
+| `starts_with(s) -> bool` | 前方一致 | ✅ 実装済み |
+| `ends_with(s) -> bool` | 後方一致 | ✅ 実装済み |
+| `replace(from, to) -> String` | 文字列置換 | ✅ 実装済み |
+| `to_uppercase() -> String` | 大文字化 | ✅ 実装済み |
+| `to_lowercase() -> String` | 小文字化 | ✅ 実装済み |
+| `substring(start, len) -> String` | 部分文字列 | ✅ 実装済み |
+| `index_of(s) -> i64` | 検索（位置を返す） | ✅ 実装済み |
+| `to_f64() -> f64` | 浮動小数点パース | ✅ 実装済み |
+| `repeat(n) -> String` | 繰り返し | ✅ 実装済み |
+| `is_empty() -> bool` | 空文字列判定 | ✅ 実装済み |
+| `chars() -> Vec<Char>` | 文字列の文字配列化 | ✅ 実装済み |
+| `format(...)` | フォーマット文字列 | ✅ 実装済み（グローバル関数） |
 
-### 2.2 Vec メソッド（現状: `len`, `capacity`, `is_empty`, `push`, `pop`, `get`, `set`）
+### 2.2 Vec メソッド
 
-| メソッド | 説明 | 優先度 |
+| メソッド | 説明 | 状態 |
 |---|---|---|
-| `insert(index, item)` | 任意位置への挿入 | **高** |
-| `remove(index) -> T` | 任意位置の削除 | **高** |
-| `contains(item) -> bool` | 要素の存在チェック | **高** |
-| `index_of(item) -> i64` | 要素の検索 | 中 |
-| `sort()` / `sort_by(fn)` | ソート | **高** |
-| `reverse()` | 逆順 | 中 |
-| `clear()` | 全要素削除 | **高** |
-| `extend(other: Vec<T>)` | 結合 | 中 |
-| `slice(start, end) -> Vec<T>` | 部分取得 | 中 |
-| `map(fn) -> Vec<U>` | 変換 | **高** |
-| `filter(fn) -> Vec<T>` | フィルタリング | **高** |
-| `reduce(fn) -> T` / `fold` | 畳み込み | 中 |
-| `any(fn) -> bool` | いずれかが条件を満たすか | 中 |
-| `all(fn) -> bool` | すべてが条件を満たすか | 中 |
-| `enumerate() -> Vec<(i64, T)>` | インデックス付き走査 | 中 |
-| `join(sep: String) -> String` | 文字列結合（`Vec<String>`用） | 中 |
-| `flatten() -> Vec<T>` | ネスト解除 | 低 |
-| `zip(other) -> Vec<(T, U)>` | 2つのVecの結合 | 低 |
-| `clone() -> Vec<T>` | 複製 | 中 |
+| `insert(index, item)` | 任意位置への挿入 | ✅ 実装済み (vec.tl) |
+| `remove(index) -> T` | 任意位置の削除 | ✅ 実装済み (vec.tl) |
+| `contains(item) -> bool` | 要素の存在チェック | ✅ 実装済み (vec.tl) |
+| `sort()` | ソート | ✅ 実装済み (vec.tl) |
+| `clear()` | 全要素削除 | ✅ 実装済み (vec.tl) |
+| `index_of(item) -> i64` | 要素の検索 | ❌ 未実装 |
+| `reverse()` | 逆順 | ❌ 未実装 |
+| `extend(other)` | 結合 | ❌ 未実装 |
+| `slice(start, end) -> Vec<T>` | 部分取得 | ❌ 未実装 |
+| `map(fn) -> Vec<U>` | 変換 | ⚠️ TODOコメント（ジェネリック特殊化要） |
+| `filter(fn) -> Vec<T>` | フィルタリング | ⚠️ TODOコメント（ジェネリック特殊化要） |
+| `reduce(fn) -> T` / `fold` | 畳み込み | ❌ 未実装 |
+| `any(fn) -> bool` | いずれかが条件を満たすか | ❌ 未実装 |
+| `all(fn) -> bool` | すべてが条件を満たすか | ❌ 未実装 |
+| `enumerate()` | インデックス付き走査 | ❌ 未実装 |
+| `join(sep) -> String` | 文字列結合 | ❌ 未実装 |
+| `flatten()` | ネスト解除 | ❌ 未実装 |
+| `zip(other)` | 2つのVecの結合 | ❌ 未実装 |
+| `clone() -> Vec<T>` | 複製 | ❌ 未実装 |
 
-### 2.3 HashMap メソッド（現状: `len`, `is_empty`, `insert`, `get`, `remove`(未実装)）
+### 2.3 HashMap メソッド
 
-| メソッド | 説明 | 優先度 |
+| メソッド | 説明 | 状態 |
 |---|---|---|
-| `remove(key)` の実装完了 | ドキュメントに記載済みだが未実装 | **高** |
-| `contains_key(key) -> bool` | キーの存在チェック | **高** |
-| `keys() -> Vec<K>` | キー一覧 | **高** |
-| `values() -> Vec<V>` | 値一覧 | **高** |
-| `entries() -> Vec<(K, V)>` | エントリ一覧 | 中 |
-| `clear()` | 全エントリ削除 | 中 |
-| `get_or_default(key, default) -> V` | デフォルト付き取得 | 中 |
+| `remove(key)` | キーの削除 | ✅ 実装済み (hashmap.tl) |
+| `contains_key(key) -> bool` | キーの存在チェック | ✅ 実装済み (hashmap.tl) |
+| `keys() -> Vec<K>` | キー一覧 | ✅ 実装済み (hashmap.tl) |
+| `values() -> Vec<V>` | 値一覧 | ✅ 実装済み (hashmap.tl) |
+| `entries() -> Vec<(K, V)>` | エントリ一覧 | ❌ 未実装（タプル対応が複雑） |
+| `clear()` | 全エントリ削除 | ❌ 未実装 |
+| `get_or_default(key, default) -> V` | デフォルト付き取得 | ❌ 未実装 |
 
-### 2.4 Option メソッド（現状: `is_some`, `is_none`, `unwrap`, `unwrap_or`）
+### 2.4 Option メソッド
 
-| メソッド | 説明 | 優先度 |
+| メソッド | 説明 | 状態 |
 |---|---|---|
-| `map(fn) -> Option<U>` | 値の変換 | **高** |
-| `and_then(fn) -> Option<U>` | チェーン | 中 |
-| `or(other) -> Option<T>` | 代替値 | 中 |
-| `unwrap_or_else(fn) -> T` | 遅延デフォルト | 低 |
-| `?` 演算子のサポート | `Result`では対応済み、`Option`でも必要 | **高** |
+| `unwrap_or(default) -> T` | デフォルト付き展開 | ✅ 実装済み (option.tl) |
+| `?` 演算子 | 早期リターン | ✅ 実装済み |
+| `map(fn) -> Option<U>` | 値の変換 | ⚠️ TODOコメント（ジェネリック特殊化要） |
+| `and_then(fn) -> Option<U>` | チェーン | ❌ 未実装 |
+| `or(other) -> Option<T>` | 代替値 | ❌ 未実装 |
+| `unwrap_or_else(fn) -> T` | 遅延デフォルト | ❌ 未実装 |
 
-### 2.5 Result メソッド（現状: `is_ok`, `is_err`, `unwrap`, `unwrap_err`, `?`）
+### 2.5 Result メソッド
 
-| メソッド | 説明 | 優先度 |
+| メソッド | 説明 | 状態 |
 |---|---|---|
-| `map(fn) -> Result<U, E>` | 成功値の変換 | **高** |
-| `map_err(fn) -> Result<T, F>` | エラー値の変換 | 中 |
-| `and_then(fn) -> Result<U, E>` | チェーン | 中 |
-| `unwrap_or(default) -> T` | デフォルト付き | 中 |
-| `unwrap_or_else(fn) -> T` | 遅延デフォルト | 低 |
+| `?` 演算子 | 早期リターン | ✅ 実装済み |
+| `unwrap()` / `unwrap_err()` | 展開 | ✅ 実装済み |
+| `is_ok()` / `is_err()` | 判定 | ✅ 実装済み |
+| `map(fn)` | 成功値の変換 | ❌ 未実装 |
+| `map_err(fn)` | エラー値の変換 | ❌ 未実装 |
+| `and_then(fn)` | チェーン | ❌ 未実装 |
+| `unwrap_or(default)` | デフォルト付き | ❌ 未実装 |
+| `unwrap_or_else(fn)` | 遅延デフォルト | ❌ 未実装 |
 
-### 2.6 数値型メソッドの不足
+### 2.6 数値型メソッド
 
-| メソッド | 対象 | 説明 | 優先度 |
-|---|---|---|---|
-| `min(a, b)` / `max(a, b)` | グローバル or i64/i32 | 整数の最小・最大 | **高** |
-| `clamp(val, min, max)` | i64/i32 | 整数のクランプ | 中 |
-| `to_f32()` / `to_f64()` | i64/i32 | 型変換 | **高** |
-| `to_i32()` / `to_i64()` | f32/f64 | 型変換 | **高** |
-| `to_string()` | 全数値型 | 文字列変換 | **高** |
-| `parse<T>(s: String)` | グローバル | 汎用パース関数 | 中 |
-| `NaN`, `INFINITY` | f32/f64 | 特殊値定数 | 中 |
-| `is_nan()`, `is_inf()` | f32/f64 | 特殊値判定 | 中 |
-| `MAX`, `MIN` | 全数値型 | 型の最大・最小値定数 | 中 |
-
-### 2.7 グローバル関数 / System の不足
-
-| 関数 | 説明 | 優先度 |
+| メソッド | 対象 | 状態 |
 |---|---|---|
-| `System::exit(code: i64)` | プロセス終了（KIには記載あり、ドキュメント未記載） | **高** |
-| `System::env()` / `System::platform()` | OS情報取得 | 中 |
-| `System::command(cmd: String) -> String` | 外部コマンド実行 | 中 |
-| `assert(cond, msg?)` | テスト・デバッグ用アサーション | **高** |
-| `typeof(value) -> String` | 型情報の取得 | 中 |
-| `random() -> f64` | 乱数生成（Tensor::randnはあるが、スカラーの乱数がない） | **高** |
-| `random_int(min, max) -> i64` | 整数乱数 | **高** |
+| `min(a, b)` / `max(a, b)` | グローバル or 数値型 | ✅ 実装済み |
+| `clamp(val, min, max)` | 数値型 | ✅ 実装済み |
+| `to_f32()` / `to_f64()` / `to_i32()` / `to_i64()` | 数値型間変換 | ✅ 実装済み |
+| `to_string()` | 全数値型 | ✅ 実装済み (`format()` 経由) |
+| `abs()` / `sqrt()` / `pow()` | 数値型 | ✅ 実装済み |
+| `NaN`, `INFINITY` | f32/f64 | ❌ 未実装 |
+| `is_nan()`, `is_inf()` | f32/f64 | ❌ 未実装 |
+| `MAX`, `MIN` | 全数値型 | ❌ 未実装 |
 
-### 2.8 File / Path の不足
+### 2.7 グローバル関数 / System
 
-| メソッド | 説明 | 優先度 |
+| 関数 | 説明 | 状態 |
 |---|---|---|
-| `File::append(path, content)` | 追記 | 中 |
-| `File::delete(path) -> bool` | ファイル削除 | 中 |
-| `File::list_dir(path) -> Vec<String>` | ディレクトリ一覧 | 中 |
-| `File::create_dir(path) -> bool` | ディレクトリ作成 | 中 |
-| `Path::parent() -> Path` | 親ディレクトリ | 中 |
-| `Path::file_name() -> String` | ファイル名取得 | 中 |
-| `Path::extension() -> String` | 拡張子取得 | 低 |
+| `println(...)` | コンソール出力 | ✅ 実装済み |
+| `format(...)` | フォーマット文字列 | ✅ 実装済み |
+| `assert(cond, msg?)` | アサーション | ❌ 未実装 |
+| `typeof(value)` | 型情報取得 | ❌ 未実装 |
+| `random() -> f64` | スカラー乱数 | ❌ 未実装 |
+| `random_int(min, max) -> i64` | 整数乱数 | ❌ 未実装 |
+| `System::exit(code)` | プロセス終了 | ❌ 未実装 (コンパイラ未登録) |
+| `System::env()` / `System::platform()` | OS情報取得 | ❌ 未実装 |
+| `System::command(cmd)` | 外部コマンド実行 | ❌ 未実装 |
+
+### 2.8 File / Path
+
+| メソッド | 説明 | 状態 |
+|---|---|---|
+| `File::read(path)` | ファイル読み込み | ✅ 実装済み |
+| `File::write(path, content)` | ファイル書き込み | ✅ 実装済み |
+| `File::append(path, content)` | 追記 | ❌ 未実装 |
+| `File::delete(path)` | ファイル削除 | ❌ 未実装 |
+| `File::list_dir(path)` | ディレクトリ一覧 | ❌ 未実装 |
+| `File::create_dir(path)` | ディレクトリ作成 | ❌ 未実装 |
+| `Path::exists(path)` | ファイル存在チェック | ✅ 実装済み |
+| `Path::parent()` | 親ディレクトリ | ❌ 未実装 |
+| `Path::file_name()` | ファイル名取得 | ❌ 未実装 |
+| `Path::extension()` | 拡張子取得 | ❌ 未実装 |
 
 ---
 
 ## 3. 不足している言語機能（型・関数に関連するもの）
 
-| 機能 | 説明 | 優先度 |
+| 機能 | 説明 | 状態 |
 |---|---|---|
-| クロージャ / ラムダ | `map`, `filter`, `sort_by`等の高階関数に必須 | **高** |
-| ジェネリックなトレイト制約 | `where T: Comparable` のような制約 | **高** |
-| イテレータプロトコルの拡充 | `Iterable`は`len`/`get`ベースだが、`next()`ベースの遅延イテレータが必要 | 中 |
-| 型変換トレイト (`From`/`Into`) | 型間の変換を統一的に扱う | 中 |
-| `Display` / `Debug` トレイト | `print`/`println`でのカスタム表示 | 中 |
-| 演算子オーバーロード | ユーザ定義型での `+`, `-` 等 | 中 |
-| ユーザ定義列挙型(enum) | `Option`/`Result`以外のenum定義 | **高** |
+| クロージャ / ラムダ | 高階関数に必須 | ✅ 実装済み（`Fn(T) -> U` 型） |
+| ジェネリックなトレイト制約 | `where T: Comparable` | ✅ 実装済み |
+| イテレータプロトコル | `len`/`get` ベースの Duck-typing | ✅ 実装済み（Range/Vec/Tensor統一） |
+| 型変換トレイト (`From`/`Into`) | 統一的な型変換 | ❌ 未実装 |
+| `Display` / `Debug` トレイト | カスタム表示 | ❌ 未実装 |
+| 演算子オーバーロード | ユーザ定義型での `+`, `-` 等 | ❌ 未実装 |
+| ユーザ定義列挙型(enum) | `Option`/`Result`以外のenum定義 | ✅ 実装済み |
 
 ---
 
-## 4. 優先度サマリ
+## 4. 優先度サマリ（未実装項目）
 
-### 最優先（汎用言語として最低限必要）
-1. **String**: `split`, `trim`, `starts_with`, `ends_with`, `replace`, `substring`, `is_empty`
-2. **Vec**: `insert`, `remove`, `contains`, `sort`, `clear`, `map`, `filter`
-3. **HashMap**: `remove`の実装完了, `contains_key`, `keys`, `values`
-4. **数値型変換**: `to_string()`, `to_f64()`, `to_i64()` 等
-5. **グローバル**: `assert`, `random`, `random_int`, `min`/`max`
-6. **型**: `Set<T>`, `Tuple`, スレッド/並行処理の基盤
-7. **Option**: `map`, `?`演算子サポート
-8. **Result**: `map`
-9. **言語機能**: クロージャ/ラムダ, ユーザ定義enum
+### 次に取り組むべき項目
+1. **Vec**: `map`, `filter`（ジェネリック特殊化エンジンの `Fn(T) -> U` 対応が前提）
+2. **Option/Result**: `map`, `and_then`（同上）
+3. **Vec**: `reverse`, `extend`, `slice`, `index_of`, `join`
+4. **HashMap**: `entries`, `clear`, `get_or_default`
+5. **グローバル**: `assert`, `random`, `random_int`
+6. **数値型**: `NaN`, `INFINITY`, `is_nan()`, `MAX`/`MIN` 定数
 
-### 中優先（実用的なアプリケーション開発に必要）
-- String: `to_uppercase`, `to_lowercase`, `index_of`, `to_f64`, `chars`
-- Vec: `reverse`, `extend`, `slice`, `reduce`, `any`, `all`, `join`, `clone`
-- HashMap: `entries`, `clear`, `get_or_default`
-- Option/Result: `and_then`, `or`, `map_err`, `unwrap_or`
-- File/Path: `delete`, `list_dir`, `create_dir`, `parent`, `file_name`
-- 型: `Deque`, `Duration`, `DateTime`, `Regex`, `StringBuilder`
-- 言語: イテレータプロトコル拡充, 型変換トレイト, `Display`/`Debug`
-
-### 低優先（あれば便利）
-- Vec: `flatten`, `zip`
-- String: `repeat`
-- Option: `unwrap_or_else`
-- Path: `extension`
-- 型: `SortedMap`/`BTreeMap`
+### 将来の拡張
+- 型: `Set<T>`, `Deque<T>`, `Duration`, `DateTime`, `Regex`
+- 並行処理: `Thread`, `Mutex`, `Channel`
+- 言語: `From`/`Into` トレイト, `Display`/`Debug`, 演算子オーバーロード
+- File/Path: `append`, `delete`, `list_dir`, `create_dir`, `parent`, `file_name`

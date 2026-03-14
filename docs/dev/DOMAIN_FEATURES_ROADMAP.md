@@ -1,7 +1,12 @@
 # TL言語 ドメイン固有機能 実装ロードマップ
 
+> [!NOTE]
+> **全フェーズ完了 (2026-03)**
+> フェーズ 1〜8 の全項目が実装済み。CUDA バックエンドは stub (`unimplemented!()`) のみ残存。
+> このドキュメントは実装履歴の記録として保存。
+
 > [!CAUTION]
-> **実装を開始する前に、必ず [MEMORY_MANAGEMENT_STRATEGY.md](MEMORY_MANAGEMENT_STRATEGY.md) を読むこと。**
+> **新機能を追加する場合は、必ず [MEMORY_MANAGEMENT_STRATEGY.md](MEMORY_MANAGEMENT_STRATEGY.md) を読むこと。**
 > TLのメモリ管理はARCレジストリとプール制御に基づいており、新しいテンソル操作やNN層を追加する際にはこの戦略に従う必要がある。
 
 > [!IMPORTANT]
@@ -424,7 +429,7 @@ DOMAIN_FEATURES_ANALYSIS.md の分析結果に基づく実装計画。
 
 ---
 
-## 実装順序の推奨
+## 実装順序（実際に実施した順序）
 
 ```
 フェーズ1（テンソル生成）→ フェーズ2（要素操作）→ フェーズ4（NN層）
@@ -436,5 +441,5 @@ DOMAIN_FEATURES_ANALYSIS.md の分析結果に基づく実装計画。
                                           フェーズ8（線形代数）
 ```
 
-フェーズ1/2は他のすべての基盤となるため最初に実装する。
-フェーズ4/5はNN学習に必須であり、フェーズ6/7はアプリケーション層。
+全フェーズの CPU/Metal 実装は 2026-03 に完了。
+CUDA は各フェーズで `unimplemented!()` stub を配置済み。
