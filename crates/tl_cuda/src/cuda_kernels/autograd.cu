@@ -1868,83 +1868,115 @@ __global__ void interpolate_kernel(const float *input, float *output, int n,
   }
 }
 
-// --- SDPA: Q×K^T / √d → softmax → ×V ---
-// 各スレッドが出力の 1 行を処理（seq_q 方向）
-__global__ void sdpa_kernel(const float *q, const float *k, const float *v,
-                            const float *mask, float *output, int batch,
-                            int heads, int seq_q, int seq_k, int head_dim,
-                            int has_mask) {
-  int tid = blockIdx.x * blockDim.x + threadIdx.x;
-  int total = batch * heads * seq_q;
-  if (tid < total) {
-    int b = tid / (heads * seq_q);
-    int rem = tid % (heads * seq_q);
-    int h = rem / seq_q;
-    int sq = rem % seq_q;
+// --- Flash Attention v2: tiled SDPA with online softmax ---
+// Each block processes one query row for one (batch, head).
+// K/V are loaded tile-by-tile into shared memory.
+// Online softmax avoids materializing the full seq_q × seq_k score matrix.
 
-    float scale = rsqrtf((float)head_dim);
-    int bh = b * heads + h;
+#define FA_TILE_K 32  // K/V tile size along seq_k dimension
 
-    // Q row: q[bh, sq, :]
-    const float *q_row = q + (bh * seq_q + sq) * head_dim;
-    // score[sk] = Q . K^T / sqrt(d)
-    // 出力 row: output[bh, sq, :]
+__global__ void flash_attention_kernel(
+    const float *q, const float *k, const float *v, const float *mask,
+    float *output, int batch, int heads, int seq_q, int seq_k,
+    int head_dim, int has_mask) {
+  int bh_sq = blockIdx.x;
+  int total_rows = batch * heads * seq_q;
+  if (bh_sq >= total_rows) return;
 
-    // 動的配列は使えないので、softmax を 2 パスで計算
-    // pass 1: max
-    float max_score = -3.402823466e+38f;
-    for (int sk = 0; sk < seq_k; sk++) {
-      const float *k_row = k + (bh * seq_k + sk) * head_dim;
+  int bh = bh_sq / seq_q;
+  int sq = bh_sq % seq_q;
+
+  float scale = rsqrtf((float)head_dim);
+
+  const float *q_row = q + (bh * seq_q + sq) * head_dim;
+  float *out_row = output + (bh * seq_q + sq) * head_dim;
+
+  // Online softmax state
+  float running_max = -3.402823466e+38f;
+  float running_sum = 0.0f;
+
+  // Initialize output to zero
+  for (int d = threadIdx.x; d < head_dim; d += blockDim.x) {
+    out_row[d] = 0.0f;
+  }
+  __syncthreads();
+
+  // Shared memory for K and V tiles
+  extern __shared__ float smem[];
+  float *k_tile = smem;
+  float *v_tile = smem + FA_TILE_K * head_dim;
+
+  int num_k_tiles = (seq_k + FA_TILE_K - 1) / FA_TILE_K;
+
+  for (int kt = 0; kt < num_k_tiles; kt++) {
+    int k_start = kt * FA_TILE_K;
+    int k_end = k_start + FA_TILE_K;
+    if (k_end > seq_k) k_end = seq_k;
+    int tile_len = k_end - k_start;
+
+    // Cooperatively load K/V tiles into shared memory
+    int total_load = tile_len * head_dim;
+    for (int i = threadIdx.x; i < total_load; i += blockDim.x) {
+      int sk_local = i / head_dim;
+      int d = i % head_dim;
+      int sk_global = k_start + sk_local;
+      k_tile[sk_local * head_dim + d] =
+          k[(bh * seq_k + sk_global) * head_dim + d];
+      v_tile[sk_local * head_dim + d] =
+          v[(bh * seq_k + sk_global) * head_dim + d];
+    }
+    __syncthreads();
+
+    // Compute scores and tile max
+    float tile_scores[FA_TILE_K];
+    float tile_max = -3.402823466e+38f;
+
+    for (int sk_local = 0; sk_local < tile_len; sk_local++) {
       float score = 0.0f;
-      for (int d = 0; d < head_dim; d++)
-        score += q_row[d] * k_row[d];
+      for (int d = 0; d < head_dim; d++) {
+        score += q_row[d] * k_tile[sk_local * head_dim + d];
+      }
       score *= scale;
       if (has_mask && mask != NULL) {
-        // mask shape: [seq_q, seq_k] or [1, 1, seq_q, seq_k]
-        score += mask[sq * seq_k + sk];
+        score += mask[sq * seq_k + (k_start + sk_local)];
       }
-      if (score > max_score)
-        max_score = score;
+      tile_scores[sk_local] = score;
+      if (score > tile_max) tile_max = score;
     }
 
-    // pass 2: exp + sum + output
-    float sum_exp = 0.0f;
-    // 一時的に output 領域を score 格納に使う
-    float *out_row = output + (bh * seq_q + sq) * head_dim;
+    // Online softmax update
+    float new_max = fmaxf(running_max, tile_max);
+    float rescale_old = expf(running_max - new_max);
 
-    // まず score を再計算しつつ attn weight を求める
-    // head_dim が seq_k より小さいケースがあるので、2パスで
-    // pass 2a: sum_exp
-    for (int sk = 0; sk < seq_k; sk++) {
-      const float *k_row = k + (bh * seq_k + sk) * head_dim;
-      float score = 0.0f;
-      for (int d = 0; d < head_dim; d++)
-        score += q_row[d] * k_row[d];
-      score *= scale;
-      if (has_mask && mask != NULL)
-        score += mask[sq * seq_k + sk];
-      sum_exp += expf(score - max_score);
+    float tile_sum = 0.0f;
+    float tile_exp[FA_TILE_K];
+    for (int sk_local = 0; sk_local < tile_len; sk_local++) {
+      tile_exp[sk_local] = expf(tile_scores[sk_local] - new_max);
+      tile_sum += tile_exp[sk_local];
     }
 
-    float inv_sum = 1.0f / sum_exp;
+    float new_sum = running_sum * rescale_old + tile_sum;
 
-    // pass 3: weighted sum of V
-    for (int d = 0; d < head_dim; d++)
-      out_row[d] = 0.0f;
+    // Update output: rescale old + accumulate new weighted V
+    for (int d = threadIdx.x; d < head_dim; d += blockDim.x) {
+      float old_val = out_row[d] * rescale_old;
+      float new_val = 0.0f;
+      for (int sk_local = 0; sk_local < tile_len; sk_local++) {
+        new_val += tile_exp[sk_local] * v_tile[sk_local * head_dim + d];
+      }
+      out_row[d] = old_val + new_val;
+    }
 
-    for (int sk = 0; sk < seq_k; sk++) {
-      const float *k_row = k + (bh * seq_k + sk) * head_dim;
-      float score = 0.0f;
-      for (int d = 0; d < head_dim; d++)
-        score += q_row[d] * k_row[d];
-      score *= scale;
-      if (has_mask && mask != NULL)
-        score += mask[sq * seq_k + sk];
-      float attn = expf(score - max_score) * inv_sum;
+    running_max = new_max;
+    running_sum = new_sum;
+    __syncthreads();
+  }
 
-      const float *v_row = v + (bh * seq_k + sk) * head_dim;
-      for (int d = 0; d < head_dim; d++)
-        out_row[d] += attn * v_row[d];
+  // Final normalization
+  if (running_sum > 0.0f) {
+    float inv_sum = 1.0f / running_sum;
+    for (int d = threadIdx.x; d < head_dim; d += blockDim.x) {
+      out_row[d] *= inv_sum;
     }
   }
 }
@@ -2293,10 +2325,12 @@ void launch_sdpa_kernel(const float *q, const float *k, const float *v,
                         const float *mask, float *output, int batch, int heads,
                         int seq_q, int seq_k, int head_dim, int has_mask,
                         cudaStream_t stream) {
-  int total = batch * heads * seq_q;
-  int threads = 256;
-  int blocks = (total + threads - 1) / threads;
-  sdpa_kernel<<<blocks, threads, 0, stream>>>(
+  int total_rows = batch * heads * seq_q;
+  int threads = (head_dim <= 128) ? head_dim : 128;
+  if (threads < 32) threads = 32;
+  int blocks = total_rows;
+  size_t smem_size = 2 * FA_TILE_K * head_dim * sizeof(float);
+  flash_attention_kernel<<<blocks, threads, smem_size, stream>>>(
       q, k, v, mask, output, batch, heads, seq_q, seq_k, head_dim, has_mask);
 }
 

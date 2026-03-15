@@ -9,60 +9,59 @@
 
 ### テンソル操作
 
-- [ ] `masked_fill_impl` — マスク付き値埋め
+- [x] `masked_fill_impl` — マスク付き値埋め
   - CPU/Metal: 実装済み
-  - 場所: `crates/tl_cuda/src/ops/` に追加
+  - CUDA: `ops/special.rs` に CUDA カーネル実装済み
 
-- [ ] `to_dtype` / `to_f32` / `to_i64` — 型変換
+- [x] `to_dtype` / `to_f32` / `to_i64` — 型変換
   - CPU/Metal: 実装済み
-  - 場所: `crates/tl_cuda/src/tensor.rs` または `ops/`
+  - CUDA: `backend_impl.rs` + `ffi_ops.rs` に実装済み
 
-- [ ] `std(dim?)` / `var(dim?)` — 標準偏差・分散
+- [x] `std(dim?)` / `var(dim?)` — 標準偏差・分散
   - CPU/Metal: `var_impl`, `std_impl` 実装済み
-  - CUDA kernel: mean → 差の二乗 → mean のリダクションパイプライン
+  - CUDA: `ops/reduce.rs` に GPU カーネル実装済み
 
 ### NN 層
 
-- [ ] `layer_norm` — LayerNorm CUDA 実装
+- [x] `layer_norm` — LayerNorm CUDA 実装
   - CPU/Metal: 実装済み
-  - 現状: `unimplemented!()` で即パニック
+  - CUDA: `ops/nn.rs` + `cuda_kernels/autograd.cu` に GPU カーネル実装済み
 
-- [ ] `batch_norm` — BatchNorm CUDA 実装
+- [x] `batch_norm` — BatchNorm CUDA 実装
   - CPU/Metal: 実装済み
-  - `tl_device_tensor_batch_norm` dispatch でエラー
+  - CUDA: `ops/nn.rs` + `cuda_kernels/autograd.cu` に GPU カーネル実装済み
 
 ---
 
 ## 2. `unimplemented!()` の修正
 
-### tensor.rs (2箇所)
+### tensor.rs
 
-- [ ] `ones()` の非F32 dtype サポート ([tensor.rs:227](file:///Users/junsuzuki/Program/Rust/tl/crates/tl_cuda/src/tensor.rs#L227))
-  - 現在: `DType::F32` 以外で `unimplemented!` パニック
-  - 対応: F64, I64 等のdtype branch を追加
+- [x] `ones()` の I64/I32 dtype サポート (`crates/tl_cuda/src/tensor.rs`)
+  - F32, I64, I32 対応済み
 
-- [ ] `randn()` の非F32 dtype サポート ([tensor.rs:247](file:///Users/junsuzuki/Program/Rust/tl/crates/tl_cuda/src/tensor.rs#L247))
-  - 現在: `DType::F32` 以外で `unimplemented!` パニック
-  - 対応: F64 branch を追加（I64 の乱数は意味がないのでエラーでも可）
+- [ ] `ones()` / `randn()` の F64 dtype サポート
+  - 現在: `DType` enum に F64 が未定義
+  - 対応: `tl_backend`, `tl_cuda`, `tl_metal` に `DType::F64` を追加し、CUDA で実装
 
-### graph.rs (全体がスタブ)
+### graph.rs
 
-- [ ] `CudaGraph::replay()` の実装 ([graph.rs:21](file:///Users/junsuzuki/Program/Rust/tl/crates/tl_cuda/src/graph.rs#L21))
+- [ ] `CudaGraph::replay()` の実装 (`crates/tl_cuda/src/graph.rs`)
   - 現在: `GpuGraph` trait の `replay()` が `unimplemented!`
-  - 対応: `cudaGraphExec_t` ラッパーとして実装（将来課題）
+  - 対応: `cudaGraphExec_t` ラッパーとして実装
 
 ---
 
-## 3. 将来最適化（低優先度）
+## 3. 最適化
 
-- [ ] Flash Attention — cutlass/flash-attn integration
-  - 現在: CPU fallback の `scaled_dot_product_attention` で動作
-  - 最適化: CUDA 専用の fused attention kernel
+- [ ] Flash Attention — fused attention kernel
+  - 現在: `autograd.cu` の `sdpa_kernel` は naive 3-pass 実装
+  - 最適化: タイル化 + online softmax + shared memory による Flash Attention v2
 
 ---
 
 ## 優先順位
 
-1. **最優先**: `ones`/`randn` の dtype パニック修正（ランタイムクラッシュ防止）
-2. **高優先**: `masked_fill`, `to_dtype`, `std`/`var`, `layer_norm`, `batch_norm`
-3. **低優先**: `CudaGraph::replay()`, Flash Attention 最適化
+1. **最優先**: F64 DType 追加 + `ones`/`randn` 対応
+2. **高優先**: Flash Attention（SDPA 性能改善）
+3. **低優先**: `CudaGraph::replay()`

@@ -224,6 +224,10 @@ impl CudaTensor {
                 let data = vec![1i32; count];
                 Self::from_slice(&data, shape, dtype)
             }
+            DType::F64 => {
+                let data = vec![1.0f64; count];
+                Self::from_slice(&data, shape, dtype)
+            }
             _ => unimplemented!("ones for {:?}", dtype),
         }
     }
@@ -240,6 +244,17 @@ impl CudaTensor {
                         let u1: f32 = rng.gen();
                         let u2: f32 = rng.gen();
                         (-2.0 * u1.ln()).sqrt() * (2.0 * std::f32::consts::PI * u2).cos()
+                    })
+                    .collect();
+                Self::from_slice(&data, shape, dtype)
+            }
+            DType::F64 => {
+                let mut rng = rand::thread_rng();
+                let data: Vec<f64> = (0..count)
+                    .map(|_| {
+                        let u1: f64 = rng.gen();
+                        let u2: f64 = rng.gen();
+                        (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos()
                     })
                     .collect();
                 Self::from_slice(&data, shape, dtype)
@@ -261,6 +276,7 @@ impl CudaTensor {
         let t_size = std::mem::size_of::<T>();
         let dtype_size = match self.dtype {
             DType::F32 => 4,
+            DType::F64 => 8,
             DType::I64 => 8,
             DType::I32 => 4,
             _ => t_size,

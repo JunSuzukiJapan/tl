@@ -205,6 +205,9 @@ impl MetalTensor {
                     }
                 }
             }
+            DType::F64 => {
+                unimplemented!("ones F64 not yet supported on Metal")
+            }
             _ => {
                 // F16/BF16/U32: 未サポート — F32 にフォールバック
                 eprintln!("Warning: ones for {:?} not supported, using F32 fallback", dtype);
@@ -239,6 +242,9 @@ impl MetalTensor {
                         *ptr.add(i) = z;
                     }
                 }
+            }
+            DType::F64 => {
+                unimplemented!("randn F64 not yet supported on Metal")
             }
             _ => {
                 // 整数型/半精度: 乱数の意味が薄いため F32 で生成してフォールバック

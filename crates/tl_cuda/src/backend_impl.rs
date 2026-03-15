@@ -7,6 +7,7 @@ use tl_backend::{self, BackendResult, DType as BackendDType, GpuTensor};
 fn to_backend_dtype(dtype: DType) -> BackendDType {
     match dtype {
         DType::F32 => BackendDType::F32,
+        DType::F64 => BackendDType::F64,
         DType::I64 => BackendDType::I64,
         DType::I32 => BackendDType::I32,
         DType::F16 => BackendDType::F16,
@@ -17,6 +18,7 @@ fn to_backend_dtype(dtype: DType) -> BackendDType {
 fn from_backend_dtype(dtype: BackendDType) -> DType {
     match dtype {
         BackendDType::F32 => DType::F32,
+        BackendDType::F64 => DType::F64,
         BackendDType::I64 => DType::I64,
         BackendDType::I32 => DType::I32,
         BackendDType::F16 => DType::F16,
@@ -114,6 +116,26 @@ impl CudaTensor {
                 let data = self.to_vec::<f32>();
                 let u8_data: Vec<u8> = data.iter().map(|&x| x.clamp(0.0, 255.0) as u8).collect();
                 Ok(CudaTensor::from_slice(&u8_data, &self.shape, DType::U8))
+            }
+            (DType::F32, DType::F64) => {
+                let data = self.to_vec::<f32>();
+                let f64_data: Vec<f64> = data.iter().map(|&x| x as f64).collect();
+                Ok(CudaTensor::from_slice(&f64_data, &self.shape, DType::F64))
+            }
+            (DType::F64, DType::F32) => {
+                let data = self.to_vec::<f64>();
+                let f32_data: Vec<f32> = data.iter().map(|&x| x as f32).collect();
+                Ok(CudaTensor::from_slice(&f32_data, &self.shape, DType::F32))
+            }
+            (DType::F64, DType::I64) => {
+                let data = self.to_vec::<f64>();
+                let i64_data: Vec<i64> = data.iter().map(|&x| x as i64).collect();
+                Ok(CudaTensor::from_slice(&i64_data, &self.shape, DType::I64))
+            }
+            (DType::I64, DType::F64) => {
+                let data = self.to_vec::<i64>();
+                let f64_data: Vec<f64> = data.iter().map(|&x| x as f64).collect();
+                Ok(CudaTensor::from_slice(&f64_data, &self.shape, DType::F64))
             }
             _ => {
                 // その他: F32 経由で変換

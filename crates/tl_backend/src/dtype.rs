@@ -4,6 +4,7 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DType {
     F32,
+    F64,
     F16,
     BF16,
     I32,
@@ -17,6 +18,7 @@ impl DType {
     pub fn size_in_bytes(&self) -> usize {
         match self {
             DType::F32 => 4,
+            DType::F64 => 8,
             DType::F16 => 2,
             DType::BF16 => 2,
             DType::I32 => 4,

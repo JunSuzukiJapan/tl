@@ -108,6 +108,9 @@ impl CpuTensor {
 
 
     pub fn zeros(shape: &[usize], dtype: DType) -> Self {
+        if matches!(dtype, DType::F64) {
+            unimplemented!("F64 not yet supported on CPU backend (Vec<f32> storage)");
+        }
         let count: usize = shape.iter().product();
         let mut t = Self::alloc_from_pool();
         
@@ -125,6 +128,9 @@ impl CpuTensor {
     }
     
     pub fn ones(shape: &[usize], dtype: DType) -> Self {
+        if matches!(dtype, DType::F64) {
+            unimplemented!("F64 not yet supported on CPU backend (Vec<f32> storage)");
+        }
         let count: usize = shape.iter().product();
         let mut t = Self::alloc_from_pool();
         
@@ -165,6 +171,9 @@ impl CpuTensor {
     }
 
     pub fn randn(shape: &[usize], dtype: DType) -> Self {
+        if matches!(dtype, DType::F64) {
+            unimplemented!("F64 not yet supported on CPU backend (Vec<f32> storage)");
+        }
         use rand::Rng;
         let count: usize = shape.iter().product();
         let mut rng = rand::thread_rng();

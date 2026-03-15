@@ -10,6 +10,7 @@ use tl_backend::{BackendResult};
 fn to_backend_dtype(dtype: DType) -> BackendDType {
     match dtype {
         DType::F32 => BackendDType::F32,
+        DType::F64 => BackendDType::F64,
         DType::F16 => BackendDType::F16,
         DType::I32 => BackendDType::I32,
         DType::I64 => BackendDType::I64,
@@ -20,6 +21,7 @@ fn to_backend_dtype(dtype: DType) -> BackendDType {
 fn from_backend_dtype(dtype: BackendDType) -> DType {
     match dtype {
         BackendDType::F32 => DType::F32,
+        BackendDType::F64 => DType::F64,
         BackendDType::F16 => DType::F16,
         BackendDType::I32 => DType::I32,
         BackendDType::I64 => DType::I64,

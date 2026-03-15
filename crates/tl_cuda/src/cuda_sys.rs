@@ -15,6 +15,21 @@ pub const CUDA_SUCCESS: cudaError_t = 0;
 /// CUDA ストリームハンドル
 pub type cudaStream_t = *mut c_void;
 
+/// CUDA グラフハンドル
+pub type cudaGraph_t = *mut c_void;
+
+/// CUDA グラフ実行可能ハンドル
+pub type cudaGraphExec_t = *mut c_void;
+
+/// cudaStreamCaptureMode
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum cudaStreamCaptureMode {
+    cudaStreamCaptureModeGlobal = 0,
+    cudaStreamCaptureModeThreadLocal = 1,
+    cudaStreamCaptureModeRelaxed = 2,
+}
+
 /// cudaMemcpy の方向
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,6 +107,15 @@ extern "C" {
     // === エラー処理 ===
     pub fn cudaGetLastError() -> cudaError_t;
     pub fn cudaGetErrorString(error: cudaError_t) -> *const i8;
+
+    // === グラフ管理 ===
+    pub fn cudaStreamBeginCapture(stream: cudaStream_t, mode: cudaStreamCaptureMode) -> cudaError_t;
+    pub fn cudaStreamEndCapture(stream: cudaStream_t, graph: *mut cudaGraph_t) -> cudaError_t;
+    pub fn cudaGraphInstantiate(exec: *mut cudaGraphExec_t, graph: cudaGraph_t, error_node: *mut c_void, log: *mut i8, buf_size: usize) -> cudaError_t;
+    pub fn cudaGraphLaunch(exec: cudaGraphExec_t, stream: cudaStream_t) -> cudaError_t;
+    pub fn cudaGraphDestroy(graph: cudaGraph_t) -> cudaError_t;
+    pub fn cudaGraphExecDestroy(exec: cudaGraphExec_t) -> cudaError_t;
+    pub fn cudaGraphGetNodes(graph: cudaGraph_t, nodes: *mut c_void, num_nodes: *mut usize) -> cudaError_t;
 }
 
 /// CUDA エラーをチェックし Result に変換
