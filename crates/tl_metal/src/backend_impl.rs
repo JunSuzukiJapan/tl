@@ -75,12 +75,12 @@ impl GpuTensor for MetalTensor {
     
     fn ones(shape: &[usize], dtype: BackendDType) -> BackendResult<Self> {
         reject_f64(dtype, "ones")?;
-        Ok(MetalTensor::ones(shape, from_backend_dtype(dtype)))
+        MetalTensor::ones(shape, from_backend_dtype(dtype))
     }
     
     fn randn(shape: &[usize], dtype: BackendDType) -> BackendResult<Self> {
         reject_f64(dtype, "randn")?;
-        Ok(MetalTensor::randn(shape, from_backend_dtype(dtype)))
+        MetalTensor::randn(shape, from_backend_dtype(dtype))
     }
     
     fn arange(start: i64, end: i64, dtype: BackendDType) -> BackendResult<Self> {

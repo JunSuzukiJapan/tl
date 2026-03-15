@@ -135,7 +135,7 @@ pub struct PowBackward {
 
 impl GradFn for PowBackward {
     fn backward(&self, grad_output: &MetalTensor) -> BackendResult<Vec<MetalTensor>> {
-        let ones = MetalTensor::ones(self.b_data.shape(), self.b_data.dtype());
+        let ones = MetalTensor::ones(self.b_data.shape(), self.b_data.dtype())?;
         let b_minus_1 = self.b_data.sub_impl(&ones)?;
         let grad_a = grad_output.mul_impl(&self.b_data)?.mul_impl(&self.a_data.pow_impl(&b_minus_1)?)?;
         Ok(vec![grad_a])
@@ -154,7 +154,7 @@ pub struct SumallBackward {
 impl GradFn for SumallBackward {
     fn backward(&self, grad_output: &MetalTensor) -> BackendResult<Vec<MetalTensor>> {
         // GPU 完結: ones(input_shape) * grad_output (broadcast)
-        let ones = MetalTensor::ones(&self.shape, DType::F32);
+        let ones = MetalTensor::ones(&self.shape, DType::F32)?;
         Ok(vec![ones.mul_impl(grad_output)?])
     }
     fn inputs(&self) -> Vec<TensorRef> {
@@ -252,7 +252,7 @@ pub struct SigmoidBackward {
 
 impl GradFn for SigmoidBackward {
     fn backward(&self, grad_output: &MetalTensor) -> BackendResult<Vec<MetalTensor>> {
-        let ones = MetalTensor::ones(self.output.shape(), self.output.dtype());
+        let ones = MetalTensor::ones(self.output.shape(), self.output.dtype())?;
         let one_minus_s = ones.sub_impl(&self.output)?;
         let grad = grad_output.mul_impl(&self.output)?.mul_impl(&one_minus_s)?;
         Ok(vec![grad])
@@ -521,7 +521,7 @@ impl GradFn for MeanAllBackward {
     fn backward(&self, grad_output: &MetalTensor) -> BackendResult<Vec<MetalTensor>> {
         // GPU 完結: ones(input_shape) * grad_output * (1/n)
         let numel = self.shape.iter().product::<usize>() as f32;
-        let ones = MetalTensor::ones(&self.shape, DType::F32);
+        let ones = MetalTensor::ones(&self.shape, DType::F32)?;
         let scaled = grad_output.mul_scalar_impl(1.0 / numel)?;
         Ok(vec![ones.mul_impl(&scaled)?])
     }
@@ -613,7 +613,7 @@ pub struct MeanDimBackward {
 impl GradFn for MeanDimBackward {
     fn backward(&self, grad_output: &MetalTensor) -> BackendResult<Vec<MetalTensor>> {
         let dim_size = self.input_shape[self.dim] as f32;
-        let ones = MetalTensor::ones(&self.input_shape, DType::F32);
+        let ones = MetalTensor::ones(&self.input_shape, DType::F32)?;
         let expanded = ones.mul_impl(grad_output)?;
         Ok(vec![expanded.div_scalar_impl(dim_size)?])
     }

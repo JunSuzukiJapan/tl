@@ -169,7 +169,12 @@ impl MetalTensor {
     }
 
     /// 全て1で初期化
-    pub fn ones(shape: &[usize], dtype: DType) -> Self {
+    pub fn ones(shape: &[usize], dtype: DType) -> BackendResult<Self> {
+        if dtype == DType::F64 {
+            return Err(tl_backend::BackendError::TypeMismatch(
+                "Metal GPU does not support F64 (double precision). Use CPU backend for F64 tensors.".into()
+            ));
+        }
         let tensor = Self::uninit(shape, dtype);
         let count = tensor.elem_count();
         match dtype {
@@ -205,9 +210,6 @@ impl MetalTensor {
                     }
                 }
             }
-            DType::F64 => {
-                panic!("Metal GPU does not support F64 (double precision). Use CPU backend for F64 tensors.")
-            }
             _ => {
                 // F16/BF16/U32: 未サポート — F32 にフォールバック
                 eprintln!("Warning: ones for {:?} not supported, using F32 fallback", dtype);
@@ -219,14 +221,19 @@ impl MetalTensor {
                         *ptr.add(i) = 1.0;
                     }
                 }
-                return fallback;
+                return Ok(fallback);
             }
         }
-        tensor
+        Ok(tensor)
     }
 
     /// 正規乱数で初期化
-    pub fn randn(shape: &[usize], dtype: DType) -> Self {
+    pub fn randn(shape: &[usize], dtype: DType) -> BackendResult<Self> {
+        if dtype == DType::F64 {
+            return Err(tl_backend::BackendError::TypeMismatch(
+                "Metal GPU does not support F64 (double precision). Use CPU backend for F64 tensors.".into()
+            ));
+        }
         use rand::Rng;
         let tensor = Self::uninit(shape, dtype);
         let mut rng = rand::thread_rng();
@@ -243,16 +250,13 @@ impl MetalTensor {
                     }
                 }
             }
-            DType::F64 => {
-                panic!("Metal GPU does not support F64 (double precision). Use CPU backend for F64 tensors.")
-            }
             _ => {
                 // 整数型/半精度: 乱数の意味が薄いため F32 で生成してフォールバック
                 eprintln!("Warning: randn for {:?} not directly supported, using F32 fallback", dtype);
                 return Self::randn(shape, DType::F32);
             }
         }
-        tensor
+        Ok(tensor)
     }
 
     /// データを CPU にコピー
@@ -437,7 +441,7 @@ impl MetalTensor {
         }
 
         // 初期勾配: すべて 1
-        let ones = MetalTensor::ones(self.shape(), self.dtype());
+        let ones = MetalTensor::ones(self.shape(), self.dtype())?;
         let self_ptr = self as *mut MetalTensor;
 
         // ワークリスト: (テンソル生ポインタ, 出力勾配)
