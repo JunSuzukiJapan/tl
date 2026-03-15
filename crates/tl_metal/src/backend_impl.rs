@@ -21,12 +21,24 @@ fn to_backend_dtype(dtype: DType) -> BackendDType {
 fn from_backend_dtype(dtype: BackendDType) -> DType {
     match dtype {
         BackendDType::F32 => DType::F32,
-        BackendDType::F64 => DType::F64,
+        BackendDType::F64 => DType::F64, // ガードは呼び出し元で行う
         BackendDType::F16 => DType::F16,
         BackendDType::I32 => DType::I32,
         BackendDType::I64 => DType::I64,
         BackendDType::U8 => DType::U8,
         _ => DType::F32,
+    }
+}
+
+/// Metal ハードウェアは F64 (double) をサポートしないため、
+/// F64 テンソル作成を明示的に拒否するヘルパー。
+fn reject_f64(dtype: BackendDType, op: &str) -> tl_backend::BackendResult<()> {
+    if dtype == BackendDType::F64 {
+        Err(tl_backend::BackendError::TypeMismatch(format!(
+            "Metal GPU does not support F64 (double precision). Operation '{}' requires F32 or lower precision.", op
+        )))
+    } else {
+        Ok(())
     }
 }
 
@@ -57,14 +69,17 @@ impl GpuTensor for MetalTensor {
     }
     
     fn zeros(shape: &[usize], dtype: BackendDType) -> BackendResult<Self> {
+        reject_f64(dtype, "zeros")?;
         Ok(MetalTensor::zeros(shape, from_backend_dtype(dtype)))
     }
     
     fn ones(shape: &[usize], dtype: BackendDType) -> BackendResult<Self> {
+        reject_f64(dtype, "ones")?;
         Ok(MetalTensor::ones(shape, from_backend_dtype(dtype)))
     }
     
     fn randn(shape: &[usize], dtype: BackendDType) -> BackendResult<Self> {
+        reject_f64(dtype, "randn")?;
         Ok(MetalTensor::randn(shape, from_backend_dtype(dtype)))
     }
     

@@ -206,7 +206,7 @@ impl MetalTensor {
                 }
             }
             DType::F64 => {
-                unimplemented!("ones F64 not yet supported on Metal")
+                panic!("Metal GPU does not support F64 (double precision). Use CPU backend for F64 tensors.")
             }
             _ => {
                 // F16/BF16/U32: 未サポート — F32 にフォールバック
@@ -244,7 +244,7 @@ impl MetalTensor {
                 }
             }
             DType::F64 => {
-                unimplemented!("randn F64 not yet supported on Metal")
+                panic!("Metal GPU does not support F64 (double precision). Use CPU backend for F64 tensors.")
             }
             _ => {
                 // 整数型/半精度: 乱数の意味が薄いため F32 で生成してフォールバック
