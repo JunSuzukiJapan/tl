@@ -32,7 +32,7 @@ unsafe fn extract_tensor_data(tensor: *mut OpaqueTensor) -> Option<(Vec<f32>, Ve
     }
     if is_cpu_mode() {
         unsafe {
-            let cpu = &*(tensor as *mut tl_cpu::CpuTensor);
+            let cpu = &*(tensor as *mut tl_cpu::CpuTensor<f32>);
             let data = cpu.data_f32().to_vec();
             let shape = cpu.shape().to_vec();
             Some((data, shape, 0)) // F32

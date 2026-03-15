@@ -37,7 +37,7 @@ thread_local! {
     // Stack of scopes. Each scope contains a list of tensors allocated within it.
     // スコープスタック: 各スコープはそのスコープ内で割り当てられた Arc の生ポインタを保持。
     // スコープ脱出時に codegen が tl_tensor_release_safe を個別に呼ぶ。
-    static SCOPE_STACK: std::cell::RefCell<Vec<Vec<*mut CpuTensor>>> = const { std::cell::RefCell::new(Vec::new()) };
+    static SCOPE_STACK: std::cell::RefCell<Vec<Vec<*mut CpuTensor<f32>>>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 pub fn enter_scope() {
@@ -54,7 +54,7 @@ pub fn exit_scope() {
     });
 }
 
-pub fn register_tensor(t: *mut CpuTensor) {
+pub fn register_tensor(t: *mut CpuTensor<f32>) {
     if t.is_null() { return; }
     SCOPE_STACK.with(|stack| {
         let mut stack_ref = stack.borrow_mut();
@@ -64,7 +64,7 @@ pub fn register_tensor(t: *mut CpuTensor) {
     });
 }
 
-pub fn promote_tensor(t: *mut CpuTensor) {
+pub fn promote_tensor(t: *mut CpuTensor<f32>) {
     if t.is_null() { return; }
     SCOPE_STACK.with(|stack| {
         let mut stack_ref = stack.borrow_mut();
@@ -83,10 +83,10 @@ pub fn get_pool_size() -> usize {
 
 /// Arc ベースでテンソルを解放する (RC-1)。
 /// RC が 0 になれば CpuTensor（autograd グラフ含む）が自然に Drop される。
-pub fn release_tensor(t: *mut CpuTensor) {
+pub fn release_tensor(t: *mut CpuTensor<f32>) {
     if t.is_null() { return; }
     unsafe {
-        let arc_ref = Arc::from_raw(t as *const UnsafeCell<CpuTensor>);
+        let arc_ref = Arc::from_raw(t as *const UnsafeCell<CpuTensor<f32>>);
         if is_mem_log_enabled() {
             let rc = Arc::strong_count(&arc_ref);
             eprintln!("[RELEASE] Ptr: {:p} (RC={}, {})", t, rc, if rc == 1 { "DROP" } else { "RC-1" });

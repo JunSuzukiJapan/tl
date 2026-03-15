@@ -27,7 +27,7 @@ fn from_backend_dtype(dtype: BackendDType) -> DType {
     }
 }
 
-impl GpuTensor for CpuTensor {
+impl GpuTensor for CpuTensor<f32> {
     fn shape(&self) -> &[usize] { CpuTensor::shape(self) }
     fn dtype(&self) -> BackendDType { to_backend_dtype(CpuTensor::dtype(self)) }
     fn to_vec_f32(&self) -> Vec<f32> { self.to_vec::<f32>() }
@@ -44,7 +44,7 @@ impl GpuTensor for CpuTensor {
     fn clone_data(&self) -> tl_backend::BackendResult<Self> { Ok(CpuTensor::clone_data(self)) }
 }
 
-impl CpuTensor {
+impl CpuTensor<f32> {
     pub fn add(&self, other: &Self) -> tl_backend::BackendResult<Self> { self.add_impl(other) }
     pub fn sub(&self, other: &Self) -> tl_backend::BackendResult<Self> { self.sub_impl(other) }
     pub fn mul(&self, other: &Self) -> tl_backend::BackendResult<Self> { self.mul_impl(other) }

@@ -49,7 +49,7 @@ impl Drop for QTensor {
                     if ptr_val != 0 {
                         unsafe {
                             if is_cpu {
-                                let _ = Box::from_raw(ptr_val as *mut tl_cpu::CpuTensor);
+                                let _ = Box::from_raw(ptr_val as *mut tl_cpu::CpuTensor<f32>);
                             } else {
                                 crate::device_ffi::release_runtime_tensor(ptr_val as *mut std::ffi::c_void);
                             }

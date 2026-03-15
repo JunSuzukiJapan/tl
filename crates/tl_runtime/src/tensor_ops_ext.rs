@@ -27,7 +27,7 @@ pub extern "C" fn tl_tensor_save(path: *mut super::StringStruct, t: *mut OpaqueT
         let path_buf = crate::file_io::expand_path(&path_str);
 
         let (data, shape) = if is_cpu {
-            let tensor = &*(t as *mut tl_cpu::CpuTensor);
+            let tensor = &*(t as *mut tl_cpu::CpuTensor<f32>);
             (tensor.data_f32().to_vec(), tensor.shape().to_vec())
         } else {
             let tensor = &*t; // OpaqueTensor = MetalTensor

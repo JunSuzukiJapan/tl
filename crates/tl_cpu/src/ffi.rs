@@ -7,7 +7,7 @@ use crate::DType;
 use std::cell::UnsafeCell;
 use std::sync::Arc;
 
-pub type OpaqueTensor = CpuTensor;
+pub type OpaqueTensor = CpuTensor<f32>;
 
 // ========== テンソル作成 ==========
 
@@ -247,7 +247,7 @@ pub extern "C" fn tl_cpu_tensor_acquire(t: *mut OpaqueTensor) -> *mut OpaqueTens
         eprintln!("[ACQUIRE] Ptr: {:p} (Arc RC+1)", t);
     }
     unsafe {
-        let arc = Arc::from_raw(t as *const UnsafeCell<CpuTensor>);
+        let arc = Arc::from_raw(t as *const UnsafeCell<CpuTensor<f32>>);
         let _clone = arc.clone(); // RC+1
         let _ = Arc::into_raw(arc); // 元の参照を戻す
         Arc::into_raw(_clone) as *mut OpaqueTensor
@@ -274,7 +274,7 @@ pub extern "C" fn tl_cpu_tensor_clear_data(t: *mut OpaqueTensor) {
     unsafe {
         let tensor = &mut *t;
         // データバッファを解放
-        tensor.data_f32 = Vec::new();
+        tensor.data = Vec::new();
         tensor.data_i64 = None;
         tensor.shape = Vec::new();
         // autograd も完全クリア（Arc が所有権を管理するため安全）
@@ -374,7 +374,7 @@ pub extern "C" fn tl_cpu_tensor_get_f32_md(
     if t.is_null() || indices.is_null() {
         return 0.0;
     }
-    let tensor = unsafe { &*(t as *mut CpuTensor) };
+    let tensor = unsafe { &*(t as *mut CpuTensor<f32>) };
     let shape = tensor.shape();
     if shape.is_empty() {
         return 0.0;
@@ -1767,9 +1767,9 @@ pub extern "C" fn tl_cpu_tensor_tan(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
         return std::ptr::null_mut();
     }
     let tensor = unsafe { &*t };
-    let data: Vec<f32> = tensor.data_f32.iter().map(|&x| x.tan()).collect();
-    make_tensor(CpuTensor {
-        data_f32: data,
+    let data: Vec<f32> = tensor.data.iter().map(|&x| x.tan()).collect();
+    make_tensor(CpuTensor::<f32> {
+        data: data,
         data_i64: None,
         shape: tensor.shape.clone(),
         dtype: tensor.dtype,
@@ -1789,12 +1789,12 @@ pub extern "C" fn tl_cpu_tensor_clamp(
     let min_f32 = min as f32;
     let max_f32 = max as f32;
     let data: Vec<f32> = tensor
-        .data_f32
+        .data
         .iter()
         .map(|&x| x.max(min_f32).min(max_f32))
         .collect();
-    make_tensor(CpuTensor {
-        data_f32: data,
+    make_tensor(CpuTensor::<f32> {
+        data: data,
         data_i64: None,
         shape: tensor.shape.clone(),
         dtype: tensor.dtype,
@@ -1808,12 +1808,12 @@ pub extern "C" fn tl_cpu_tensor_sigmoid(t: *mut OpaqueTensor) -> *mut OpaqueTens
     }
     let tensor = unsafe { &*t };
     let data: Vec<f32> = tensor
-        .data_f32
+        .data
         .iter()
         .map(|&x| 1.0 / (1.0 + (-x).exp()))
         .collect();
-    make_tensor(CpuTensor {
-        data_f32: data,
+    make_tensor(CpuTensor::<f32> {
+        data: data,
         data_i64: None,
         shape: tensor.shape.clone(),
         dtype: tensor.dtype,
@@ -1841,12 +1841,12 @@ pub extern "C" fn tl_cpu_tensor_silu(t: *mut OpaqueTensor) -> *mut OpaqueTensor 
     }
     let tensor = unsafe { &*t };
     let data: Vec<f32> = tensor
-        .data_f32
+        .data
         .iter()
         .map(|&x| x * (1.0 / (1.0 + (-x).exp())))
         .collect();
-    make_tensor(CpuTensor {
-        data_f32: data,
+    make_tensor(CpuTensor::<f32> {
+        data: data,
         data_i64: None,
         shape: tensor.shape.clone(),
         dtype: tensor.dtype,
@@ -1865,16 +1865,16 @@ pub extern "C" fn tl_cpu_tensor_cross_entropy(
     let t = unsafe { &*labels };
     // Cross entropy: -sum(target * log(softmax(logits)))
     // Simple implementation: sum of element-wise -target * log(logit)
-    let l_data = &l.data_f32;
-    let t_data = &t.data_f32;
+    let l_data = &l.data;
+    let t_data = &t.data;
     let len = l_data.len().min(t_data.len());
     let mut loss = 0.0f32;
     for i in 0..len {
         let p = l_data[i].max(1e-7); // avoid log(0)
         loss -= t_data[i] * p.ln();
     }
-    make_tensor(CpuTensor {
-        data_f32: vec![loss],
+    make_tensor(CpuTensor::<f32> {
+        data: vec![loss],
         data_i64: None,
         shape: vec![1],
         dtype: DType::F32,
@@ -1923,10 +1923,10 @@ pub extern "C" fn tl_cpu_tensor_to_i64(t: *mut OpaqueTensor) -> *mut OpaqueTenso
     }
     let tensor = unsafe { &*t };
     // Convert f32 data to i64 representation
-    let i64_data: Vec<i64> = tensor.data_f32.iter().map(|&x| x as i64).collect();
+    let i64_data: Vec<i64> = tensor.data.iter().map(|&x| x as i64).collect();
     let f32_data: Vec<f32> = i64_data.iter().map(|&x| x as f32).collect();
-    make_tensor(CpuTensor {
-        data_f32: f32_data,
+    make_tensor(CpuTensor::<f32> {
+        data: f32_data,
         data_i64: Some(i64_data),
         shape: tensor.shape.clone(),
         dtype: DType::I64,
@@ -2134,7 +2134,7 @@ pub extern "C" fn tl_cpu_tensor_rms_norm(
     }
     let x = unsafe { &*input };
     // RMS Norm: x / sqrt(mean(x^2) + eps)
-    let data = &x.data_f32;
+    let data = &x.data;
     let last_dim = *x.shape.last().unwrap_or(&1);
     let num_groups = data.len() / last_dim;
     let mut result = vec![0.0f32; data.len()];
@@ -2147,8 +2147,8 @@ pub extern "C" fn tl_cpu_tensor_rms_norm(
             result[i] = data[i] / rms;
         }
     }
-    let normalized = CpuTensor {
-        data_f32: result,
+    let normalized = CpuTensor::<f32> {
+        data: result,
         data_i64: None,
         shape: x.shape.clone(),
         dtype: x.dtype,
@@ -2184,7 +2184,7 @@ pub extern "C" fn tl_cpu_tensor_save(t: *mut OpaqueTensor, path: *const i8) {
     if t.is_null() || path.is_null() {
         return;
     }
-    let tensor = unsafe { &*(t as *const CpuTensor) };
+    let tensor = unsafe { &*(t as *const CpuTensor<f32>) };
     let path_str = unsafe { CStr::from_ptr(path).to_string_lossy() };
 
     // バイナリ形式: [magic: 4bytes "TLTF"] [rank: u64] [shape: rank * u64] [dtype: u64] [data: f32 * numel]
@@ -2201,7 +2201,7 @@ pub extern "C" fn tl_cpu_tensor_save(t: *mut OpaqueTensor, path: *const i8) {
         _ => 0,
     };
     buf.extend_from_slice(&dtype_id.to_le_bytes());
-    for &val in &tensor.data_f32 {
+    for &val in &tensor.data {
         buf.extend_from_slice(&val.to_le_bytes());
     }
 
@@ -2260,8 +2260,8 @@ pub extern "C" fn tl_cpu_tensor_load(path: *const i8) -> *mut OpaqueTensor {
         offset += 4;
     }
 
-    make_tensor(CpuTensor {
-        data_f32: data,
+    make_tensor(CpuTensor::<f32> {
+        data: data,
         data_i64: None,
         shape,
         dtype,
@@ -2319,9 +2319,9 @@ pub extern "C" fn tl_cpu_tensor_apply_rope(
     if t.is_null() || cos_table.is_null() || sin_table.is_null() {
         return std::ptr::null_mut();
     }
-    let tensor = unsafe { &*(t as *const CpuTensor) };
-    let cos_t = unsafe { &*(cos_table as *const CpuTensor) };
-    let sin_t = unsafe { &*(sin_table as *const CpuTensor) };
+    let tensor = unsafe { &*(t as *const CpuTensor<f32>) };
+    let cos_t = unsafe { &*(cos_table as *const CpuTensor<f32>) };
+    let sin_t = unsafe { &*(sin_table as *const CpuTensor<f32>) };
 
     let shape = tensor.shape();
     let data = tensor.data_f32();
@@ -2368,9 +2368,9 @@ pub extern "C" fn tl_cpu_tensor_apply_rope(
 }
 
 #[track_caller]
-fn make_tensor(t: CpuTensor) -> *mut OpaqueTensor {
+fn make_tensor(t: CpuTensor<f32>) -> *mut OpaqueTensor {
     // track_alloc: テンソルのデータバッファ容量を追跡 (Drop の track_free と対称)
-    let f32_bytes = t.data_f32.capacity() * std::mem::size_of::<f32>();
+    let f32_bytes = t.data.capacity() * std::mem::size_of::<f32>();
     if f32_bytes > 0 {
         crate::memory::track_alloc(f32_bytes);
     }
@@ -2381,7 +2381,7 @@ fn make_tensor(t: CpuTensor) -> *mut OpaqueTensor {
         }
     }
     let arc = Arc::new(UnsafeCell::new(t));
-    let ptr = Arc::into_raw(arc) as *mut CpuTensor;
+    let ptr = Arc::into_raw(arc) as *mut CpuTensor<f32>;
     let loc = std::panic::Location::caller();
     if crate::memory::is_mem_log_enabled() {
         eprintln!("[ALLOC] Ptr: {:p} at {}:{}", ptr, loc.file(), loc.line());
@@ -2530,8 +2530,8 @@ pub extern "C" fn tl_cpu_tensor_map_insert(
         let key = CStr::from_ptr((*name).ptr).to_string_lossy().into_owned();
         // Clone the tensor data
         let t = &*tensor;
-        let cloned = Box::into_raw(Box::new(CpuTensor {
-            data_f32: t.data_f32.clone(),
+        let cloned = Box::into_raw(Box::new(CpuTensor::<f32> {
+            data: t.data.clone(),
             data_i64: t.data_i64.clone(),
             shape: t.shape.clone(),
             dtype: t.dtype,
@@ -2556,8 +2556,8 @@ pub extern "C" fn tl_cpu_tensor_map_get(
             Some(&ptr) => {
                 // Return a clone
                 let t = &*ptr;
-                Box::into_raw(Box::new(CpuTensor {
-                    data_f32: t.data_f32.clone(),
+                Box::into_raw(Box::new(CpuTensor::<f32> {
+                    data: t.data.clone(),
                     data_i64: t.data_i64.clone(),
                     shape: t.shape.clone(),
                     dtype: t.dtype,

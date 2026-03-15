@@ -13,13 +13,13 @@ pub struct CpuDevice;
 
 /// void* → *mut CpuTensor キャスト
 #[inline(always)]
-fn t(p: *mut c_void) -> *mut CpuTensor {
-    p as *mut CpuTensor
+fn t(p: *mut c_void) -> *mut CpuTensor<f32> {
+    p as *mut CpuTensor<f32>
 }
 
 /// *mut CpuTensor → void* キャスト
 #[inline(always)]
-fn v(p: *mut CpuTensor) -> *mut c_void {
+fn v(p: *mut CpuTensor<f32>) -> *mut c_void {
     p as *mut c_void
 }
 
@@ -139,7 +139,7 @@ impl IDevice for CpuDevice {
         y: *mut c_void,
     ) -> BackendResult<*mut c_void> {
         let (tc, tx, ty) = unsafe { (&*t(cond), &*t(x), &*t(y)) };
-        let result = CpuTensor::where_cond(tc, tx, ty)?;
+        let result = CpuTensor::<f32>::where_cond(tc, tx, ty)?;
         let arc = std::sync::Arc::new(std::cell::UnsafeCell::new(result));
         Ok(std::sync::Arc::into_raw(arc) as *mut c_void)
     }
@@ -180,11 +180,11 @@ impl IDevice for CpuDevice {
 
     fn tensor_std(&self, tensor: *mut c_void, dim: i32) -> BackendResult<*mut c_void> {
         let var_ptr = self.tensor_var(tensor, dim)?;
-        let var_t = unsafe { &*(var_ptr as *mut crate::tensor::CpuTensor) };
+        let var_t = unsafe { &*(var_ptr as *mut crate::tensor::CpuTensor<f32>) };
         let result = var_t.sqrt_impl()?;
         unsafe {
             let _ = std::sync::Arc::from_raw(
-                var_ptr as *const std::cell::UnsafeCell<crate::tensor::CpuTensor>,
+                var_ptr as *const std::cell::UnsafeCell<crate::tensor::CpuTensor<f32>>,
             );
         }
         let arc = std::sync::Arc::new(std::cell::UnsafeCell::new(result));
@@ -211,7 +211,7 @@ impl IDevice for CpuDevice {
             acc += x;
             result.push(acc);
         }
-        let out = crate::tensor::CpuTensor::from_slice(&result, tt.shape(), crate::DType::F32);
+        let out = crate::tensor::CpuTensor::<f32>::from_slice(&result, tt.shape(), crate::DType::F32);
         let arc = std::sync::Arc::new(std::cell::UnsafeCell::new(out));
         Ok(std::sync::Arc::into_raw(arc) as *mut c_void)
     }
@@ -227,7 +227,7 @@ impl IDevice for CpuDevice {
                 .sum::<f32>()
                 .powf(1.0 / p)
         };
-        let out = crate::tensor::CpuTensor::from_slice(&[norm_val], &[1], crate::DType::F32);
+        let out = crate::tensor::CpuTensor::<f32>::from_slice(&[norm_val], &[1], crate::DType::F32);
         let arc = std::sync::Arc::new(std::cell::UnsafeCell::new(out));
         Ok(std::sync::Arc::into_raw(arc) as *mut c_void)
     }
@@ -237,7 +237,7 @@ impl IDevice for CpuDevice {
         let mut data = tt.to_vec::<f32>();
         data.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
         data.truncate(k);
-        let out = crate::tensor::CpuTensor::from_slice(&data, &[k], crate::DType::F32);
+        let out = crate::tensor::CpuTensor::<f32>::from_slice(&data, &[k], crate::DType::F32);
         let arc = std::sync::Arc::new(std::cell::UnsafeCell::new(out));
         Ok(std::sync::Arc::into_raw(arc) as *mut c_void)
     }
@@ -251,7 +251,7 @@ impl IDevice for CpuDevice {
             .zip(db.iter())
             .map(|(&x, &y)| if x != 0.0 && y != 0.0 { 1.0 } else { 0.0 })
             .collect();
-        let out = crate::tensor::CpuTensor::from_slice(&result, ta.shape(), crate::DType::F32);
+        let out = crate::tensor::CpuTensor::<f32>::from_slice(&result, ta.shape(), crate::DType::F32);
         let arc = std::sync::Arc::new(std::cell::UnsafeCell::new(out));
         Ok(std::sync::Arc::into_raw(arc) as *mut c_void)
     }
@@ -265,7 +265,7 @@ impl IDevice for CpuDevice {
             .zip(db.iter())
             .map(|(&x, &y)| if x != 0.0 || y != 0.0 { 1.0 } else { 0.0 })
             .collect();
-        let out = crate::tensor::CpuTensor::from_slice(&result, ta.shape(), crate::DType::F32);
+        let out = crate::tensor::CpuTensor::<f32>::from_slice(&result, ta.shape(), crate::DType::F32);
         let arc = std::sync::Arc::new(std::cell::UnsafeCell::new(out));
         Ok(std::sync::Arc::into_raw(arc) as *mut c_void)
     }
@@ -277,7 +277,7 @@ impl IDevice for CpuDevice {
             .iter()
             .map(|&x| if x == 0.0 { 1.0 } else { 0.0 })
             .collect();
-        let out = crate::tensor::CpuTensor::from_slice(&result, tt.shape(), crate::DType::F32);
+        let out = crate::tensor::CpuTensor::<f32>::from_slice(&result, tt.shape(), crate::DType::F32);
         let arc = std::sync::Arc::new(std::cell::UnsafeCell::new(out));
         Ok(std::sync::Arc::into_raw(arc) as *mut c_void)
     }
@@ -293,7 +293,7 @@ impl IDevice for CpuDevice {
             .iter()
             .map(|&x| if x > 0.0 { x } else { negative_slope * x })
             .collect();
-        let out = crate::tensor::CpuTensor::from_slice(&result, tt.shape(), crate::DType::F32);
+        let out = crate::tensor::CpuTensor::<f32>::from_slice(&result, tt.shape(), crate::DType::F32);
         let arc = std::sync::Arc::new(std::cell::UnsafeCell::new(out));
         Ok(std::sync::Arc::into_raw(arc) as *mut c_void)
     }
@@ -305,7 +305,7 @@ impl IDevice for CpuDevice {
             .iter()
             .map(|&x| if x > 0.0 { x } else { alpha * (x.exp() - 1.0) })
             .collect();
-        let out = crate::tensor::CpuTensor::from_slice(&result, tt.shape(), crate::DType::F32);
+        let out = crate::tensor::CpuTensor::<f32>::from_slice(&result, tt.shape(), crate::DType::F32);
         let arc = std::sync::Arc::new(std::cell::UnsafeCell::new(out));
         Ok(std::sync::Arc::into_raw(arc) as *mut c_void)
     }
@@ -314,7 +314,7 @@ impl IDevice for CpuDevice {
         let tt = unsafe { &*t(tensor) };
         let data = tt.to_vec::<f32>();
         let result: Vec<f32> = data.iter().map(|&x| x * (x.exp().ln_1p()).tanh()).collect();
-        let out = crate::tensor::CpuTensor::from_slice(&result, tt.shape(), crate::DType::F32);
+        let out = crate::tensor::CpuTensor::<f32>::from_slice(&result, tt.shape(), crate::DType::F32);
         let arc = std::sync::Arc::new(std::cell::UnsafeCell::new(out));
         Ok(std::sync::Arc::into_raw(arc) as *mut c_void)
     }
@@ -356,7 +356,7 @@ impl IDevice for CpuDevice {
             .map(|(&pi, &yi)| -(yi * (pi + eps).ln() + (1.0 - yi) * (1.0 - pi + eps).ln()))
             .sum();
         let loss = sum / p.len() as f32;
-        let out = crate::tensor::CpuTensor::from_slice(&[loss], &[1], crate::DType::F32);
+        let out = crate::tensor::CpuTensor::<f32>::from_slice(&[loss], &[1], crate::DType::F32);
         let arc = std::sync::Arc::new(std::cell::UnsafeCell::new(out));
         Ok(std::sync::Arc::into_raw(arc) as *mut c_void)
     }
@@ -371,7 +371,7 @@ impl IDevice for CpuDevice {
         let y = tt.to_vec::<f32>();
         let sum: f32 = p.iter().zip(y.iter()).map(|(&pi, &yi)| -pi * yi).sum();
         let loss = sum / p.len() as f32;
-        let out = crate::tensor::CpuTensor::from_slice(&[loss], &[1], crate::DType::F32);
+        let out = crate::tensor::CpuTensor::<f32>::from_slice(&[loss], &[1], crate::DType::F32);
         let arc = std::sync::Arc::new(std::cell::UnsafeCell::new(out));
         Ok(std::sync::Arc::into_raw(arc) as *mut c_void)
     }
@@ -402,7 +402,7 @@ impl IDevice for CpuDevice {
             .iter()
             .map(|&x| x * (x + 3.0).max(0.0).min(6.0) / 6.0)
             .collect();
-        let out = crate::tensor::CpuTensor::from_slice(&r, tt.shape(), crate::DType::F32);
+        let out = crate::tensor::CpuTensor::<f32>::from_slice(&r, tt.shape(), crate::DType::F32);
         let arc = std::sync::Arc::new(std::cell::UnsafeCell::new(out));
         Ok(std::sync::Arc::into_raw(arc) as *mut c_void)
     }
@@ -414,7 +414,7 @@ impl IDevice for CpuDevice {
             .iter()
             .map(|&x| ((x + 3.0) / 6.0).max(0.0).min(1.0))
             .collect();
-        let out = crate::tensor::CpuTensor::from_slice(&r, tt.shape(), crate::DType::F32);
+        let out = crate::tensor::CpuTensor::<f32>::from_slice(&r, tt.shape(), crate::DType::F32);
         let arc = std::sync::Arc::new(std::cell::UnsafeCell::new(out));
         Ok(std::sync::Arc::into_raw(arc) as *mut c_void)
     }
@@ -466,7 +466,7 @@ impl IDevice for CpuDevice {
                 }
             }
         }
-        let out = crate::tensor::CpuTensor::from_slice(&result, &shape, crate::DType::F32);
+        let out = crate::tensor::CpuTensor::<f32>::from_slice(&result, &shape, crate::DType::F32);
         let arc = std::sync::Arc::new(std::cell::UnsafeCell::new(out));
         Ok(std::sync::Arc::into_raw(arc) as *mut c_void)
     }
@@ -505,7 +505,7 @@ impl IDevice for CpuDevice {
                 }
             }
         }
-        let out = crate::tensor::CpuTensor::from_slice(&result, &[n, c, oh, ow], crate::DType::F32);
+        let out = crate::tensor::CpuTensor::<f32>::from_slice(&result, &[n, c, oh, ow], crate::DType::F32);
         let arc = std::sync::Arc::new(std::cell::UnsafeCell::new(out));
         Ok(std::sync::Arc::into_raw(arc) as *mut c_void)
     }
@@ -537,7 +537,7 @@ impl IDevice for CpuDevice {
         }
         let mut new_shape = shape.clone();
         *new_shape.last_mut().unwrap() = new_last;
-        let out = crate::tensor::CpuTensor::from_slice(&result, &new_shape, crate::DType::F32);
+        let out = crate::tensor::CpuTensor::<f32>::from_slice(&result, &new_shape, crate::DType::F32);
         let arc = std::sync::Arc::new(std::cell::UnsafeCell::new(out));
         Ok(std::sync::Arc::into_raw(arc) as *mut c_void)
     }
@@ -567,7 +567,7 @@ impl IDevice for CpuDevice {
     ) -> BackendResult<*mut c_void> {
         let ti = unsafe { &*t(input) };
         if !training {
-            let out = crate::tensor::CpuTensor::from_slice(
+            let out = crate::tensor::CpuTensor::<f32>::from_slice(
                 &ti.to_vec::<f32>(),
                 ti.shape(),
                 crate::DType::F32,
@@ -591,7 +591,7 @@ impl IDevice for CpuDevice {
                 }
             }
         }
-        let out = crate::tensor::CpuTensor::from_slice(&result, &shape, crate::DType::F32);
+        let out = crate::tensor::CpuTensor::<f32>::from_slice(&result, &shape, crate::DType::F32);
         let arc = std::sync::Arc::new(std::cell::UnsafeCell::new(out));
         Ok(std::sync::Arc::into_raw(arc) as *mut c_void)
     }
@@ -635,7 +635,7 @@ impl IDevice for CpuDevice {
                 }
             }
         }
-        let out = crate::tensor::CpuTensor::from_slice(
+        let out = crate::tensor::CpuTensor::<f32>::from_slice(
             &result,
             &[batch, out_ch, out_len],
             crate::DType::F32,
@@ -665,7 +665,7 @@ impl IDevice for CpuDevice {
             })
             .sum();
         let loss = sum / q.len() as f32;
-        let out = crate::tensor::CpuTensor::from_slice(&[loss], &[1], crate::DType::F32);
+        let out = crate::tensor::CpuTensor::<f32>::from_slice(&[loss], &[1], crate::DType::F32);
         let arc = std::sync::Arc::new(std::cell::UnsafeCell::new(out));
         Ok(std::sync::Arc::into_raw(arc) as *mut c_void)
     }
@@ -726,7 +726,7 @@ impl IDevice for CpuDevice {
                 }
             }
         }
-        let out = crate::tensor::CpuTensor::from_slice(
+        let out = crate::tensor::CpuTensor::<f32>::from_slice(
             &result,
             &[batch, out_ch, oh, ow],
             crate::DType::F32,
@@ -778,7 +778,7 @@ impl IDevice for CpuDevice {
                 }
             }
         }
-        let out = crate::tensor::CpuTensor::from_slice(&result, &[n, c, oh, ow], crate::DType::F32);
+        let out = crate::tensor::CpuTensor::<f32>::from_slice(&result, &[n, c, oh, ow], crate::DType::F32);
         let arc = std::sync::Arc::new(std::cell::UnsafeCell::new(out));
         Ok(std::sync::Arc::into_raw(arc) as *mut c_void)
     }
@@ -878,7 +878,7 @@ impl IDevice for CpuDevice {
         } else {
             vec![seq_q, d_v]
         };
-        let out = crate::tensor::CpuTensor::from_slice(&result, &out_shape, crate::DType::F32);
+        let out = crate::tensor::CpuTensor::<f32>::from_slice(&result, &out_shape, crate::DType::F32);
         let arc = std::sync::Arc::new(std::cell::UnsafeCell::new(out));
         Ok(std::sync::Arc::into_raw(arc) as *mut c_void)
     }
@@ -911,7 +911,7 @@ impl IDevice for CpuDevice {
             .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
             .map(|(i, _)| i)
             .unwrap_or(0);
-        let out = crate::tensor::CpuTensor::from_slice(&[idx as f32], &[1], crate::DType::F32);
+        let out = crate::tensor::CpuTensor::<f32>::from_slice(&[idx as f32], &[1], crate::DType::F32);
         let arc = std::sync::Arc::new(std::cell::UnsafeCell::new(out));
         Ok(std::sync::Arc::into_raw(arc) as *mut c_void)
     }
@@ -956,7 +956,7 @@ impl IDevice for CpuDevice {
             .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
             .map(|(i, _)| i)
             .unwrap_or(0);
-        let out = crate::tensor::CpuTensor::from_slice(&[idx as f32], &[1], crate::DType::F32);
+        let out = crate::tensor::CpuTensor::<f32>::from_slice(&[idx as f32], &[1], crate::DType::F32);
         let arc = std::sync::Arc::new(std::cell::UnsafeCell::new(out));
         Ok(std::sync::Arc::into_raw(arc) as *mut c_void)
     }
@@ -970,7 +970,7 @@ impl IDevice for CpuDevice {
         let data = tl.to_vec::<f32>();
         let t = temperature as f32;
         let result: Vec<f32> = data.iter().map(|&v| v / t).collect();
-        let out = crate::tensor::CpuTensor::from_slice(&result, tl.shape(), crate::DType::F32);
+        let out = crate::tensor::CpuTensor::<f32>::from_slice(&result, tl.shape(), crate::DType::F32);
         let arc = std::sync::Arc::new(std::cell::UnsafeCell::new(out));
         Ok(std::sync::Arc::into_raw(arc) as *mut c_void)
     }
@@ -995,7 +995,7 @@ impl IDevice for CpuDevice {
                 };
             }
         }
-        let out = crate::tensor::CpuTensor::from_slice(&data, tl.shape(), crate::DType::F32);
+        let out = crate::tensor::CpuTensor::<f32>::from_slice(&data, tl.shape(), crate::DType::F32);
         let arc = std::sync::Arc::new(std::cell::UnsafeCell::new(out));
         Ok(std::sync::Arc::into_raw(arc) as *mut c_void)
     }
@@ -1005,7 +1005,7 @@ impl IDevice for CpuDevice {
         let da = ta.to_vec::<f32>();
         let db = tb.to_vec::<f32>();
         let dot: f32 = da.iter().zip(db.iter()).map(|(&x, &y)| x * y).sum();
-        let out = crate::tensor::CpuTensor::from_slice(&[dot], &[1], crate::DType::F32);
+        let out = crate::tensor::CpuTensor::<f32>::from_slice(&[dot], &[1], crate::DType::F32);
         let arc = std::sync::Arc::new(std::cell::UnsafeCell::new(out));
         Ok(std::sync::Arc::into_raw(arc) as *mut c_void)
     }
@@ -1013,13 +1013,13 @@ impl IDevice for CpuDevice {
     fn tensor_fill_(&self, tensor: *mut c_void, value: f32) -> BackendResult<()> {
         let tt = unsafe { &*t(tensor) };
         let numel: usize = tt.shape().iter().product();
-        let filled = crate::tensor::CpuTensor::from_slice(
+        let filled = crate::tensor::CpuTensor::<f32>::from_slice(
             &vec![value; numel],
             tt.shape(),
             crate::DType::F32,
         );
         unsafe {
-            let dst = &mut *(tensor as *mut crate::tensor::CpuTensor);
+            let dst = &mut *(tensor as *mut crate::tensor::CpuTensor<f32>);
             *dst = filled;
         }
         Ok(())

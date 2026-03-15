@@ -75,7 +75,7 @@ pub struct SubBackward<T: TensorScalar> {
 impl<T: TensorScalar> GradFn<T> for SubBackward<T> {
     fn backward(&self, grad_output: &CpuTensor<T>) -> Vec<CpuTensor<T>> {
         let grad_a = reduce_grad_for_broadcast(grad_output, &self.a_shape);
-        let grad_b = reduce_grad_for_broadcast(&grad_output.neg().expect("Autograd neg failed"), &self.b_shape);
+        let grad_b = reduce_grad_for_broadcast(&grad_output.neg_impl().expect("Autograd neg failed"), &self.b_shape);
         vec![grad_a, grad_b]
     }
     fn inputs(&self) -> Vec<TensorRef<T>> {
@@ -95,8 +95,8 @@ pub struct MulBackward<T: TensorScalar> {
 
 impl<T: TensorScalar> GradFn<T> for MulBackward<T> {
     fn backward(&self, grad_output: &CpuTensor<T>) -> Vec<CpuTensor<T>> {
-        let grad_a = reduce_grad_for_broadcast(&grad_output.mul(&self.b_data).expect("Autograd mul failed"), &self.a_shape);
-        let grad_b = reduce_grad_for_broadcast(&grad_output.mul(&self.a_data).expect("Autograd mul failed"), &self.b_shape);
+        let grad_a = reduce_grad_for_broadcast(&grad_output.mul_impl(&self.b_data).expect("Autograd mul failed"), &self.a_shape);
+        let grad_b = reduce_grad_for_broadcast(&grad_output.mul_impl(&self.a_data).expect("Autograd mul failed"), &self.b_shape);
         vec![grad_a, grad_b]
     }
     fn inputs(&self) -> Vec<TensorRef<T>> {
@@ -116,9 +116,9 @@ pub struct DivBackward<T: TensorScalar> {
 
 impl<T: TensorScalar> GradFn<T> for DivBackward<T> {
     fn backward(&self, grad_output: &CpuTensor<T>) -> Vec<CpuTensor<T>> {
-        let grad_a = reduce_grad_for_broadcast(&grad_output.div(&self.b_data).expect("Autograd div failed"), &self.a_shape);
-        let b_sq = self.b_data.mul(&self.b_data).expect("Autograd mul failed");
-        let grad_b = reduce_grad_for_broadcast(&grad_output.mul(&self.a_data).expect("Autograd mul failed").neg().expect("Autograd neg failed").div(&b_sq).expect("Autograd div failed"), &self.b_shape);
+        let grad_a = reduce_grad_for_broadcast(&grad_output.div_impl(&self.b_data).expect("Autograd div failed"), &self.a_shape);
+        let b_sq = self.b_data.mul_impl(&self.b_data).expect("Autograd mul failed");
+        let grad_b = reduce_grad_for_broadcast(&grad_output.mul_impl(&self.a_data).expect("Autograd mul failed").neg_impl().expect("Autograd neg failed").div_impl(&b_sq).expect("Autograd div failed"), &self.b_shape);
         vec![grad_a, grad_b]
     }
     fn inputs(&self) -> Vec<TensorRef<T>> {
@@ -137,8 +137,8 @@ pub struct PowBackward<T: TensorScalar> {
 impl<T: TensorScalar> GradFn<T> for PowBackward<T> {
     fn backward(&self, grad_output: &CpuTensor<T>) -> Vec<CpuTensor<T>> {
         let ones = CpuTensor::<T>::ones(self.b_data.shape(), self.b_data.dtype());
-        let b_minus_1 = self.b_data.sub(&ones).expect("Autograd sub failed");
-        let grad_a = grad_output.mul(&self.b_data).expect("Autograd mul failed").mul(&self.a_data.pow(&b_minus_1).expect("Autograd pow failed")).expect("Autograd mul failed");
+        let b_minus_1 = self.b_data.sub_impl(&ones).expect("Autograd sub failed");
+        let grad_a = grad_output.mul_impl(&self.b_data).expect("Autograd mul failed").mul_impl(&self.a_data.pow_impl(&b_minus_1).expect("Autograd pow failed")).expect("Autograd mul failed");
         vec![grad_a]
     }
     fn inputs(&self) -> Vec<TensorRef<T>> {
@@ -258,8 +258,8 @@ pub struct SigmoidBackward<T: TensorScalar> {
 impl<T: TensorScalar> GradFn<T> for SigmoidBackward<T> {
     fn backward(&self, grad_output: &CpuTensor<T>) -> Vec<CpuTensor<T>> {
         let ones = CpuTensor::<T>::ones(self.output.shape(), self.output.dtype());
-        let one_minus_s = ones.sub(&self.output).expect("Autograd sub failed");
-        let grad = grad_output.mul(&self.output).expect("Autograd mul failed").mul(&one_minus_s).expect("Autograd mul failed");
+        let one_minus_s = ones.sub_impl(&self.output).expect("Autograd sub failed");
+        let grad = grad_output.mul_impl(&self.output).expect("Autograd mul failed").mul_impl(&one_minus_s).expect("Autograd mul failed");
         vec![grad]
     }
     fn inputs(&self) -> Vec<TensorRef<T>> {
@@ -275,7 +275,7 @@ pub struct ExpBackward<T: TensorScalar> {
 
 impl<T: TensorScalar> GradFn<T> for ExpBackward<T> {
     fn backward(&self, grad_output: &CpuTensor<T>) -> Vec<CpuTensor<T>> {
-        vec![grad_output.mul(&self.output).expect("Autograd mul failed")]
+        vec![grad_output.mul_impl(&self.output).expect("Autograd mul failed")]
     }
     fn inputs(&self) -> Vec<TensorRef<T>> {
         vec![self.a.clone()]
@@ -290,7 +290,7 @@ pub struct LogBackward<T: TensorScalar> {
 
 impl<T: TensorScalar> GradFn<T> for LogBackward<T> {
     fn backward(&self, grad_output: &CpuTensor<T>) -> Vec<CpuTensor<T>> {
-        vec![grad_output.div(&self.a_data).expect("Autograd div failed")]
+        vec![grad_output.div_impl(&self.a_data).expect("Autograd div failed")]
     }
     fn inputs(&self) -> Vec<TensorRef<T>> {
         vec![self.a.clone()]
@@ -420,9 +420,50 @@ pub struct NegBackward<T: TensorScalar> {
 
 impl<T: TensorScalar> GradFn<T> for NegBackward<T> {
     fn backward(&self, grad_output: &CpuTensor<T>) -> Vec<CpuTensor<T>> {
-        vec![grad_output.neg().expect("Autograd neg failed")]
+        vec![grad_output.neg_impl().expect("Autograd neg failed")]
     }
     fn inputs(&self) -> Vec<TensorRef<T>> {
         vec![self.a.clone()]
     }
 }
+
+// UnsafeCell<CpuTensor<T>> を含む TensorRef<T> を保持する構造体に対して
+// Send + Sync を手動実装。CpuTensor<T> 自体が unsafe impl Send + Sync を持つため安全。
+unsafe impl<T: TensorScalar> Send for AddBackward<T> {}
+unsafe impl<T: TensorScalar> Sync for AddBackward<T> {}
+unsafe impl<T: TensorScalar> Send for SubBackward<T> {}
+unsafe impl<T: TensorScalar> Sync for SubBackward<T> {}
+unsafe impl<T: TensorScalar> Send for MulBackward<T> {}
+unsafe impl<T: TensorScalar> Sync for MulBackward<T> {}
+unsafe impl<T: TensorScalar> Send for DivBackward<T> {}
+unsafe impl<T: TensorScalar> Sync for DivBackward<T> {}
+unsafe impl<T: TensorScalar> Send for PowBackward<T> {}
+unsafe impl<T: TensorScalar> Sync for PowBackward<T> {}
+unsafe impl<T: TensorScalar> Send for SumallBackward<T> {}
+unsafe impl<T: TensorScalar> Sync for SumallBackward<T> {}
+unsafe impl<T: TensorScalar> Send for ReluBackward<T> {}
+unsafe impl<T: TensorScalar> Sync for ReluBackward<T> {}
+unsafe impl<T: TensorScalar> Send for SoftmaxBackward<T> {}
+unsafe impl<T: TensorScalar> Sync for SoftmaxBackward<T> {}
+unsafe impl<T: TensorScalar> Send for MatmulBackward<T> {}
+unsafe impl<T: TensorScalar> Sync for MatmulBackward<T> {}
+unsafe impl<T: TensorScalar> Send for SigmoidBackward<T> {}
+unsafe impl<T: TensorScalar> Sync for SigmoidBackward<T> {}
+unsafe impl<T: TensorScalar> Send for ExpBackward<T> {}
+unsafe impl<T: TensorScalar> Sync for ExpBackward<T> {}
+unsafe impl<T: TensorScalar> Send for LogBackward<T> {}
+unsafe impl<T: TensorScalar> Sync for LogBackward<T> {}
+unsafe impl<T: TensorScalar> Send for SumDimBackward<T> {}
+unsafe impl<T: TensorScalar> Sync for SumDimBackward<T> {}
+unsafe impl<T: TensorScalar> Send for ReshapeBackward<T> {}
+unsafe impl<T: TensorScalar> Sync for ReshapeBackward<T> {}
+unsafe impl<T: TensorScalar> Send for AddScalarBackward<T> {}
+unsafe impl<T: TensorScalar> Sync for AddScalarBackward<T> {}
+unsafe impl<T: TensorScalar> Send for SubScalarBackward<T> {}
+unsafe impl<T: TensorScalar> Sync for SubScalarBackward<T> {}
+unsafe impl<T: TensorScalar> Send for MulScalarBackward<T> {}
+unsafe impl<T: TensorScalar> Sync for MulScalarBackward<T> {}
+unsafe impl<T: TensorScalar> Send for DivScalarBackward<T> {}
+unsafe impl<T: TensorScalar> Sync for DivScalarBackward<T> {}
+unsafe impl<T: TensorScalar> Send for NegBackward<T> {}
+unsafe impl<T: TensorScalar> Sync for NegBackward<T> {}

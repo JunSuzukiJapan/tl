@@ -1581,7 +1581,7 @@ pub fn read_runtime_tensor_to_f32_vec(t: *mut c_void) -> Vec<f32> {
         return Vec::new();
     }
     if is_cpu() {
-        let tensor = unsafe { &*(t as *mut tl_cpu::CpuTensor) };
+        let tensor = unsafe { &*(t as *mut tl_cpu::CpuTensor<f32>) };
         tensor.data_f32().to_vec()
     } else {
         #[cfg(target_os = "macos")]
@@ -1597,7 +1597,7 @@ pub fn read_runtime_tensor_to_f32_vec(t: *mut c_void) -> Vec<f32> {
         }
         #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         {
-            let tensor = unsafe { &*(t as *mut tl_cpu::CpuTensor) };
+            let tensor = unsafe { &*(t as *mut tl_cpu::CpuTensor<f32>) };
             tensor.data_f32().to_vec()
         }
     }
@@ -1610,7 +1610,7 @@ pub fn read_runtime_tensor_to_i64_vec(t: *mut c_void) -> Vec<i64> {
         return Vec::new();
     }
     if is_cpu() {
-        let tensor = unsafe { &*(t as *mut tl_cpu::CpuTensor) };
+        let tensor = unsafe { &*(t as *mut tl_cpu::CpuTensor<f32>) };
         // CPU テンソルは f32 で格納されるため、f32 → i64 変換
         tensor.data_f32().iter().map(|&v| v as i64).collect()
     } else {
@@ -1627,7 +1627,7 @@ pub fn read_runtime_tensor_to_i64_vec(t: *mut c_void) -> Vec<i64> {
         }
         #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         {
-            let tensor = unsafe { &*(t as *mut tl_cpu::CpuTensor) };
+            let tensor = unsafe { &*(t as *mut tl_cpu::CpuTensor<f32>) };
             tensor.data_f32().iter().map(|&v| v as i64).collect()
         }
     }
@@ -1692,7 +1692,7 @@ pub fn release_runtime_tensor(ptr: *mut c_void) {
     }
     if is_cpu() {
         unsafe {
-            let _ = Box::from_raw(ptr as *mut tl_cpu::CpuTensor);
+            let _ = Box::from_raw(ptr as *mut tl_cpu::CpuTensor<f32>);
         }
     } else {
         #[cfg(target_os = "macos")]
@@ -1706,7 +1706,7 @@ pub fn release_runtime_tensor(ptr: *mut c_void) {
         #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         {
             unsafe {
-                let _ = Box::from_raw(ptr as *mut tl_cpu::CpuTensor);
+                let _ = Box::from_raw(ptr as *mut tl_cpu::CpuTensor<f32>);
             }
         }
     }
