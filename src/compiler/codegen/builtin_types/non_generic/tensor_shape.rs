@@ -32,6 +32,7 @@ fn compile_tensor_shape_op<'ctx>(
 }
 
 /// Void を返す shape 操作
+#[allow(dead_code)]
 fn compile_tensor_shape_void<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     obj: BasicValueEnum<'ctx>,

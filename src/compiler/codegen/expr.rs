@@ -7668,9 +7668,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let some_payload_ptr = self.builder.build_struct_gep(enum_ty, some_ptr, 1, "some_payload")
                     .map_err(|e| e.to_string())?;
                 let some_payload_cast = self.builder.build_pointer_cast(some_payload_ptr, ptr_type, "payload_cast").unwrap();
-                let mapped_llvm_ty = self.get_llvm_type(&mapped_ty)?;
                 let store_ptr = self.builder.build_pointer_cast(some_payload_cast,
-                    mapped_llvm_ty.ptr_type(inkwell::AddressSpace::default()), "store_ptr").unwrap();
+                    self.context.ptr_type(inkwell::AddressSpace::default()), "store_ptr").unwrap();
                 self.builder.build_store(store_ptr, mapped_val).unwrap();
 
                 // Register with memory manager

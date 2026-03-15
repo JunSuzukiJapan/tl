@@ -67,16 +67,6 @@ impl<T: TensorScalar> Clone for CpuTensor<T> {
 impl<T: TensorScalar> CpuTensor<T> {
     // ========== コンストラクタ ==========
 
-    fn alloc_from_pool() -> Self {
-        CpuTensor {
-            data: Vec::new(),
-            data_i64: None,
-            shape: Vec::new(),
-            dtype: DType::F32,
-            autograd: None,
-        }
-    }
-
 
 
 
@@ -124,7 +114,6 @@ impl<T: TensorScalar> CpuTensor<T> {
     }
 
     pub fn randn(shape: &[usize], dtype: DType) -> Self {
-        use rand::Rng;
         let count: usize = shape.iter().product();
         let mut rng = rand::thread_rng();
         let data: Vec<T> = (0..count)

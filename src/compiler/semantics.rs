@@ -6584,12 +6584,12 @@ impl SemanticAnalyzer {
                             }
 
                             // Check closure body
-                            let mut last_ty = Type::Void;
+                            let mut _last_ty = Type::Void;
                             let body_len = body.len();
                             for (idx, stmt) in body.iter_mut().enumerate() {
                                 if idx == body_len - 1 {
                                     if let StmtKind::Expr(e) = &mut stmt.inner {
-                                        last_ty = self.check_expr(e)?;
+                                        _last_ty = self.check_expr(e)?;
                                     } else {
                                         self.check_stmt(stmt)?;
                                     }
