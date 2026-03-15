@@ -3,14 +3,15 @@
 use super::GradFn;
 use crate::scalar::TensorScalar;
 use crate::tensor::{CpuTensor, TensorRef};
+use tl_backend::BackendResult;
 
 
 /// ブロードキャスト勾配集約:
 /// grad の shape を target_shape に合わせるため、ブロードキャストで追加された次元に沿って sum する。
-fn reduce_grad_for_broadcast<T: TensorScalar>(grad: &CpuTensor<T>, target_shape: &[usize]) -> CpuTensor<T> {
+fn reduce_grad_for_broadcast<T: TensorScalar>(grad: &CpuTensor<T>, target_shape: &[usize]) -> BackendResult<CpuTensor<T>> {
     let grad_shape = grad.shape();
     if grad_shape == target_shape {
-        return grad.shallow_clone();
+        return Ok(grad.shallow_clone());
     }
     
     let mut result = grad.shallow_clone();
@@ -20,7 +21,7 @@ fn reduce_grad_for_broadcast<T: TensorScalar>(grad: &CpuTensor<T>, target_shape:
     // target_shape が短い場合、先頭の余分な次元を sum で潰す
     if grad_ndim > target_ndim {
         for _ in 0..(grad_ndim - target_ndim) {
-            result = result.sum_impl(0).expect("Autograd sum failed (reduce_grad)"); // dim 0 に沿って sum (keep_dim=false で次元が減る)
+            result = result.sum_impl(0)?; // dim 0 に沿って sum (keep_dim=false で次元が減る)
         }
     }
     
@@ -29,20 +30,20 @@ fn reduce_grad_for_broadcast<T: TensorScalar>(grad: &CpuTensor<T>, target_shape:
     let min_ndim = result_shape.len().min(target_shape.len());
     for d in 0..min_ndim {
         if target_shape[d] == 1 && result_shape[d] > 1 {
-            result = result.sum_impl(d as i32).expect("Autograd sum failed (reduce_grad)");
+            result = result.sum_impl(d as i32)?;
             // sum_impl は keep_dim=false なので、shape を復元
             let mut new_shape = result.shape().to_vec();
             new_shape.insert(d, 1);
-            result = result.reshape_impl(&new_shape).expect("Autograd reshape failed (reduce_grad)");
+            result = result.reshape_impl(&new_shape)?;
         }
     }
     
     // 最終的な shape を target_shape に合わせて reshape
     if result.shape() != target_shape {
-        result = result.reshape_impl(target_shape).expect("Autograd reshape failed (reduce_grad broadcast)");
+        result = result.reshape_impl(target_shape)?;
     }
     
-    result
+    Ok(result)
 }
 
 /// 加算の勾配
@@ -54,10 +55,10 @@ pub struct AddBackward<T: TensorScalar> {
 }
 
 impl<T: TensorScalar> GradFn<T> for AddBackward<T> {
-    fn backward(&self, grad_output: &CpuTensor<T>) -> Vec<CpuTensor<T>> {
-        let grad_a = reduce_grad_for_broadcast(grad_output, &self.a_shape);
-        let grad_b = reduce_grad_for_broadcast(grad_output, &self.b_shape);
-        vec![grad_a, grad_b]
+    fn backward(&self, grad_output: &CpuTensor<T>) -> BackendResult<Vec<CpuTensor<T>>> {
+        let grad_a = reduce_grad_for_broadcast(grad_output, &self.a_shape)?;
+        let grad_b = reduce_grad_for_broadcast(grad_output, &self.b_shape)?;
+        Ok(vec![grad_a, grad_b])
     }
     fn inputs(&self) -> Vec<TensorRef<T>> {
         vec![self.a.clone(), self.b.clone()]
@@ -73,10 +74,10 @@ pub struct SubBackward<T: TensorScalar> {
 }
 
 impl<T: TensorScalar> GradFn<T> for SubBackward<T> {
-    fn backward(&self, grad_output: &CpuTensor<T>) -> Vec<CpuTensor<T>> {
-        let grad_a = reduce_grad_for_broadcast(grad_output, &self.a_shape);
-        let grad_b = reduce_grad_for_broadcast(&grad_output.neg_impl().expect("Autograd neg failed"), &self.b_shape);
-        vec![grad_a, grad_b]
+    fn backward(&self, grad_output: &CpuTensor<T>) -> BackendResult<Vec<CpuTensor<T>>> {
+        let grad_a = reduce_grad_for_broadcast(grad_output, &self.a_shape)?;
+        let grad_b = reduce_grad_for_broadcast(&grad_output.neg_impl()?, &self.b_shape)?;
+        Ok(vec![grad_a, grad_b])
     }
     fn inputs(&self) -> Vec<TensorRef<T>> {
         vec![self.a.clone(), self.b.clone()]
@@ -94,10 +95,10 @@ pub struct MulBackward<T: TensorScalar> {
 }
 
 impl<T: TensorScalar> GradFn<T> for MulBackward<T> {
-    fn backward(&self, grad_output: &CpuTensor<T>) -> Vec<CpuTensor<T>> {
-        let grad_a = reduce_grad_for_broadcast(&grad_output.mul_impl(&self.b_data).expect("Autograd mul failed"), &self.a_shape);
-        let grad_b = reduce_grad_for_broadcast(&grad_output.mul_impl(&self.a_data).expect("Autograd mul failed"), &self.b_shape);
-        vec![grad_a, grad_b]
+    fn backward(&self, grad_output: &CpuTensor<T>) -> BackendResult<Vec<CpuTensor<T>>> {
+        let grad_a = reduce_grad_for_broadcast(&grad_output.mul_impl(&self.b_data)?, &self.a_shape)?;
+        let grad_b = reduce_grad_for_broadcast(&grad_output.mul_impl(&self.a_data)?, &self.b_shape)?;
+        Ok(vec![grad_a, grad_b])
     }
     fn inputs(&self) -> Vec<TensorRef<T>> {
         vec![self.a.clone(), self.b.clone()]
@@ -115,11 +116,11 @@ pub struct DivBackward<T: TensorScalar> {
 }
 
 impl<T: TensorScalar> GradFn<T> for DivBackward<T> {
-    fn backward(&self, grad_output: &CpuTensor<T>) -> Vec<CpuTensor<T>> {
-        let grad_a = reduce_grad_for_broadcast(&grad_output.div_impl(&self.b_data).expect("Autograd div failed"), &self.a_shape);
-        let b_sq = self.b_data.mul_impl(&self.b_data).expect("Autograd mul failed");
-        let grad_b = reduce_grad_for_broadcast(&grad_output.mul_impl(&self.a_data).expect("Autograd mul failed").neg_impl().expect("Autograd neg failed").div_impl(&b_sq).expect("Autograd div failed"), &self.b_shape);
-        vec![grad_a, grad_b]
+    fn backward(&self, grad_output: &CpuTensor<T>) -> BackendResult<Vec<CpuTensor<T>>> {
+        let grad_a = reduce_grad_for_broadcast(&grad_output.div_impl(&self.b_data)?, &self.a_shape)?;
+        let b_sq = self.b_data.mul_impl(&self.b_data)?;
+        let grad_b = reduce_grad_for_broadcast(&grad_output.mul_impl(&self.a_data)?.neg_impl()?.div_impl(&b_sq)?, &self.b_shape)?;
+        Ok(vec![grad_a, grad_b])
     }
     fn inputs(&self) -> Vec<TensorRef<T>> {
         vec![self.a.clone(), self.b.clone()]
@@ -135,11 +136,11 @@ pub struct PowBackward<T: TensorScalar> {
 }
 
 impl<T: TensorScalar> GradFn<T> for PowBackward<T> {
-    fn backward(&self, grad_output: &CpuTensor<T>) -> Vec<CpuTensor<T>> {
+    fn backward(&self, grad_output: &CpuTensor<T>) -> BackendResult<Vec<CpuTensor<T>>> {
         let ones = CpuTensor::<T>::ones(self.b_data.shape(), self.b_data.dtype());
-        let b_minus_1 = self.b_data.sub_impl(&ones).expect("Autograd sub failed");
-        let grad_a = grad_output.mul_impl(&self.b_data).expect("Autograd mul failed").mul_impl(&self.a_data.pow_impl(&b_minus_1).expect("Autograd pow failed")).expect("Autograd mul failed");
-        vec![grad_a]
+        let b_minus_1 = self.b_data.sub_impl(&ones)?;
+        let grad_a = grad_output.mul_impl(&self.b_data)?.mul_impl(&self.a_data.pow_impl(&b_minus_1)?)?;
+        Ok(vec![grad_a])
     }
     fn inputs(&self) -> Vec<TensorRef<T>> {
         vec![self.a.clone()]
@@ -153,11 +154,11 @@ pub struct SumallBackward<T: TensorScalar> {
 }
 
 impl<T: TensorScalar> GradFn<T> for SumallBackward<T> {
-    fn backward(&self, grad_output: &CpuTensor<T>) -> Vec<CpuTensor<T>> {
+    fn backward(&self, grad_output: &CpuTensor<T>) -> BackendResult<Vec<CpuTensor<T>>> {
         let grad_val = grad_output.to_vec_t()[0];
         let count: usize = self.shape.iter().product();
         let grads = vec![grad_val; count];
-        vec![CpuTensor::from_slice(&grads, &self.shape, grad_output.dtype())]
+        Ok(vec![CpuTensor::from_slice(&grads, &self.shape, grad_output.dtype())])
     }
     fn inputs(&self) -> Vec<TensorRef<T>> {
         vec![self.a.clone()]
@@ -171,13 +172,13 @@ pub struct ReluBackward<T: TensorScalar> {
 }
 
 impl<T: TensorScalar> GradFn<T> for ReluBackward<T> {
-    fn backward(&self, grad_output: &CpuTensor<T>) -> Vec<CpuTensor<T>> {
+    fn backward(&self, grad_output: &CpuTensor<T>) -> BackendResult<Vec<CpuTensor<T>>> {
         let data = self.a_data.to_vec_t();
         let grad = grad_output.to_vec_t();
         let result: Vec<T> = data.iter().zip(grad.iter())
             .map(|(a, g)| if *a > T::zero() { *g } else { T::zero() })
             .collect();
-        vec![CpuTensor::from_slice(&result, self.a_data.shape(), self.a_data.dtype())]
+        Ok(vec![CpuTensor::from_slice(&result, self.a_data.shape(), self.a_data.dtype())])
     }
     fn inputs(&self) -> Vec<TensorRef<T>> {
         vec![self.a.clone()]
@@ -192,7 +193,7 @@ pub struct SoftmaxBackward<T: TensorScalar> {
 }
 
 impl<T: TensorScalar> GradFn<T> for SoftmaxBackward<T> {
-    fn backward(&self, grad_output: &CpuTensor<T>) -> Vec<CpuTensor<T>> {
+    fn backward(&self, grad_output: &CpuTensor<T>) -> BackendResult<Vec<CpuTensor<T>>> {
         let s = self.output.to_vec_t();
         let g = grad_output.to_vec_t();
         let shape = self.output.shape();
@@ -213,7 +214,7 @@ impl<T: TensorScalar> GradFn<T> for SoftmaxBackward<T> {
                     result[start + j] = s_row[j] * (g_row[j] - sg_sum);
                 }
             }
-            vec![CpuTensor::from_slice(&result, shape, self.output.dtype())]
+            Ok(vec![CpuTensor::from_slice(&result, shape, self.output.dtype())])
         } else {
             let mut sg_sum = T::zero();
             for (si, gi) in s.iter().zip(g.iter()) {
@@ -222,7 +223,7 @@ impl<T: TensorScalar> GradFn<T> for SoftmaxBackward<T> {
             let result: Vec<T> = s.iter().zip(g.iter())
                 .map(|(si, gi)| *si * (*gi - sg_sum))
                 .collect();
-            vec![CpuTensor::from_slice(&result, shape, self.output.dtype())]
+            Ok(vec![CpuTensor::from_slice(&result, shape, self.output.dtype())])
         }
     }
     fn inputs(&self) -> Vec<TensorRef<T>> {
@@ -239,10 +240,10 @@ pub struct MatmulBackward<T: TensorScalar> {
 }
 
 impl<T: TensorScalar> GradFn<T> for MatmulBackward<T> {
-    fn backward(&self, grad_output: &CpuTensor<T>) -> Vec<CpuTensor<T>> {
-        let grad_a = grad_output.matmul_impl(&self.b_data.transpose_impl(0, 1).expect("Autograd transpose failed")).expect("Autograd matmul failed");
-        let grad_b = self.a_data.transpose_impl(0, 1).expect("Autograd transpose failed").matmul_impl(grad_output).expect("Autograd matmul failed");
-        vec![grad_a, grad_b]
+    fn backward(&self, grad_output: &CpuTensor<T>) -> BackendResult<Vec<CpuTensor<T>>> {
+        let grad_a = grad_output.matmul_impl(&self.b_data.transpose_impl(0, 1)?)?;
+        let grad_b = self.a_data.transpose_impl(0, 1)?.matmul_impl(grad_output)?;
+        Ok(vec![grad_a, grad_b])
     }
     fn inputs(&self) -> Vec<TensorRef<T>> {
         vec![self.a.clone(), self.b.clone()]
@@ -256,11 +257,11 @@ pub struct SigmoidBackward<T: TensorScalar> {
 }
 
 impl<T: TensorScalar> GradFn<T> for SigmoidBackward<T> {
-    fn backward(&self, grad_output: &CpuTensor<T>) -> Vec<CpuTensor<T>> {
+    fn backward(&self, grad_output: &CpuTensor<T>) -> BackendResult<Vec<CpuTensor<T>>> {
         let ones = CpuTensor::<T>::ones(self.output.shape(), self.output.dtype());
-        let one_minus_s = ones.sub_impl(&self.output).expect("Autograd sub failed");
-        let grad = grad_output.mul_impl(&self.output).expect("Autograd mul failed").mul_impl(&one_minus_s).expect("Autograd mul failed");
-        vec![grad]
+        let one_minus_s = ones.sub_impl(&self.output)?;
+        let grad = grad_output.mul_impl(&self.output)?.mul_impl(&one_minus_s)?;
+        Ok(vec![grad])
     }
     fn inputs(&self) -> Vec<TensorRef<T>> {
         vec![self.a.clone()]
@@ -274,8 +275,8 @@ pub struct ExpBackward<T: TensorScalar> {
 }
 
 impl<T: TensorScalar> GradFn<T> for ExpBackward<T> {
-    fn backward(&self, grad_output: &CpuTensor<T>) -> Vec<CpuTensor<T>> {
-        vec![grad_output.mul_impl(&self.output).expect("Autograd mul failed")]
+    fn backward(&self, grad_output: &CpuTensor<T>) -> BackendResult<Vec<CpuTensor<T>>> {
+        Ok(vec![grad_output.mul_impl(&self.output)?])
     }
     fn inputs(&self) -> Vec<TensorRef<T>> {
         vec![self.a.clone()]
@@ -289,8 +290,8 @@ pub struct LogBackward<T: TensorScalar> {
 }
 
 impl<T: TensorScalar> GradFn<T> for LogBackward<T> {
-    fn backward(&self, grad_output: &CpuTensor<T>) -> Vec<CpuTensor<T>> {
-        vec![grad_output.div_impl(&self.a_data).expect("Autograd div failed")]
+    fn backward(&self, grad_output: &CpuTensor<T>) -> BackendResult<Vec<CpuTensor<T>>> {
+        Ok(vec![grad_output.div_impl(&self.a_data)?])
     }
     fn inputs(&self) -> Vec<TensorRef<T>> {
         vec![self.a.clone()]
@@ -305,7 +306,7 @@ pub struct SumDimBackward<T: TensorScalar> {
 }
 
 impl<T: TensorScalar> GradFn<T> for SumDimBackward<T> {
-    fn backward(&self, grad_output: &CpuTensor<T>) -> Vec<CpuTensor<T>> {
+    fn backward(&self, grad_output: &CpuTensor<T>) -> BackendResult<Vec<CpuTensor<T>>> {
         let ndim = self.input_shape.len();
         let axis = if self.axis < 0 {
             (ndim as i32 + self.axis) as usize
@@ -316,7 +317,7 @@ impl<T: TensorScalar> GradFn<T> for SumDimBackward<T> {
             let grad_val = grad_output.to_vec_t().first().copied().unwrap_or(T::zero());
             let numel: usize = self.input_shape.iter().product::<usize>().max(1);
             let result = vec![grad_val; numel];
-            return vec![CpuTensor::from_slice(&result, &self.input_shape, grad_output.dtype())];
+            return Ok(vec![CpuTensor::from_slice(&result, &self.input_shape, grad_output.dtype())]);
         }
         let grad_data = grad_output.to_vec_t();
         let numel: usize = self.input_shape.iter().product();
@@ -333,7 +334,7 @@ impl<T: TensorScalar> GradFn<T> for SumDimBackward<T> {
                 }
             }
         }
-        vec![CpuTensor::from_slice(&result, &self.input_shape, grad_output.dtype())]
+        Ok(vec![CpuTensor::from_slice(&result, &self.input_shape, grad_output.dtype())])
     }
     fn inputs(&self) -> Vec<TensorRef<T>> {
         vec![self.a.clone()]
@@ -347,8 +348,8 @@ pub struct ReshapeBackward<T: TensorScalar> {
 }
 
 impl<T: TensorScalar> GradFn<T> for ReshapeBackward<T> {
-    fn backward(&self, grad_output: &CpuTensor<T>) -> Vec<CpuTensor<T>> {
-        vec![grad_output.reshape_impl(&self.input_shape).expect("Autograd reshape failed")]
+    fn backward(&self, grad_output: &CpuTensor<T>) -> BackendResult<Vec<CpuTensor<T>>> {
+        Ok(vec![grad_output.reshape_impl(&self.input_shape)?])
     }
     fn inputs(&self) -> Vec<TensorRef<T>> {
         vec![self.input.clone()]
@@ -361,8 +362,8 @@ pub struct AddScalarBackward<T: TensorScalar> {
 }
 
 impl<T: TensorScalar> GradFn<T> for AddScalarBackward<T> {
-    fn backward(&self, grad_output: &CpuTensor<T>) -> Vec<CpuTensor<T>> {
-        vec![grad_output.shallow_clone()]
+    fn backward(&self, grad_output: &CpuTensor<T>) -> BackendResult<Vec<CpuTensor<T>>> {
+        Ok(vec![grad_output.shallow_clone()])
     }
     fn inputs(&self) -> Vec<TensorRef<T>> {
         vec![self.a.clone()]
@@ -375,8 +376,8 @@ pub struct SubScalarBackward<T: TensorScalar> {
 }
 
 impl<T: TensorScalar> GradFn<T> for SubScalarBackward<T> {
-    fn backward(&self, grad_output: &CpuTensor<T>) -> Vec<CpuTensor<T>> {
-        vec![grad_output.shallow_clone()]
+    fn backward(&self, grad_output: &CpuTensor<T>) -> BackendResult<Vec<CpuTensor<T>>> {
+        Ok(vec![grad_output.shallow_clone()])
     }
     fn inputs(&self) -> Vec<TensorRef<T>> {
         vec![self.a.clone()]
@@ -390,8 +391,8 @@ pub struct MulScalarBackward<T: TensorScalar> {
 }
 
 impl<T: TensorScalar> GradFn<T> for MulScalarBackward<T> {
-    fn backward(&self, grad_output: &CpuTensor<T>) -> Vec<CpuTensor<T>> {
-        vec![grad_output.mul_scalar_impl(self.s).expect("Autograd mul_scalar failed")]
+    fn backward(&self, grad_output: &CpuTensor<T>) -> BackendResult<Vec<CpuTensor<T>>> {
+        Ok(vec![grad_output.mul_scalar_impl(self.s)?])
     }
     fn inputs(&self) -> Vec<TensorRef<T>> {
         vec![self.a.clone()]
@@ -405,8 +406,8 @@ pub struct DivScalarBackward<T: TensorScalar> {
 }
 
 impl<T: TensorScalar> GradFn<T> for DivScalarBackward<T> {
-    fn backward(&self, grad_output: &CpuTensor<T>) -> Vec<CpuTensor<T>> {
-        vec![grad_output.div_scalar_impl(self.s).expect("Autograd div_scalar failed")]
+    fn backward(&self, grad_output: &CpuTensor<T>) -> BackendResult<Vec<CpuTensor<T>>> {
+        Ok(vec![grad_output.div_scalar_impl(self.s)?])
     }
     fn inputs(&self) -> Vec<TensorRef<T>> {
         vec![self.a.clone()]
@@ -419,8 +420,8 @@ pub struct NegBackward<T: TensorScalar> {
 }
 
 impl<T: TensorScalar> GradFn<T> for NegBackward<T> {
-    fn backward(&self, grad_output: &CpuTensor<T>) -> Vec<CpuTensor<T>> {
-        vec![grad_output.neg_impl().expect("Autograd neg failed")]
+    fn backward(&self, grad_output: &CpuTensor<T>) -> BackendResult<Vec<CpuTensor<T>>> {
+        Ok(vec![grad_output.neg_impl()?])
     }
     fn inputs(&self) -> Vec<TensorRef<T>> {
         vec![self.a.clone()]

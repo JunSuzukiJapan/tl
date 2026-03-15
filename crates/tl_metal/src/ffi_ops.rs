@@ -508,10 +508,20 @@ pub fn tl_metal_batch_norm(
     let b = if bias.is_null() { None } else { unsafe { Some(&*bias) } };
     
     // Default values if None
-    let w_default_res = if w.is_none() { Some(MetalTensor::ones(x.shape(), DType::F32).expect("ones failed")) } else { None };
+    let w_default_res = if w.is_none() {
+        match MetalTensor::ones(x.shape(), DType::F32) {
+            Ok(t) => Some(t),
+            Err(e) => { eprintln!("batch_norm: ones for weight failed: {}", e); return std::ptr::null_mut(); }
+        }
+    } else { None };
     let b_default_res = if b.is_none() { Some(MetalTensor::zeros(x.shape(), DType::F32)) } else { None };
     let mean_default_res = if mean.is_none() { Some(MetalTensor::zeros(x.shape(), DType::F32)) } else { None };
-    let var_default_res = if var.is_none() { Some(MetalTensor::ones(x.shape(), DType::F32).expect("ones failed")) } else { None };
+    let var_default_res = if var.is_none() {
+        match MetalTensor::ones(x.shape(), DType::F32) {
+            Ok(t) => Some(t),
+            Err(e) => { eprintln!("batch_norm: ones for var failed: {}", e); return std::ptr::null_mut(); }
+        }
+    } else { None };
 
     // MetalTensor::zeros/ones return Self (as per inherent definition).
     let w_ref = w.or(w_default_res.as_ref()).unwrap();
@@ -562,7 +572,12 @@ pub fn tl_metal_layer_norm(
     let w = if weight.is_null() { None } else { unsafe { Some(&*weight) } };
     let b = if bias.is_null() { None } else { unsafe { Some(&*bias) } };
     
-    let w_default = if w.is_none() { Some(MetalTensor::ones(x.shape(), DType::F32).expect("ones failed")) } else { None };
+    let w_default = if w.is_none() {
+        match MetalTensor::ones(x.shape(), DType::F32) {
+            Ok(t) => Some(t),
+            Err(e) => { eprintln!("layer_norm: ones for weight failed: {}", e); return std::ptr::null_mut(); }
+        }
+    } else { None };
     let b_default = if b.is_none() { Some(MetalTensor::zeros(x.shape(), DType::F32)) } else { None };
 
     let w_ref = w.or(w_default.as_ref()).unwrap();

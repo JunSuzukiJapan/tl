@@ -389,14 +389,24 @@ impl<T: TensorScalar> CpuTensor<T> {
                     })
                 });
 
-                if let Some((grads, inputs)) = propagation {
+                if let Some((grads_result, inputs)) = propagation {
+                    let grads = match grads_result {
+                        Ok(g) => g,
+                        Err(e) => {
+                            eprintln!("Autograd backward error: {}", e);
+                            continue;
+                        }
+                    };
                     for (input_ref, grad) in inputs.into_iter().zip(grads.into_iter()) {
                         // TensorRef (Arc<UnsafeCell<CpuTensor>>) から可変参照を取得
                         let input = unsafe { &mut *input_ref.get() };
                         if input.requires_grad() {
                             if let Some(ref mut meta) = input.autograd {
                                 if let Some(ref mut existing) = meta.grad {
-                                    *existing = existing.add_impl(&grad).expect("Autograd accumulation failed");
+                                    match existing.add_impl(&grad) {
+                                        Ok(sum) => *existing = sum,
+                                        Err(e) => eprintln!("Autograd accumulation error: {}", e),
+                                    }
                                 } else {
                                     meta.grad = Some(grad);
                                 }

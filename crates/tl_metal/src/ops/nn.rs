@@ -308,56 +308,63 @@ kernel void dropout_f32(
 
 // ========== パイプラインキャッシュ ==========
 
-static CONV2D_PIPELINE: std::sync::OnceLock<ComputePipelineState> = std::sync::OnceLock::new();
-static BATCH_NORM_PIPELINE: std::sync::OnceLock<ComputePipelineState> = std::sync::OnceLock::new();
-static MAX_POOL2D_PIPELINE: std::sync::OnceLock<ComputePipelineState> = std::sync::OnceLock::new();
-static AVG_POOL2D_PIPELINE: std::sync::OnceLock<ComputePipelineState> = std::sync::OnceLock::new();
-static LN_STATS_PIPELINE: std::sync::OnceLock<ComputePipelineState> = std::sync::OnceLock::new();
-static LN_NORM_PIPELINE: std::sync::OnceLock<ComputePipelineState> = std::sync::OnceLock::new();
-static DROPOUT_PIPELINE: std::sync::OnceLock<ComputePipelineState> = std::sync::OnceLock::new();
+static CONV2D_PIPELINE: std::sync::OnceLock<Result<ComputePipelineState, String>> = std::sync::OnceLock::new();
+static BATCH_NORM_PIPELINE: std::sync::OnceLock<Result<ComputePipelineState, String>> = std::sync::OnceLock::new();
+static MAX_POOL2D_PIPELINE: std::sync::OnceLock<Result<ComputePipelineState, String>> = std::sync::OnceLock::new();
+static AVG_POOL2D_PIPELINE: std::sync::OnceLock<Result<ComputePipelineState, String>> = std::sync::OnceLock::new();
+static LN_STATS_PIPELINE: std::sync::OnceLock<Result<ComputePipelineState, String>> = std::sync::OnceLock::new();
+static LN_NORM_PIPELINE: std::sync::OnceLock<Result<ComputePipelineState, String>> = std::sync::OnceLock::new();
+static DROPOUT_PIPELINE: std::sync::OnceLock<Result<ComputePipelineState, String>> = std::sync::OnceLock::new();
 
-fn compile_pipeline(shader_source: &str, function_name: &str) -> ComputePipelineState {
+fn compile_pipeline(shader_source: &str, function_name: &str) -> Result<ComputePipelineState, String> {
     let device = get_device();
     let options = metal::CompileOptions::new();
     let library = device
         .device()
         .new_library_with_source(shader_source, &options)
-        .unwrap_or_else(|e| panic!("Failed to compile {} shader: {}", function_name, e));
+        .map_err(|e| format!("Failed to compile {} shader: {}", function_name, e))?;
     let function = library
         .get_function(function_name, None)
-        .unwrap_or_else(|e| panic!("{} not found: {}", function_name, e));
+        .map_err(|e| format!("{} not found: {}", function_name, e))?;
     device
         .device()
         .new_compute_pipeline_state_with_function(&function)
-        .unwrap_or_else(|e| panic!("Failed to create {} pipeline: {}", function_name, e))
+        .map_err(|e| format!("Failed to create {} pipeline: {}", function_name, e))
 }
 
-fn get_conv2d_pipeline() -> &'static ComputePipelineState {
+fn get_conv2d_pipeline() -> BackendResult<&'static ComputePipelineState> {
     CONV2D_PIPELINE.get_or_init(|| compile_pipeline(CONV2D_SHADER, "conv2d_f32"))
+        .as_ref().map_err(|e| BackendError::DeviceError(e.clone()))
 }
 
-fn get_batch_norm_pipeline() -> &'static ComputePipelineState {
+fn get_batch_norm_pipeline() -> BackendResult<&'static ComputePipelineState> {
     BATCH_NORM_PIPELINE.get_or_init(|| compile_pipeline(BATCH_NORM_SHADER, "batch_norm_f32"))
+        .as_ref().map_err(|e| BackendError::DeviceError(e.clone()))
 }
 
-fn get_max_pool2d_pipeline() -> &'static ComputePipelineState {
+fn get_max_pool2d_pipeline() -> BackendResult<&'static ComputePipelineState> {
     MAX_POOL2D_PIPELINE.get_or_init(|| compile_pipeline(MAX_POOL2D_SHADER, "max_pool2d_f32"))
+        .as_ref().map_err(|e| BackendError::DeviceError(e.clone()))
 }
 
-fn get_avg_pool2d_pipeline() -> &'static ComputePipelineState {
+fn get_avg_pool2d_pipeline() -> BackendResult<&'static ComputePipelineState> {
     AVG_POOL2D_PIPELINE.get_or_init(|| compile_pipeline(AVG_POOL2D_SHADER, "avg_pool2d_f32"))
+        .as_ref().map_err(|e| BackendError::DeviceError(e.clone()))
 }
 
-fn get_ln_stats_pipeline() -> &'static ComputePipelineState {
+fn get_ln_stats_pipeline() -> BackendResult<&'static ComputePipelineState> {
     LN_STATS_PIPELINE.get_or_init(|| compile_pipeline(LAYER_NORM_SHADER, "layer_norm_stats_f32"))
+        .as_ref().map_err(|e| BackendError::DeviceError(e.clone()))
 }
 
-fn get_ln_norm_pipeline() -> &'static ComputePipelineState {
+fn get_ln_norm_pipeline() -> BackendResult<&'static ComputePipelineState> {
     LN_NORM_PIPELINE.get_or_init(|| compile_pipeline(LAYER_NORM_SHADER, "layer_norm_normalize_f32"))
+        .as_ref().map_err(|e| BackendError::DeviceError(e.clone()))
 }
 
-fn get_dropout_pipeline() -> &'static ComputePipelineState {
+fn get_dropout_pipeline() -> BackendResult<&'static ComputePipelineState> {
     DROPOUT_PIPELINE.get_or_init(|| compile_pipeline(DROPOUT_SHADER, "dropout_f32"))
+        .as_ref().map_err(|e| BackendError::DeviceError(e.clone()))
 }
 
 // ========== ヘルパー ==========
@@ -416,7 +423,7 @@ impl MetalTensor {
         let w_out = (w_in + 2 * pad_w - kw) / stride_w + 1;
         
         let result = MetalTensor::uninit(&[n, c_out, h_out, w_out], DType::F32);
-        let pipeline = get_conv2d_pipeline();
+        let pipeline = get_conv2d_pipeline()?;
         
         let bufs = [
             make_u32_buf(n as u32), make_u32_buf(c_in as u32),
@@ -476,7 +483,7 @@ impl MetalTensor {
         let spatial = h * w;
         
         let result = MetalTensor::uninit(&[n, c, h, w], DType::F32);
-        let pipeline = get_batch_norm_pipeline();
+        let pipeline = get_batch_norm_pipeline()?;
         
         let n_buf = make_u32_buf(n as u32);
         let c_buf = make_u32_buf(c as u32);
@@ -555,7 +562,7 @@ impl MetalTensor {
         let rest_buf_ptr = &rest_buf as *const metal::Buffer;
         
         // パス1: mean, var を計算
-        let p1 = get_ln_stats_pipeline();
+        let p1 = get_ln_stats_pipeline()?;
         crate::command_stream::stream_encode(|encoder| {
             encoder.set_compute_pipeline_state(p1);
             unsafe {
@@ -575,7 +582,7 @@ impl MetalTensor {
         });
         
         // パス2: 正規化
-        let p2 = get_ln_norm_pipeline();
+        let p2 = get_ln_norm_pipeline()?;
         let gamma_buf = gamma.buffer() as *const metal::Buffer;
         let beta_buf = beta.buffer() as *const metal::Buffer;
         let gamma_len_buf_ptr = &gamma_len_buf as *const metal::Buffer;
@@ -627,7 +634,7 @@ impl MetalTensor {
         let w_out = (w_in - kw) / stride_w + 1;
         
         let result = MetalTensor::uninit(&[n, c, h_out, w_out], DType::F32);
-        let pipeline = get_max_pool2d_pipeline();
+        let pipeline = get_max_pool2d_pipeline()?;
         
         let bufs = [
             make_u32_buf(n as u32), make_u32_buf(c as u32),
@@ -683,7 +690,7 @@ impl MetalTensor {
         let w_out = (w_in - kw) / stride_w + 1;
         
         let result = MetalTensor::uninit(&[n, c, h_out, w_out], DType::F32);
-        let pipeline = get_avg_pool2d_pipeline();
+        let pipeline = get_avg_pool2d_pipeline()?;
         
         let bufs = [
             make_u32_buf(n as u32), make_u32_buf(c as u32),
@@ -729,7 +736,7 @@ impl MetalTensor {
         let scale = 1.0 / (1.0 - p);
         
         let result = MetalTensor::uninit(MetalTensor::shape(self), DType::F32);
-        let pipeline = get_dropout_pipeline();
+        let pipeline = get_dropout_pipeline()?;
         
         // ランダムシード生成（CPU 側で軽量に）
         let seed: u32 = {

@@ -119,42 +119,47 @@ kernel void causal_mask_f32(
 "#;
 
 // パイプラインキャッシュ
-static RMS_MEAN_SQ_PIPELINE: std::sync::OnceLock<ComputePipelineState> = std::sync::OnceLock::new();
-static RMS_NORMALIZE_PIPELINE: std::sync::OnceLock<ComputePipelineState> = std::sync::OnceLock::new();
-static ROPE_COS_SIN_PIPELINE: std::sync::OnceLock<ComputePipelineState> = std::sync::OnceLock::new();
-static APPLY_ROPE_PIPELINE: std::sync::OnceLock<ComputePipelineState> = std::sync::OnceLock::new();
-static CAUSAL_MASK_PIPELINE: std::sync::OnceLock<ComputePipelineState> = std::sync::OnceLock::new();
+static RMS_MEAN_SQ_PIPELINE: std::sync::OnceLock<Result<ComputePipelineState, String>> = std::sync::OnceLock::new();
+static RMS_NORMALIZE_PIPELINE: std::sync::OnceLock<Result<ComputePipelineState, String>> = std::sync::OnceLock::new();
+static ROPE_COS_SIN_PIPELINE: std::sync::OnceLock<Result<ComputePipelineState, String>> = std::sync::OnceLock::new();
+static APPLY_ROPE_PIPELINE: std::sync::OnceLock<Result<ComputePipelineState, String>> = std::sync::OnceLock::new();
+static CAUSAL_MASK_PIPELINE: std::sync::OnceLock<Result<ComputePipelineState, String>> = std::sync::OnceLock::new();
 
-fn compile_llm_pipeline(function_name: &str) -> ComputePipelineState {
+fn compile_llm_pipeline(function_name: &str) -> Result<ComputePipelineState, String> {
     let device = get_device();
     let options = metal::CompileOptions::new();
     let library = device
         .device()
         .new_library_with_source(LLM_SHADER, &options)
-        .unwrap_or_else(|e| panic!("Failed to compile LLM shader: {}", e));
+        .map_err(|e| format!("Failed to compile LLM shader: {}", e))?;
     let function = library
         .get_function(function_name, None)
-        .unwrap_or_else(|e| panic!("{} not found: {}", function_name, e));
+        .map_err(|e| format!("{} not found: {}", function_name, e))?;
     device
         .device()
         .new_compute_pipeline_state_with_function(&function)
-        .unwrap_or_else(|e| panic!("Failed to create {} pipeline: {}", function_name, e))
+        .map_err(|e| format!("Failed to create {} pipeline: {}", function_name, e))
 }
 
-fn get_rms_mean_sq_pipeline() -> &'static ComputePipelineState {
+fn get_rms_mean_sq_pipeline() -> BackendResult<&'static ComputePipelineState> {
     RMS_MEAN_SQ_PIPELINE.get_or_init(|| compile_llm_pipeline("rms_norm_mean_sq_f32"))
+        .as_ref().map_err(|e| BackendError::DeviceError(e.clone()))
 }
-fn get_rms_normalize_pipeline() -> &'static ComputePipelineState {
+fn get_rms_normalize_pipeline() -> BackendResult<&'static ComputePipelineState> {
     RMS_NORMALIZE_PIPELINE.get_or_init(|| compile_llm_pipeline("rms_norm_normalize_f32"))
+        .as_ref().map_err(|e| BackendError::DeviceError(e.clone()))
 }
-fn get_rope_cos_sin_pipeline() -> &'static ComputePipelineState {
+fn get_rope_cos_sin_pipeline() -> BackendResult<&'static ComputePipelineState> {
     ROPE_COS_SIN_PIPELINE.get_or_init(|| compile_llm_pipeline("rope_cos_sin_f32"))
+        .as_ref().map_err(|e| BackendError::DeviceError(e.clone()))
 }
-fn get_apply_rope_pipeline() -> &'static ComputePipelineState {
+fn get_apply_rope_pipeline() -> BackendResult<&'static ComputePipelineState> {
     APPLY_ROPE_PIPELINE.get_or_init(|| compile_llm_pipeline("apply_rope_f32"))
+        .as_ref().map_err(|e| BackendError::DeviceError(e.clone()))
 }
-fn get_causal_mask_pipeline() -> &'static ComputePipelineState {
+fn get_causal_mask_pipeline() -> BackendResult<&'static ComputePipelineState> {
     CAUSAL_MASK_PIPELINE.get_or_init(|| compile_llm_pipeline("causal_mask_f32"))
+        .as_ref().map_err(|e| BackendError::DeviceError(e.clone()))
 }
 
 fn make_u32_buf(v: u32) -> metal::Buffer {
@@ -202,7 +207,7 @@ impl MetalTensor {
         let eps_buf_ptr = &eps_buf as *const metal::Buffer;
 
         // Pass 1: mean(x²)
-        let p1 = get_rms_mean_sq_pipeline();
+        let p1 = get_rms_mean_sq_pipeline()?;
         crate::command_stream::stream_encode(|enc| {
             enc.set_compute_pipeline_state(p1);
             unsafe {
@@ -220,7 +225,7 @@ impl MetalTensor {
         
         // Pass 2: normalize (前のPassの出力を入力として使うが、CommandStream内の
         // エンコーダ間バリアが㍣3ータ一貫性を保証)
-        let p2 = get_rms_normalize_pipeline();
+        let p2 = get_rms_normalize_pipeline()?;
         crate::command_stream::stream_encode(|enc| {
             enc.set_compute_pipeline_state(p2);
             unsafe {
@@ -250,7 +255,7 @@ impl MetalTensor {
         let cos_tensor = MetalTensor::uninit(&[seq_len, half_dim], DType::F32);
         let sin_tensor = MetalTensor::uninit(&[seq_len, half_dim], DType::F32);
         
-        let pipeline = get_rope_cos_sin_pipeline();
+        let pipeline = get_rope_cos_sin_pipeline()?;
         
         let half_dim_buf = make_u32_buf(half_dim as u32);
         let base_buf = make_f32_buf(base);
@@ -311,7 +316,7 @@ impl MetalTensor {
         let total_outer = seq_len * n_heads;
         
         let result = MetalTensor::uninit(shape, DType::F32);
-        let pipeline = get_apply_rope_pipeline();
+        let pipeline = get_apply_rope_pipeline()?;
         
         let half_dim_buf = make_u32_buf(half_dim as u32);
         let head_dim_buf = make_u32_buf(head_dim as u32);
@@ -355,7 +360,7 @@ impl MetalTensor {
     /// CausalMask 生成 — Metal GPU 実装
     pub fn causal_mask_impl(n: usize) -> BackendResult<MetalTensor> {
         let result = MetalTensor::uninit(&[n, n], DType::F32);
-        let pipeline = get_causal_mask_pipeline();
+        let pipeline = get_causal_mask_pipeline()?;
         
         let n_buf = make_u32_buf(n as u32);
         

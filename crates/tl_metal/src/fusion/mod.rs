@@ -13,6 +13,7 @@ use crate::shaders::compute_thread_groups;
 use codegen::{MslCodeGen, CodeGenNode};
 use cache::get_cache;
 use tl_backend::fusion::ElementWiseOp;
+use tl_backend::{BackendResult, BackendError};
 use std::sync::Arc;
 
 // ============================================================
@@ -272,12 +273,12 @@ impl LazyTensor {
     /// 2. キャッシュにあればそのパイプラインを使用
     /// 3. なければ MSL を生成 → コンパイル → キャッシュ
     /// 4. 融合カーネルを実行
-    pub fn materialize(&self) -> MetalTensor {
+    pub fn materialize(&self) -> BackendResult<MetalTensor> {
         let graph = self.graph.lock().unwrap();
 
         // 単一リーフの場合はそのまま返す
         if let NodeKind::Leaf(ref tensor) = graph.nodes[self.node_id].kind {
-            return tensor.as_ref().clone();
+            return Ok(tensor.as_ref().clone());
         }
 
         let cache_key = graph.cache_key(self.node_id);
@@ -303,13 +304,13 @@ impl LazyTensor {
             let options = metal::CompileOptions::new();
             let library = device.device()
                 .new_library_with_source(&msl_source, &options)
-                .expect(&format!("Failed to compile fused kernel:\n{}", msl_source));
+                .map_err(|e| BackendError::DeviceError(format!("Failed to compile fused kernel: {}", e)))?;
             let function = library
                 .get_function(&kernel_name, None)
-                .expect("Failed to get fused kernel function");
+                .map_err(|e| BackendError::DeviceError(format!("Failed to get fused kernel function: {}", e)))?;
             let pipeline = device.device()
                 .new_compute_pipeline_state_with_function(&function)
-                .expect("Failed to create fused pipeline");
+                .map_err(|e| BackendError::DeviceError(format!("Failed to create fused pipeline: {}", e)))?;
 
             cache.insert(cache_key.clone(), pipeline);
             cache.get(&cache_key).unwrap() as *const metal::ComputePipelineState
@@ -344,6 +345,6 @@ impl LazyTensor {
             encoder.dispatch_thread_groups(grid, tpg);
         });
 
-        output
+        Ok(output)
     }
 }

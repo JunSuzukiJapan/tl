@@ -73,34 +73,37 @@ kernel void slice_f32(
 }
 "#;
 
-static TRANSPOSE_PIPELINE: std::sync::OnceLock<ComputePipelineState> = std::sync::OnceLock::new();
-static BROADCAST_PIPELINE: std::sync::OnceLock<ComputePipelineState> = std::sync::OnceLock::new();
-static SLICE_PIPELINE: std::sync::OnceLock<ComputePipelineState> = std::sync::OnceLock::new();
+static TRANSPOSE_PIPELINE: std::sync::OnceLock<Result<ComputePipelineState, String>> = std::sync::OnceLock::new();
+static BROADCAST_PIPELINE: std::sync::OnceLock<Result<ComputePipelineState, String>> = std::sync::OnceLock::new();
+static SLICE_PIPELINE: std::sync::OnceLock<Result<ComputePipelineState, String>> = std::sync::OnceLock::new();
 
-fn compile_shape_pipeline(function_name: &str) -> ComputePipelineState {
+fn compile_shape_pipeline(function_name: &str) -> Result<ComputePipelineState, String> {
     let device = get_device();
     let options = metal::CompileOptions::new();
     let library = device
         .device()
         .new_library_with_source(SHAPE_OPS_SHADER, &options)
-        .unwrap_or_else(|e| panic!("Failed to compile shape shader: {}", e));
+        .map_err(|e| format!("Failed to compile shape shader: {}", e))?;
     let function = library
         .get_function(function_name, None)
-        .unwrap_or_else(|e| panic!("{} not found: {}", function_name, e));
+        .map_err(|e| format!("{} not found: {}", function_name, e))?;
     device
         .device()
         .new_compute_pipeline_state_with_function(&function)
-        .unwrap_or_else(|e| panic!("Failed to create {} pipeline: {}", function_name, e))
+        .map_err(|e| format!("Failed to create {} pipeline: {}", function_name, e))
 }
 
-fn get_transpose_pipeline() -> &'static ComputePipelineState {
+fn get_transpose_pipeline() -> BackendResult<&'static ComputePipelineState> {
     TRANSPOSE_PIPELINE.get_or_init(|| compile_shape_pipeline("transpose_2d_f32"))
+        .as_ref().map_err(|e| BackendError::DeviceError(e.clone()))
 }
-fn get_broadcast_pipeline() -> &'static ComputePipelineState {
+fn get_broadcast_pipeline() -> BackendResult<&'static ComputePipelineState> {
     BROADCAST_PIPELINE.get_or_init(|| compile_shape_pipeline("broadcast_f32"))
+        .as_ref().map_err(|e| BackendError::DeviceError(e.clone()))
 }
-fn get_slice_pipeline() -> &'static ComputePipelineState {
+fn get_slice_pipeline() -> BackendResult<&'static ComputePipelineState> {
     SLICE_PIPELINE.get_or_init(|| compile_shape_pipeline("slice_f32"))
+        .as_ref().map_err(|e| BackendError::DeviceError(e.clone()))
 }
 
 /// u32 パラメータバッファを作成
@@ -194,7 +197,7 @@ impl MetalTensor {
             let new_shape = vec![cols, rows];
 
             let result = MetalTensor::uninit(&new_shape, MetalTensor::dtype(self));
-            let pipeline = get_transpose_pipeline();
+            let pipeline = get_transpose_pipeline()?;
 
             let rows_buf = make_u32_buf(rows as u32);
             let cols_buf = make_u32_buf(cols as u32);
@@ -307,7 +310,7 @@ impl MetalTensor {
 
         let dst_size: usize = shape.iter().product();
         let result = MetalTensor::uninit(shape, MetalTensor::dtype(self));
-        let pipeline = get_broadcast_pipeline();
+        let pipeline = get_broadcast_pipeline()?;
 
         let ndim_buf = make_u32_buf(dst_ndim as u32);
         let dst_size_buf = make_u32_buf(dst_size as u32);
@@ -370,7 +373,7 @@ impl MetalTensor {
         let inner_size: usize = if axis + 1 < shape.len() { shape[axis+1..].iter().product() } else { 1 };
 
         let result = MetalTensor::uninit(&new_shape, MetalTensor::dtype(self));
-        let pipeline = get_slice_pipeline();
+        let pipeline = get_slice_pipeline()?;
 
         let outer_buf = make_u32_buf(outer_size as u32);
         let src_axis_buf = make_u32_buf(src_axis_size as u32);

@@ -108,42 +108,47 @@ kernel void index_select_f32(
 "#;
 
 // パイプラインキャッシュ
-static WHERE_PIPELINE: std::sync::OnceLock<ComputePipelineState> = std::sync::OnceLock::new();
-static TRIL_PIPELINE: std::sync::OnceLock<ComputePipelineState> = std::sync::OnceLock::new();
-static CE_PIPELINE: std::sync::OnceLock<ComputePipelineState> = std::sync::OnceLock::new();
-static REPEAT_PIPELINE: std::sync::OnceLock<ComputePipelineState> = std::sync::OnceLock::new();
-static INDEX_SEL_PIPELINE: std::sync::OnceLock<ComputePipelineState> = std::sync::OnceLock::new();
+static WHERE_PIPELINE: std::sync::OnceLock<Result<ComputePipelineState, String>> = std::sync::OnceLock::new();
+static TRIL_PIPELINE: std::sync::OnceLock<Result<ComputePipelineState, String>> = std::sync::OnceLock::new();
+static CE_PIPELINE: std::sync::OnceLock<Result<ComputePipelineState, String>> = std::sync::OnceLock::new();
+static REPEAT_PIPELINE: std::sync::OnceLock<Result<ComputePipelineState, String>> = std::sync::OnceLock::new();
+static INDEX_SEL_PIPELINE: std::sync::OnceLock<Result<ComputePipelineState, String>> = std::sync::OnceLock::new();
 
-fn compile_special_pipeline(function_name: &str) -> ComputePipelineState {
+fn compile_special_pipeline(function_name: &str) -> Result<ComputePipelineState, String> {
     let device = get_device();
     let options = metal::CompileOptions::new();
     let library = device
         .device()
         .new_library_with_source(SPECIAL_SHADER, &options)
-        .unwrap_or_else(|e| panic!("Failed to compile special shader: {}", e));
+        .map_err(|e| format!("Failed to compile special shader: {}", e))?;
     let function = library
         .get_function(function_name, None)
-        .unwrap_or_else(|e| panic!("{} not found: {}", function_name, e));
+        .map_err(|e| format!("{} not found: {}", function_name, e))?;
     device
         .device()
         .new_compute_pipeline_state_with_function(&function)
-        .unwrap_or_else(|e| panic!("Failed to create {} pipeline: {}", function_name, e))
+        .map_err(|e| format!("Failed to create {} pipeline: {}", function_name, e))
 }
 
-fn get_where_pipeline() -> &'static ComputePipelineState {
+fn get_where_pipeline() -> BackendResult<&'static ComputePipelineState> {
     WHERE_PIPELINE.get_or_init(|| compile_special_pipeline("where_f32"))
+        .as_ref().map_err(|e| BackendError::DeviceError(e.clone()))
 }
-fn get_tril_pipeline() -> &'static ComputePipelineState {
+fn get_tril_pipeline() -> BackendResult<&'static ComputePipelineState> {
     TRIL_PIPELINE.get_or_init(|| compile_special_pipeline("tril_f32"))
+        .as_ref().map_err(|e| BackendError::DeviceError(e.clone()))
 }
-fn get_ce_pipeline() -> &'static ComputePipelineState {
+fn get_ce_pipeline() -> BackendResult<&'static ComputePipelineState> {
     CE_PIPELINE.get_or_init(|| compile_special_pipeline("cross_entropy_elementwise_f32"))
+        .as_ref().map_err(|e| BackendError::DeviceError(e.clone()))
 }
-fn get_repeat_pipeline() -> &'static ComputePipelineState {
+fn get_repeat_pipeline() -> BackendResult<&'static ComputePipelineState> {
     REPEAT_PIPELINE.get_or_init(|| compile_special_pipeline("repeat_interleave_f32"))
+        .as_ref().map_err(|e| BackendError::DeviceError(e.clone()))
 }
-fn get_index_sel_pipeline() -> &'static ComputePipelineState {
+fn get_index_sel_pipeline() -> BackendResult<&'static ComputePipelineState> {
     INDEX_SEL_PIPELINE.get_or_init(|| compile_special_pipeline("index_select_f32"))
+        .as_ref().map_err(|e| BackendError::DeviceError(e.clone()))
 }
 
 /// u32 パラメータバッファ
@@ -178,7 +183,7 @@ impl MetalTensor {
         }
 
         let result = MetalTensor::uninit(MetalTensor::shape(x), MetalTensor::dtype(x));
-        let pipeline = get_where_pipeline();
+        let pipeline = get_where_pipeline()?;
 
         let cond_buf = condition.buffer() as *const metal::Buffer;
         let x_buf = x.buffer() as *const metal::Buffer;
@@ -215,7 +220,7 @@ impl MetalTensor {
         let batch_size: usize = shape[..shape.len() - 2].iter().product::<usize>().max(1);
         
         let result = MetalTensor::uninit(shape, MetalTensor::dtype(self));
-        let pipeline = get_tril_pipeline();
+        let pipeline = get_tril_pipeline()?;
 
         let rows_buf = make_u32_buf(rows as u32);
         let cols_buf = make_u32_buf(cols as u32);
@@ -260,7 +265,7 @@ impl MetalTensor {
 
         let count = self.elem_count();
         let temp = MetalTensor::uninit(MetalTensor::shape(self), DType::F32);
-        let pipeline = get_ce_pipeline();
+        let pipeline = get_ce_pipeline()?;
 
         // Step 1: element-wise -t * log(p + eps)
         let self_buf = self.buffer() as *const metal::Buffer;
@@ -302,7 +307,7 @@ impl MetalTensor {
         new_shape[axis] *= repeats;
         
         let result = MetalTensor::uninit(&new_shape, MetalTensor::dtype(self));
-        let pipeline = get_repeat_pipeline();
+        let pipeline = get_repeat_pipeline()?;
 
         let outer_buf = make_u32_buf(outer_size as u32);
         let axis_buf = make_u32_buf(axis_size as u32);
@@ -397,7 +402,7 @@ impl MetalTensor {
         new_shape[axis] = num_indices;
         
         let result = MetalTensor::uninit(&new_shape, MetalTensor::dtype(self));
-        let pipeline = get_index_sel_pipeline();
+        let pipeline = get_index_sel_pipeline()?;
 
         let outer_buf = make_u32_buf(outer_size as u32);
         let axis_buf = make_u32_buf(axis_size as u32);

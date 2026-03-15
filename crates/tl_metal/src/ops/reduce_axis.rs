@@ -124,42 +124,47 @@ kernel void reduce_argmin_axis_f32(
 "#;
 
 // パイプラインキャッシュ
-static REDUCE_SUM_AXIS_PIPELINE: std::sync::OnceLock<ComputePipelineState> = std::sync::OnceLock::new();
-static REDUCE_MAX_AXIS_PIPELINE: std::sync::OnceLock<ComputePipelineState> = std::sync::OnceLock::new();
-static REDUCE_MIN_AXIS_PIPELINE: std::sync::OnceLock<ComputePipelineState> = std::sync::OnceLock::new();
-static REDUCE_ARGMAX_AXIS_PIPELINE: std::sync::OnceLock<ComputePipelineState> = std::sync::OnceLock::new();
-static REDUCE_ARGMIN_AXIS_PIPELINE: std::sync::OnceLock<ComputePipelineState> = std::sync::OnceLock::new();
+static REDUCE_SUM_AXIS_PIPELINE: std::sync::OnceLock<Result<ComputePipelineState, String>> = std::sync::OnceLock::new();
+static REDUCE_MAX_AXIS_PIPELINE: std::sync::OnceLock<Result<ComputePipelineState, String>> = std::sync::OnceLock::new();
+static REDUCE_MIN_AXIS_PIPELINE: std::sync::OnceLock<Result<ComputePipelineState, String>> = std::sync::OnceLock::new();
+static REDUCE_ARGMAX_AXIS_PIPELINE: std::sync::OnceLock<Result<ComputePipelineState, String>> = std::sync::OnceLock::new();
+static REDUCE_ARGMIN_AXIS_PIPELINE: std::sync::OnceLock<Result<ComputePipelineState, String>> = std::sync::OnceLock::new();
 
-fn compile_reduce_pipeline(function_name: &str) -> ComputePipelineState {
+fn compile_reduce_pipeline(function_name: &str) -> Result<ComputePipelineState, String> {
     let device = get_device();
     let options = metal::CompileOptions::new();
     let library = device
         .device()
         .new_library_with_source(REDUCE_AXIS_SHADER, &options)
-        .unwrap_or_else(|e| panic!("Failed to compile reduce shader: {}", e));
+        .map_err(|e| format!("Failed to compile reduce shader: {}", e))?;
     let function = library
         .get_function(function_name, None)
-        .unwrap_or_else(|e| panic!("{} not found: {}", function_name, e));
+        .map_err(|e| format!("{} not found: {}", function_name, e))?;
     device
         .device()
         .new_compute_pipeline_state_with_function(&function)
-        .unwrap_or_else(|e| panic!("Failed to create {} pipeline: {}", function_name, e))
+        .map_err(|e| format!("Failed to create {} pipeline: {}", function_name, e))
 }
 
-fn get_reduce_sum_pipeline() -> &'static ComputePipelineState {
+fn get_reduce_sum_pipeline() -> BackendResult<&'static ComputePipelineState> {
     REDUCE_SUM_AXIS_PIPELINE.get_or_init(|| compile_reduce_pipeline("reduce_sum_axis_f32"))
+        .as_ref().map_err(|e| BackendError::DeviceError(e.clone()))
 }
-fn get_reduce_max_pipeline() -> &'static ComputePipelineState {
+fn get_reduce_max_pipeline() -> BackendResult<&'static ComputePipelineState> {
     REDUCE_MAX_AXIS_PIPELINE.get_or_init(|| compile_reduce_pipeline("reduce_max_axis_f32"))
+        .as_ref().map_err(|e| BackendError::DeviceError(e.clone()))
 }
-fn get_reduce_min_pipeline() -> &'static ComputePipelineState {
+fn get_reduce_min_pipeline() -> BackendResult<&'static ComputePipelineState> {
     REDUCE_MIN_AXIS_PIPELINE.get_or_init(|| compile_reduce_pipeline("reduce_min_axis_f32"))
+        .as_ref().map_err(|e| BackendError::DeviceError(e.clone()))
 }
-fn get_reduce_argmax_pipeline() -> &'static ComputePipelineState {
+fn get_reduce_argmax_pipeline() -> BackendResult<&'static ComputePipelineState> {
     REDUCE_ARGMAX_AXIS_PIPELINE.get_or_init(|| compile_reduce_pipeline("reduce_argmax_axis_f32"))
+        .as_ref().map_err(|e| BackendError::DeviceError(e.clone()))
 }
-fn get_reduce_argmin_pipeline() -> &'static ComputePipelineState {
+fn get_reduce_argmin_pipeline() -> BackendResult<&'static ComputePipelineState> {
     REDUCE_ARGMIN_AXIS_PIPELINE.get_or_init(|| compile_reduce_pipeline("reduce_argmin_axis_f32"))
+        .as_ref().map_err(|e| BackendError::DeviceError(e.clone()))
 }
 
 /// u32 パラメータバッファを作成
@@ -248,7 +253,7 @@ impl MetalTensor {
             return Err(BackendError::TypeMismatch(format!("sum_impl supports F32, got {:?}", MetalTensor::dtype(self))));
         }
         let (outer, axis_size, inner, _, new_shape) = decompose_axis(MetalTensor::shape(self), axis)?;
-        dispatch_reduce(self, get_reduce_sum_pipeline(), outer, axis_size, inner, &new_shape)
+        dispatch_reduce(self, get_reduce_sum_pipeline()?, outer, axis_size, inner, &new_shape)
     }
 
     /// max（軸指定）(Metal GPU 実装)
@@ -257,7 +262,7 @@ impl MetalTensor {
             return Err(BackendError::TypeMismatch(format!("max_impl supports F32, got {:?}", MetalTensor::dtype(self))));
         }
         let (outer, axis_size, inner, _, new_shape) = decompose_axis(MetalTensor::shape(self), axis)?;
-        dispatch_reduce(self, get_reduce_max_pipeline(), outer, axis_size, inner, &new_shape)
+        dispatch_reduce(self, get_reduce_max_pipeline()?, outer, axis_size, inner, &new_shape)
     }
 
     /// min（軸指定）(Metal GPU 実装)
@@ -266,7 +271,7 @@ impl MetalTensor {
              return Err(BackendError::TypeMismatch(format!("min_impl supports F32, got {:?}", MetalTensor::dtype(self))));
         }
         let (outer, axis_size, inner, _, new_shape) = decompose_axis(MetalTensor::shape(self), axis)?;
-        dispatch_reduce(self, get_reduce_min_pipeline(), outer, axis_size, inner, &new_shape)
+        dispatch_reduce(self, get_reduce_min_pipeline()?, outer, axis_size, inner, &new_shape)
     }
 
     /// argmax（軸指定）(Metal GPU 実装)
@@ -275,7 +280,7 @@ impl MetalTensor {
             return Err(BackendError::TypeMismatch(format!("argmax_impl supports F32, got {:?}", MetalTensor::dtype(self))));
         }
         let (outer, axis_size, inner, _, new_shape) = decompose_axis(MetalTensor::shape(self), axis)?;
-        dispatch_reduce(self, get_reduce_argmax_pipeline(), outer, axis_size, inner, &new_shape)
+        dispatch_reduce(self, get_reduce_argmax_pipeline()?, outer, axis_size, inner, &new_shape)
     }
 
     /// argmin（軸指定）(Metal GPU 実装)
@@ -284,7 +289,7 @@ impl MetalTensor {
             return Err(BackendError::TypeMismatch(format!("argmin_impl supports F32, got {:?}", MetalTensor::dtype(self))));
         }
         let (outer, axis_size, inner, _, new_shape) = decompose_axis(MetalTensor::shape(self), axis)?;
-        dispatch_reduce(self, get_reduce_argmin_pipeline(), outer, axis_size, inner, &new_shape)
+        dispatch_reduce(self, get_reduce_argmin_pipeline()?, outer, axis_size, inner, &new_shape)
     }
 
     /// mean（軸指定）— sum / axis_size で GPU 演算を活用
