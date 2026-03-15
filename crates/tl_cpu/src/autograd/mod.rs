@@ -2,10 +2,11 @@
 
 pub mod ops;
 
+use crate::scalar::TensorScalar;
 use crate::tensor::{CpuTensor, TensorRef};
 
 /// 勾配関数のトレイト
-pub trait GradFn {
-    fn backward(&self, grad_output: &CpuTensor) -> Vec<CpuTensor>;
-    fn inputs(&self) -> Vec<TensorRef>;
+pub trait GradFn<T: TensorScalar>: Send + Sync {
+    fn backward(&self, grad_output: &CpuTensor<T>) -> Vec<CpuTensor<T>>;
+    fn inputs(&self) -> Vec<TensorRef<T>>;
 }

@@ -1,80 +1,53 @@
 //! CPU テンソル
 
 use crate::autograd::GradFn;
+use crate::scalar::TensorScalar;
 use crate::DType;
 use std::sync::Arc;
 use std::cell::UnsafeCell;
 
 /// テンソルへの共有所有権付きハンドル。
-/// Autograd グラフ内でテンソル間の参照を安全に管理する。
-/// CPU 版はシングルスレッドなので UnsafeCell で内部可変性を確保。
-pub type TensorRef = Arc<UnsafeCell<CpuTensor>>;
+pub type TensorRef<T> = Arc<UnsafeCell<CpuTensor<T>>>;
 
 /// 生ポインタから TensorRef を取得する (RC+1)。
-/// FFI 境界で `*mut OpaqueTensor` を Autograd 用の `TensorRef` に変換する際に使用。
-///
-/// # Safety
-/// `ptr` は `Arc::into_raw` で作成された有効なポインタでなければならない。
-pub unsafe fn tensor_ref_from_ptr(ptr: *mut CpuTensor) -> TensorRef {
-    let arc: TensorRef = Arc::from_raw(ptr as *const UnsafeCell<CpuTensor>);
-    let cloned = arc.clone();  // RC+1
-    let _ = Arc::into_raw(arc);        // 元の参照を戻す（RC を減らさない）
+pub unsafe fn tensor_ref_from_ptr<T: TensorScalar>(ptr: *mut CpuTensor<T>) -> TensorRef<T> {
+    let arc: TensorRef<T> = Arc::from_raw(ptr as *const UnsafeCell<CpuTensor<T>>);
+    let cloned = arc.clone();
+    let _ = Arc::into_raw(arc);
     cloned
 }
 
 /// TensorRef から内部の CpuTensor への不変参照を取得する。
-///
-/// # Safety
-/// 同時に可変参照が存在しないことを呼び出し元が保証すること。
-pub unsafe fn tensor_ref_get(r: &TensorRef) -> &CpuTensor {
+pub unsafe fn tensor_ref_get<T: TensorScalar>(r: &TensorRef<T>) -> &CpuTensor<T> {
     &*r.get()
 }
 
 /// TensorRef から内部の CpuTensor への可変参照を取得する。
-///
-/// # Safety
-/// 同時に他の参照が存在しないことを呼び出し元が保証すること。
-pub unsafe fn tensor_ref_get_mut(r: &TensorRef) -> &mut CpuTensor {
+pub unsafe fn tensor_ref_get_mut<T: TensorScalar>(r: &TensorRef<T>) -> &mut CpuTensor<T> {
     &mut *r.get()
 }
 
-
 /// Autograd メタデータ
-pub struct AutogradMeta {
-    pub grad: Option<CpuTensor>,
-    pub grad_fn: Option<Box<dyn GradFn>>,
+pub struct AutogradMeta<T: TensorScalar> {
+    pub grad: Option<CpuTensor<T>>,
+    pub grad_fn: Option<Box<dyn GradFn<T>>>,
     pub requires_grad: bool,
 }
 
-/// CPU テンソル（Vec<f32> / Vec<i64> ベース）
-pub struct CpuTensor {
-    pub(crate) data_f32: Vec<f32>,
+/// CPU テンソル（ジェネリック: Vec<T> ベース）
+pub struct CpuTensor<T: TensorScalar> {
+    pub(crate) data: Vec<T>,
     pub(crate) data_i64: Option<Vec<i64>>,
     pub(crate) shape: Vec<usize>,
     pub(crate) dtype: DType,
-    pub autograd: Option<Box<AutogradMeta>>,
+    pub autograd: Option<Box<AutogradMeta<T>>>,
 }
 
-/*
-impl CpuTensor {
-    /// テンソルの内部データをクリアしてメモリを OS に返却する。
-    /// 構造体ポインタ自体は有効なまま残るため、use-after-free を防止できる。
-    /// release/free 時に呼ばれる。
-    pub(crate) fn clear_data(&mut self) {
-        self.data_f32 = Vec::new();
-        self.data_i64 = None;
-        self.shape = Vec::new();
-        self.autograd = None;
-    }
-}
-*/
-
-impl Drop for CpuTensor {
+impl<T: TensorScalar> Drop for CpuTensor<T> {
     fn drop(&mut self) {
-        // track_alloc で加算された容量分を track_free で減算
-        let f32_bytes = self.data_f32.capacity() * std::mem::size_of::<f32>();
-        if f32_bytes > 0 {
-            crate::memory::track_free(f32_bytes);
+        let data_bytes = self.data.capacity() * T::size_in_bytes();
+        if data_bytes > 0 {
+            crate::memory::track_free(data_bytes);
         }
         if let Some(ref v) = self.data_i64 {
             let i64_bytes = v.capacity() * std::mem::size_of::<i64>();
@@ -85,18 +58,18 @@ impl Drop for CpuTensor {
     }
 }
 
-impl Clone for CpuTensor {
+impl<T: TensorScalar> Clone for CpuTensor<T> {
     fn clone(&self) -> Self {
         self.clone_data()
     }
 }
 
-impl CpuTensor {
+impl<T: TensorScalar> CpuTensor<T> {
     // ========== コンストラクタ ==========
 
     fn alloc_from_pool() -> Self {
         CpuTensor {
-            data_f32: Vec::new(),
+            data: Vec::new(),
             data_i64: None,
             shape: Vec::new(),
             dtype: DType::F32,
@@ -108,61 +81,41 @@ impl CpuTensor {
 
 
     pub fn zeros(shape: &[usize], dtype: DType) -> Self {
-        if matches!(dtype, DType::F64) {
-            unimplemented!("F64 not yet supported on CPU backend (Vec<f32> storage)");
-        }
         let count: usize = shape.iter().product();
-        let mut t = Self::alloc_from_pool();
-        
-        // Reconfigure
-        t.dtype = dtype;
-        t.shape = shape.to_vec();
-        t.autograd = None;
-        t.data_i64 = None;
-
-        // Resize buffer
-        t.data_f32.clear();
-        t.data_f32.resize(count, 0.0);
-        
-        t
+        CpuTensor {
+            data: vec![T::zero(); count],
+            data_i64: None,
+            shape: shape.to_vec(),
+            dtype,
+            autograd: None,
+        }
     }
     
     pub fn ones(shape: &[usize], dtype: DType) -> Self {
-        if matches!(dtype, DType::F64) {
-            unimplemented!("F64 not yet supported on CPU backend (Vec<f32> storage)");
-        }
         let count: usize = shape.iter().product();
-        let mut t = Self::alloc_from_pool();
-        
-        t.dtype = dtype;
-        t.shape = shape.to_vec();
-        t.autograd = None;
-        t.data_i64 = None;
-
-        t.data_f32.clear();
-        t.data_f32.resize(count, 1.0);
-        
-        t
+        CpuTensor {
+            data: vec![T::one(); count],
+            data_i64: None,
+            shape: shape.to_vec(),
+            dtype,
+            autograd: None,
+        }
     }
 
-    pub fn from_slice(data: &[f32], shape: &[usize], dtype: DType) -> Self {
-         let mut t = Self::alloc_from_pool();
-         
-         t.dtype = dtype;
-         t.shape = shape.to_vec();
-         t.autograd = None;
-         t.data_i64 = None;
-         
-         t.data_f32.clear();
-         t.data_f32.extend_from_slice(data);
-         
-         t
+    pub fn from_slice(data: &[T], shape: &[usize], dtype: DType) -> Self {
+        CpuTensor {
+            data: data.to_vec(),
+            data_i64: None,
+            shape: shape.to_vec(),
+            dtype,
+            autograd: None,
+        }
     }
 
     pub fn from_slice_i64_data(data: &[i64], shape: &[usize], dtype: DType) -> Self {
-        let f32_data: Vec<f32> = data.iter().map(|x| *x as f32).collect();
+        let t_data: Vec<T> = data.iter().map(|x| T::from_f64(*x as f64)).collect();
         CpuTensor {
-            data_f32: f32_data,
+            data: t_data,
             data_i64: Some(data.to_vec()),
             shape: shape.to_vec(),
             dtype,
@@ -171,21 +124,19 @@ impl CpuTensor {
     }
 
     pub fn randn(shape: &[usize], dtype: DType) -> Self {
-        if matches!(dtype, DType::F64) {
-            unimplemented!("F64 not yet supported on CPU backend (Vec<f32> storage)");
-        }
         use rand::Rng;
         let count: usize = shape.iter().product();
         let mut rng = rand::thread_rng();
-        let data: Vec<f32> = (0..count)
+        let data: Vec<T> = (0..count)
             .map(|_| {
-                let u1: f32 = rng.gen();
-                let u2: f32 = rng.gen();
-                (-2.0 * u1.ln()).sqrt() * (2.0 * std::f32::consts::PI * u2).cos()
+                let u1 = T::gen_uniform(&mut rng);
+                let u2 = T::gen_uniform(&mut rng);
+                let two = T::from_f64(2.0);
+                (T::zero() - two * u1.ln()).sqrt() * (two * T::pi() * u2).cos()
             })
             .collect();
         CpuTensor {
-            data_f32: data,
+            data,
             data_i64: None,
             shape: shape.to_vec(),
             dtype,
@@ -194,10 +145,10 @@ impl CpuTensor {
     }
 
     pub fn arange(start: i64, end: i64, dtype: DType) -> Self {
-        let data: Vec<f32> = (start..end).map(|x| x as f32).collect();
+        let data: Vec<T> = (start..end).map(|x| T::from_f64(x as f64)).collect();
         let len = data.len();
         CpuTensor {
-            data_f32: data,
+            data,
             data_i64: None,
             shape: vec![len],
             dtype,
@@ -219,60 +170,97 @@ impl CpuTensor {
         self.shape.iter().product()
     }
 
-    pub fn to_vec<T: Copy + Default + 'static>(&self) -> Vec<T> {
-        if std::any::TypeId::of::<T>() == std::any::TypeId::of::<f32>() {
-            // Safety: T == f32
-            let src = &self.data_f32;
-            let mut dst = vec![T::default(); src.len()];
+    pub fn to_vec_t(&self) -> Vec<T> {
+        self.data.clone()
+    }
+
+    /// 互換用: 型消去された to_vec（旧コード用）
+    pub fn to_vec<U: Copy + Default + 'static>(&self) -> Vec<U> {
+        if std::any::TypeId::of::<U>() == std::any::TypeId::of::<T>() {
+            let src = &self.data;
+            let mut dst = vec![U::default(); src.len()];
             unsafe {
                 std::ptr::copy_nonoverlapping(
-                    src.as_ptr() as *const T,
+                    src.as_ptr() as *const U,
                     dst.as_mut_ptr(),
                     src.len(),
                 );
             }
             dst
-        } else if std::any::TypeId::of::<T>() == std::any::TypeId::of::<i64>() {
+        } else if std::any::TypeId::of::<U>() == std::any::TypeId::of::<i64>() {
             if let Some(ref i64_data) = self.data_i64 {
-                let mut dst = vec![T::default(); i64_data.len()];
+                let mut dst = vec![U::default(); i64_data.len()];
                 unsafe {
                     std::ptr::copy_nonoverlapping(
-                        i64_data.as_ptr() as *const T,
+                        i64_data.as_ptr() as *const U,
                         dst.as_mut_ptr(),
                         i64_data.len(),
                     );
                 }
                 dst
             } else {
-                let i64_data: Vec<i64> = self.data_f32.iter().map(|x| *x as i64).collect();
-                let mut dst = vec![T::default(); i64_data.len()];
+                let i64_data: Vec<i64> = self.data.iter().map(|x| x.to_f64() as i64).collect();
+                let mut dst = vec![U::default(); i64_data.len()];
                 unsafe {
                     std::ptr::copy_nonoverlapping(
-                        i64_data.as_ptr() as *const T,
+                        i64_data.as_ptr() as *const U,
                         dst.as_mut_ptr(),
                         i64_data.len(),
                     );
                 }
                 dst
             }
+        } else if std::any::TypeId::of::<U>() == std::any::TypeId::of::<f32>() {
+            // T -> f32 変換
+            let f32_data: Vec<f32> = self.data.iter().map(|x| x.to_f32()).collect();
+            let mut dst = vec![U::default(); f32_data.len()];
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    f32_data.as_ptr() as *const U,
+                    dst.as_mut_ptr(),
+                    f32_data.len(),
+                );
+            }
+            dst
+        } else if std::any::TypeId::of::<U>() == std::any::TypeId::of::<f64>() {
+            // T -> f64 変換
+            let f64_data: Vec<f64> = self.data.iter().map(|x| x.to_f64()).collect();
+            let mut dst = vec![U::default(); f64_data.len()];
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    f64_data.as_ptr() as *const U,
+                    dst.as_mut_ptr(),
+                    f64_data.len(),
+                );
+            }
+            dst
         } else {
-            vec![T::default(); self.elem_count()]
+            vec![U::default(); self.elem_count()]
         }
     }
 
-    pub fn data_f32(&self) -> &[f32] {
-        &self.data_f32
+    pub fn data(&self) -> &[T] {
+        &self.data
     }
 
-    pub fn data_f32_mut(&mut self) -> &mut [f32] {
-        &mut self.data_f32
+    pub fn data_mut(&mut self) -> &mut [T] {
+        &mut self.data
+    }
+
+    /// 互換用: f32 データへの参照（T=f32 の場合のみ意味がある）
+    pub fn data_f32(&self) -> &[T] {
+        &self.data
+    }
+
+    pub fn data_f32_mut(&mut self) -> &mut [T] {
+        &mut self.data
     }
 
     /// 浅いクローン（データコピーあり＝CPU なので Arc 不要）
     /// autograd メタデータはコピーしない
     pub fn shallow_clone(&self) -> Self {
         CpuTensor {
-            data_f32: self.data_f32.clone(),
+            data: self.data.clone(),
             data_i64: self.data_i64.clone(),
             shape: self.shape.clone(),
             dtype: self.dtype,
@@ -280,7 +268,7 @@ impl CpuTensor {
         }
     }
 
-    pub fn clone_data(&self) -> CpuTensor {
+    pub fn clone_data(&self) -> Self {
         self.shallow_clone()
     }
 
@@ -312,33 +300,33 @@ impl CpuTensor {
         }
     }
 
-    pub fn clip_grad_value(&mut self, min: f32, max: f32) -> tl_backend::BackendResult<()> {
+    pub fn clip_grad_value(&mut self, min: T, max: T) -> tl_backend::BackendResult<()> {
         if let Some(ref mut meta) = self.autograd {
             if let Some(ref mut g) = meta.grad {
-                let clamped: Vec<f32> = g.data_f32.iter()
+                let clamped: Vec<T> = g.data.iter()
                     .map(|&x| if x < min { min } else if x > max { max } else { x })
                     .collect();
-                g.data_f32 = clamped;
+                g.data = clamped;
             }
         }
         Ok(())
     }
 
-    pub fn clip_grad_norm(&mut self, max_norm: f32, norm_type: f32) -> tl_backend::BackendResult<f32> {
-        let mut total_norm = 0.0f32;
+    pub fn clip_grad_norm(&mut self, max_norm: T, norm_type: T) -> tl_backend::BackendResult<T> {
+        let mut total_norm = T::zero();
         if let Some(ref mut meta) = self.autograd {
             if let Some(ref mut g) = meta.grad {
-                if norm_type == std::f32::INFINITY {
-                    total_norm = g.data_f32.iter().fold(0.0f32, |max, &x| max.max(x.abs()));
+                if norm_type == T::infinity() {
+                    total_norm = g.data.iter().fold(T::zero(), |max, &x| if x.abs() > max { x.abs() } else { max });
                 } else {
-                    let sum: f32 = g.data_f32.iter().map(|&x| x.abs().powf(norm_type)).sum();
-                    total_norm = sum.powf(1.0 / norm_type);
+                    let sum: T = g.data.iter().map(|&x| x.abs().powf(norm_type)).sum();
+                    total_norm = sum.powf(T::one() / norm_type);
                 }
                 
-                let clip_coef = max_norm / (total_norm + 1e-6);
-                if clip_coef < 1.0 {
-                    let scaled: Vec<f32> = g.data_f32.iter().map(|&x| x * clip_coef).collect();
-                    g.data_f32 = scaled;
+                let clip_coef = max_norm / (total_norm + T::from_f64(1e-6));
+                if clip_coef < T::one() {
+                    let scaled: Vec<T> = g.data.iter().map(|&x| x * clip_coef).collect();
+                    g.data = scaled;
                 }
             }
         }
@@ -357,7 +345,7 @@ impl CpuTensor {
         }
     }
 
-    pub fn set_grad_fn(&mut self, grad_fn: Box<dyn GradFn>) {
+    pub fn set_grad_fn(&mut self, grad_fn: Box<dyn GradFn<T>>) {
         self.autograd = Some(Box::new(AutogradMeta {
             grad: None,
             grad_fn: Some(grad_fn),
@@ -365,7 +353,7 @@ impl CpuTensor {
         }));
     }
 
-    pub fn get_grad(&self) -> Option<CpuTensor> {
+    pub fn get_grad(&self) -> Option<Self> {
         self.autograd.as_ref().and_then(|a| {
             a.grad.as_ref().map(|g| g.shallow_clone())
         })
@@ -381,10 +369,10 @@ impl CpuTensor {
         if !self.requires_grad() {
             return;
         }
-        let self_ptr = self as *mut CpuTensor;
+        let self_ptr = self as *mut Self;
 
         // 1. DFS でトポロジカル順序を構築
-        let mut topo_order: Vec<*mut CpuTensor> = Vec::new();
+        let mut topo_order: Vec<*mut Self> = Vec::new();
         let mut visited = std::collections::HashSet::<usize>::new();
         Self::build_topo(self_ptr, &mut visited, &mut topo_order);
 
@@ -443,9 +431,9 @@ impl CpuTensor {
     /// backward 用のトポロジカルソート（DFS）
     /// 勾配伝播対象のみ（requires_grad==true）
     fn build_topo(
-        ptr: *mut CpuTensor,
+        ptr: *mut Self,
         visited: &mut std::collections::HashSet<usize>,
-        topo: &mut Vec<*mut CpuTensor>,
+        topo: &mut Vec<*mut Self>,
     ) {
         let key = ptr as usize;
         if visited.contains(&key) {
@@ -457,7 +445,7 @@ impl CpuTensor {
             if let Some(ref gf) = meta.grad_fn {
                 for input_ref in gf.inputs() {
                     // TensorRef から生ポインタを取得して再帰
-                    let input_ptr = input_ref.get() as *mut CpuTensor;
+                    let input_ptr = input_ref.get() as *mut Self;
                     let input_tensor = unsafe { &*input_ptr };
                     if input_tensor.requires_grad() {
                         Self::build_topo(input_ptr, visited, topo);
@@ -468,7 +456,7 @@ impl CpuTensor {
         topo.push(ptr);
     }
 
-    pub fn detach(&self) -> CpuTensor {
+    pub fn detach(&self) -> Self {
         self.shallow_clone()
     }
 
@@ -478,10 +466,10 @@ impl CpuTensor {
     pub fn clear_autograd_graph(&mut self) {
         use std::collections::HashSet;
         let mut visited = HashSet::new();
-        Self::clear_autograd_recursive(self as *mut CpuTensor, &mut visited);
+        Self::clear_autograd_recursive(self as *mut Self, &mut visited);
     }
 
-    fn clear_autograd_recursive(ptr: *mut CpuTensor, visited: &mut std::collections::HashSet<usize>) {
+    fn clear_autograd_recursive(ptr: *mut Self, visited: &mut std::collections::HashSet<usize>) {
         if ptr.is_null() { return; }
         let key = ptr as usize;
         if visited.contains(&key) { return; }
@@ -494,13 +482,13 @@ impl CpuTensor {
                 if let Some(ref grad_fn) = autograd.grad_fn {
                     let inputs = grad_fn.inputs();
                     for input_ref in inputs {
-                        let input_ptr = input_ref.get() as *mut CpuTensor;
+                        let input_ptr = input_ref.get() as *mut Self;
                         Self::clear_autograd_recursive(input_ptr, visited);
                     }
                 }
             }
             // データバッファをクリア（メモリを OS に返却）
-            tensor.data_f32 = Vec::new();
+            tensor.data = Vec::new();
             tensor.data_i64 = None;
             tensor.shape = Vec::new();
             // autograd をクリア（Arc の参照カウント管理で安全）
@@ -545,11 +533,11 @@ impl CpuTensor {
         Ok(strides)
     }
 
-    fn elementwise_binop(&self, other: &Self, op: impl Fn(f32, f32) -> f32) -> tl_backend::BackendResult<Self> {
+    fn elementwise_binop(&self, other: &Self, op: impl Fn(T, T) -> T) -> tl_backend::BackendResult<Self> {
         // 空テンソルの場合は空テンソルを返す
-        if self.data_f32.is_empty() || other.data_f32.is_empty() {
+        if self.data.is_empty() || other.data.is_empty() {
             return Ok(CpuTensor {
-                data_f32: vec![],
+                data: vec![],
                 data_i64: None,
                 shape: vec![0],
                 dtype: self.dtype,
@@ -559,8 +547,8 @@ impl CpuTensor {
         // NumPy互換ブロードキャスト
         let a_shape = &self.shape;
         let b_shape = &other.shape;
-        let a = &self.data_f32;
-        let b = &other.data_f32;
+        let a = &self.data;
+        let b = &other.data;
 
         // ブロードキャスト結果の shape を計算
         let out_ndim = a_shape.len().max(b_shape.len());
@@ -582,7 +570,7 @@ impl CpuTensor {
         let a_strides = Self::broadcast_strides(a_shape, &out_shape)?;
         let b_strides = Self::broadcast_strides(b_shape, &out_shape)?;
 
-        let data: Vec<f32> = (0..out_len).map(|flat_idx| {
+        let data: Vec<T> = (0..out_len).map(|flat_idx| {
             let mut a_idx = 0usize;
             let mut b_idx = 0usize;
             let mut remaining = flat_idx;
@@ -593,13 +581,13 @@ impl CpuTensor {
                 a_idx += coord * a_strides[d];
                 b_idx += coord * b_strides[d];
             }
-            let av = if a_idx < a.len() { a[a_idx] } else { 0.0 };
-            let bv = if b_idx < b.len() { b[b_idx] } else { 0.0 };
+            let av = if a_idx < a.len() { a[a_idx] } else { T::zero() };
+            let bv = if b_idx < b.len() { b[b_idx] } else { T::zero() };
             op(av, bv)
-        }).collect();
+        }).collect::<Vec<T>>();
 
-        Ok(CpuTensor {
-            data_f32: data,
+        Ok(CpuTensor::<T> {
+            data: data,
             data_i64: None,
             shape: out_shape,
             dtype: self.dtype,
@@ -633,29 +621,29 @@ impl CpuTensor {
 
     // ========== スカラー演算 ==========
 
-    pub fn add_scalar_impl(&self, scalar: f32) -> tl_backend::BackendResult<Self> {
-        let data: Vec<f32> = self.data_f32.iter().map(|x| x + scalar).collect();
-        Ok(CpuTensor { data_f32: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
+    pub fn add_scalar_impl(&self, scalar: T) -> tl_backend::BackendResult<Self> {
+        let data: Vec<T> = self.data.iter().map(|x| *x + scalar).collect();
+        Ok(CpuTensor::<T> { data: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
     }
 
-    pub fn sub_scalar_impl(&self, scalar: f32) -> tl_backend::BackendResult<Self> {
-        let data: Vec<f32> = self.data_f32.iter().map(|x| x - scalar).collect();
-        Ok(CpuTensor { data_f32: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
+    pub fn sub_scalar_impl(&self, scalar: T) -> tl_backend::BackendResult<Self> {
+        let data: Vec<T> = self.data.iter().map(|x| *x - scalar).collect();
+        Ok(CpuTensor::<T> { data: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
     }
 
-    pub fn mul_scalar_impl(&self, scalar: f32) -> tl_backend::BackendResult<Self> {
-        let data: Vec<f32> = self.data_f32.iter().map(|x| x * scalar).collect();
-        Ok(CpuTensor { data_f32: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
+    pub fn mul_scalar_impl(&self, scalar: T) -> tl_backend::BackendResult<Self> {
+        let data: Vec<T> = self.data.iter().map(|x| *x * scalar).collect();
+        Ok(CpuTensor::<T> { data: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
     }
 
-    pub fn div_scalar_impl(&self, scalar: f32) -> tl_backend::BackendResult<Self> {
-        let data: Vec<f32> = self.data_f32.iter().map(|x| x / scalar).collect();
-        Ok(CpuTensor { data_f32: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
+    pub fn div_scalar_impl(&self, scalar: T) -> tl_backend::BackendResult<Self> {
+        let data: Vec<T> = self.data.iter().map(|x| *x / scalar).collect();
+        Ok(CpuTensor::<T> { data: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
     }
 
-    pub fn clamp_impl(&self, min: f32, max: f32) -> tl_backend::BackendResult<Self> {
-        let data: Vec<f32> = self.data_f32.iter().map(|x| x.clamp(min, max)).collect();
-        Ok(CpuTensor { data_f32: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
+    pub fn clamp_impl(&self, min: T, max: T) -> tl_backend::BackendResult<Self> {
+        let data: Vec<T> = self.data.iter().map(|x| x.clamp(min, max)).collect();
+        Ok(CpuTensor::<T> { data: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
     }
 
     // ========== 単項演算 ==========
@@ -663,104 +651,108 @@ impl CpuTensor {
     // ========== 単項演算 ==========
 
     pub fn neg_impl(&self) -> tl_backend::BackendResult<Self> {
-        let data: Vec<f32> = self.data_f32.iter().map(|x| -x).collect();
-        Ok(CpuTensor { data_f32: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
+        let data: Vec<T> = self.data.iter().map(|x| -*x).collect();
+        Ok(CpuTensor::<T> { data: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
     }
 
     pub fn abs_impl(&self) -> tl_backend::BackendResult<Self> {
-        let data: Vec<f32> = self.data_f32.iter().map(|x| x.abs()).collect();
-        Ok(CpuTensor { data_f32: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
+        let data: Vec<T> = self.data.iter().map(|x| x.abs()).collect();
+        Ok(CpuTensor::<T> { data: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
     }
 
     pub fn exp_impl(&self) -> tl_backend::BackendResult<Self> {
-        let data: Vec<f32> = self.data_f32.iter().map(|x| x.exp()).collect();
-        Ok(CpuTensor { data_f32: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
+        let data: Vec<T> = self.data.iter().map(|x| x.exp()).collect();
+        Ok(CpuTensor::<T> { data: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
     }
 
     pub fn log_impl(&self) -> tl_backend::BackendResult<Self> {
-        let data: Vec<f32> = self.data_f32.iter().map(|x| x.ln()).collect();
-        Ok(CpuTensor { data_f32: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
+        let data: Vec<T> = self.data.iter().map(|x| x.ln()).collect();
+        Ok(CpuTensor::<T> { data: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
     }
 
     pub fn sqrt_impl(&self) -> tl_backend::BackendResult<Self> {
-        let data: Vec<f32> = self.data_f32.iter().map(|x| x.sqrt()).collect();
-        Ok(CpuTensor { data_f32: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
+        let data: Vec<T> = self.data.iter().map(|x| x.sqrt()).collect();
+        Ok(CpuTensor::<T> { data: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
     }
 
     pub fn sin_impl(&self) -> tl_backend::BackendResult<Self> {
-        let data: Vec<f32> = self.data_f32.iter().map(|x| x.sin()).collect();
-        Ok(CpuTensor { data_f32: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
+        let data: Vec<T> = self.data.iter().map(|x| x.sin()).collect();
+        Ok(CpuTensor::<T> { data: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
     }
 
     pub fn cos_impl(&self) -> tl_backend::BackendResult<Self> {
-        let data: Vec<f32> = self.data_f32.iter().map(|x| x.cos()).collect();
-        Ok(CpuTensor { data_f32: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
+        let data: Vec<T> = self.data.iter().map(|x| x.cos()).collect();
+        Ok(CpuTensor::<T> { data: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
     }
 
     pub fn tan_impl(&self) -> tl_backend::BackendResult<Self> {
-        let data: Vec<f32> = self.data_f32.iter().map(|x| x.tan()).collect();
-        Ok(CpuTensor { data_f32: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
+        let data: Vec<T> = self.data.iter().map(|x| x.tan()).collect();
+        Ok(CpuTensor::<T> { data: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
     }
 
     pub fn tanh_impl(&self) -> tl_backend::BackendResult<Self> {
-        let data: Vec<f32> = self.data_f32.iter().map(|x| x.tanh()).collect();
-        Ok(CpuTensor { data_f32: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
+        let data: Vec<T> = self.data.iter().map(|x| x.tanh()).collect();
+        Ok(CpuTensor::<T> { data: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
     }
 
     pub fn sigmoid_impl(&self) -> tl_backend::BackendResult<Self> {
-        let data: Vec<f32> = self.data_f32.iter().map(|x| 1.0 / (1.0 + (-x).exp())).collect();
-        Ok(CpuTensor { data_f32: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
+        let data: Vec<T> = self.data.iter().map(|x| T::one() / (T::one() + (-*x).exp())).collect();
+        Ok(CpuTensor::<T> { data: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
     }
 
     pub fn relu_impl(&self) -> tl_backend::BackendResult<Self> {
-        let data: Vec<f32> = self.data_f32.iter().map(|x| x.max(0.0)).collect();
-        Ok(CpuTensor { data_f32: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
+        let data: Vec<T> = self.data.iter().map(|x| if *x > T::zero() { *x } else { T::zero() }).collect();
+        Ok(CpuTensor::<T> { data: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
     }
 
     pub fn gelu_impl(&self) -> tl_backend::BackendResult<Self> {
-        let data: Vec<f32> = self.data_f32.iter().map(|x| {
-            0.5 * x * (1.0 + (std::f32::consts::FRAC_2_SQRT_PI * (x + 0.044715 * x.powi(3))).tanh())
+        let half = T::from_f64(0.5);
+        let coeff = T::from_f64(0.044715);
+        let sqrt_2_pi = T::frac_2_sqrt_pi();
+        let data: Vec<T> = self.data.iter().map(|x| {
+            let x = *x;
+            half * x * (T::one() + (sqrt_2_pi * (x + coeff * x.powi(3))).tanh())
         }).collect();
-        Ok(CpuTensor { data_f32: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
+        Ok(CpuTensor::<T> { data: data, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
     }
 
     // ========== Reduce ==========
 
-    pub fn sumall_impl(&self) -> f32 {
-        self.data_f32.iter().sum()
+    pub fn sumall_impl(&self) -> T {
+        self.data.iter().copied().sum()
     }
 
-    pub fn mean_all_impl(&self) -> f32 {
-        let n = self.data_f32.len() as f32;
-        if n > 0.0 { self.sumall_impl() / n } else { 0.0 }
+    pub fn mean_all_impl(&self) -> T {
+        let n = T::from_f64(self.data.len() as f64);
+        if n > T::zero() { self.sumall_impl() / n } else { T::zero() }
     }
 
     pub fn sum_impl(&self, axis: i32) -> tl_backend::BackendResult<Self> {
         let ndim = self.shape.len();
-        if ndim == 0 || self.data_f32.is_empty() {
-            return Ok(CpuTensor { data_f32: vec![0.0], data_i64: None, shape: vec![1], dtype: self.dtype, autograd: None });
+        if ndim == 0 || self.data.is_empty() {
+            return Ok(CpuTensor::<T> { data: vec![T::zero()], data_i64: None, shape: vec![1], dtype: self.dtype, autograd: None });
         }
         let axis = if axis < 0 { (ndim as i32 + axis) as usize } else { axis as usize };
         if axis >= ndim {
             // axis が範囲外の場合は全要素合計
-            let s: f32 = self.data_f32.iter().sum();
-            return Ok(CpuTensor { data_f32: vec![s], data_i64: None, shape: vec![1], dtype: self.dtype, autograd: None });
+            let s: T = self.data.iter().copied().sum();
+            return Ok(CpuTensor::<T> { data: vec![s], data_i64: None, shape: vec![1], dtype: self.dtype, autograd: None });
         }
         let outer: usize = self.shape[..axis].iter().product();
         let axis_size = self.shape[axis];
         let inner: usize = self.shape[axis + 1..].iter().product();
-        let mut result = vec![0.0f32; outer * inner];
+        let mut result = vec![T::zero(); outer * inner];
         for i in 0..outer {
             for j in 0..axis_size {
                 for k in 0..inner {
-                    result[i * inner + k] += self.data_f32[i * axis_size * inner + j * inner + k];
+                    result[i * inner + k] += self.data[i * axis_size * inner + j * inner + k];
                 }
             }
         }
         let mut new_shape: Vec<usize> = self.shape.clone();
         new_shape.remove(axis);
         if new_shape.is_empty() { new_shape.push(1); }
-        Ok(CpuTensor { data_f32: result, data_i64: None, shape: new_shape, dtype: self.dtype, autograd: None })
+        Ok(CpuTensor::<T> { data: result, data_i64: None, shape: new_shape, dtype: self.dtype, autograd: None })
     }
 
     pub fn max_impl(&self, axis: i32) -> tl_backend::BackendResult<Self> {
@@ -769,12 +761,12 @@ impl CpuTensor {
         let outer: usize = self.shape[..axis].iter().product();
         let axis_size = self.shape[axis];
         let inner: usize = self.shape[axis + 1..].iter().product();
-        let mut result = vec![f32::NEG_INFINITY; outer * inner];
+        let mut result = vec![T::neg_infinity(); outer * inner];
         for i in 0..outer {
             for j in 0..axis_size {
                 for k in 0..inner {
                     let idx = i * inner + k;
-                    let val = self.data_f32[i * axis_size * inner + j * inner + k];
+                    let val = self.data[i * axis_size * inner + j * inner + k];
                     if val > result[idx] { result[idx] = val; }
                 }
             }
@@ -782,7 +774,7 @@ impl CpuTensor {
         let mut new_shape: Vec<usize> = self.shape.clone();
         new_shape.remove(axis);
         if new_shape.is_empty() { new_shape.push(1); }
-        Ok(CpuTensor { data_f32: result, data_i64: None, shape: new_shape, dtype: self.dtype, autograd: None })
+        Ok(CpuTensor::<T> { data: result, data_i64: None, shape: new_shape, dtype: self.dtype, autograd: None })
     }
 
     pub fn min_impl(&self, axis: i32) -> tl_backend::BackendResult<Self> {
@@ -791,12 +783,12 @@ impl CpuTensor {
         let outer: usize = self.shape[..axis].iter().product();
         let axis_size = self.shape[axis];
         let inner: usize = self.shape[axis + 1..].iter().product();
-        let mut result = vec![f32::INFINITY; outer * inner];
+        let mut result = vec![T::infinity(); outer * inner];
         for i in 0..outer {
             for j in 0..axis_size {
                 for k in 0..inner {
                     let idx = i * inner + k;
-                    let val = self.data_f32[i * axis_size * inner + j * inner + k];
+                    let val = self.data[i * axis_size * inner + j * inner + k];
                     if val < result[idx] { result[idx] = val; }
                 }
             }
@@ -804,7 +796,7 @@ impl CpuTensor {
         let mut new_shape: Vec<usize> = self.shape.clone();
         new_shape.remove(axis);
         if new_shape.is_empty() { new_shape.push(1); }
-        Ok(CpuTensor { data_f32: result, data_i64: None, shape: new_shape, dtype: self.dtype, autograd: None })
+        Ok(CpuTensor::<T> { data: result, data_i64: None, shape: new_shape, dtype: self.dtype, autograd: None })
     }
 
     pub fn argmax_impl(&self, axis: i32) -> tl_backend::BackendResult<Self> {
@@ -813,16 +805,16 @@ impl CpuTensor {
         let outer: usize = self.shape[..axis].iter().product();
         let axis_size = self.shape[axis];
         let inner: usize = self.shape[axis + 1..].iter().product();
-        let mut result = vec![0.0f32; outer * inner];
-        let mut max_vals = vec![f32::NEG_INFINITY; outer * inner];
+        let mut result = vec![T::zero(); outer * inner];
+        let mut max_vals = vec![T::neg_infinity(); outer * inner];
         for i in 0..outer {
             for j in 0..axis_size {
                 for k in 0..inner {
                     let idx = i * inner + k;
-                    let val = self.data_f32[i * axis_size * inner + j * inner + k];
+                    let val = self.data[i * axis_size * inner + j * inner + k];
                     if val > max_vals[idx] {
                         max_vals[idx] = val;
-                        result[idx] = j as f32;
+                        result[idx] = T::from_f64(j as f64);
                     }
                 }
             }
@@ -830,11 +822,11 @@ impl CpuTensor {
         let mut new_shape: Vec<usize> = self.shape.clone();
         new_shape.remove(axis);
         if new_shape.is_empty() { new_shape.push(1); }
-        Ok(CpuTensor { data_f32: result, data_i64: None, shape: new_shape, dtype: self.dtype, autograd: None })
+        Ok(CpuTensor::<T> { data: result, data_i64: None, shape: new_shape, dtype: self.dtype, autograd: None })
     }
 
     pub fn argmax_all_impl(&self) -> usize {
-        self.data_f32.iter().enumerate()
+        self.data.iter().enumerate()
             .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
             .map(|(i, _)| i)
             .unwrap_or(0)
@@ -846,16 +838,16 @@ impl CpuTensor {
         let outer: usize = self.shape[..axis].iter().product();
         let axis_size = self.shape[axis];
         let inner: usize = self.shape[axis + 1..].iter().product();
-        let mut result = vec![0.0f32; outer * inner];
-        let mut min_vals = vec![f32::INFINITY; outer * inner];
+        let mut result = vec![T::zero(); outer * inner];
+        let mut min_vals = vec![T::infinity(); outer * inner];
         for i in 0..outer {
             for j in 0..axis_size {
                 for k in 0..inner {
                     let idx = i * inner + k;
-                    let val = self.data_f32[i * axis_size * inner + j * inner + k];
+                    let val = self.data[i * axis_size * inner + j * inner + k];
                     if val < min_vals[idx] {
                         min_vals[idx] = val;
-                        result[idx] = j as f32;
+                        result[idx] = T::from_f64(j as f64);
                     }
                 }
             }
@@ -863,13 +855,13 @@ impl CpuTensor {
         let mut new_shape: Vec<usize> = self.shape.clone();
         new_shape.remove(axis);
         if new_shape.is_empty() { new_shape.push(1); }
-        Ok(CpuTensor { data_f32: result, data_i64: None, shape: new_shape, dtype: self.dtype, autograd: None })
+        Ok(CpuTensor::<T> { data: result, data_i64: None, shape: new_shape, dtype: self.dtype, autograd: None })
     }
 
     pub fn mean_impl(&self, axis: i32) -> tl_backend::BackendResult<Self> {
         let ndim = self.shape.len();
         let ax = if axis < 0 { (ndim as i32 + axis) as usize } else { axis as usize };
-        let axis_size = self.shape[ax] as f32;
+        let axis_size = T::from_f64(self.shape[ax] as f64);
         let s = self.sum_impl(axis)?;
         s.div_scalar_impl(axis_size)
     }
@@ -886,7 +878,7 @@ impl CpuTensor {
             )));
         }
         Ok(CpuTensor {
-            data_f32: self.data_f32.clone(),
+            data: self.data.clone(),
             data_i64: self.data_i64.clone(),
             shape: shape.to_vec(),
             dtype: self.dtype,
@@ -909,7 +901,7 @@ impl CpuTensor {
         new_shape.swap(dim0, dim1);
 
         let total = self.elem_count();
-        let mut result = vec![0.0f32; total];
+        let mut result = vec![T::zero(); total];
 
         // 汎用転置
         let mut old_indices = vec![0usize; ndim];
@@ -930,10 +922,10 @@ impl CpuTensor {
                 new_flat_idx += new_indices[d] * stride;
                 stride *= new_shape[d];
             }
-            result[new_flat_idx] = self.data_f32[flat_idx];
+            result[new_flat_idx] = self.data[flat_idx];
         }
 
-        Ok(CpuTensor { data_f32: result, data_i64: None, shape: new_shape, dtype: self.dtype, autograd: None })
+        Ok(CpuTensor::<T> { data: result, data_i64: None, shape: new_shape, dtype: self.dtype, autograd: None })
     }
 
     pub fn squeeze_impl(&self, dim: usize) -> tl_backend::BackendResult<Self> {
@@ -963,18 +955,18 @@ impl CpuTensor {
 
     pub fn broadcast_to_impl(&self, shape: &[usize]) -> tl_backend::BackendResult<Self> {
         let total: usize = shape.iter().product();
-        if self.data_f32.is_empty() {
+        if self.data.is_empty() {
              if total == 0 {
-                return Ok(CpuTensor { data_f32: vec![], data_i64: None, shape: shape.to_vec(), dtype: self.dtype, autograd: None });
+                return Ok(CpuTensor::<T> { data: vec![], data_i64: None, shape: shape.to_vec(), dtype: self.dtype, autograd: None });
              } else {
                  return Err(tl_backend::BackendError::ShapeMismatch("Cannot broadcast empty tensor to non-empty".to_string()));
              }
         }
-        let mut result = vec![0.0f32; total];
+        let mut result = vec![T::zero(); total];
         for i in 0..total {
-            result[i] = self.data_f32[i % self.data_f32.len()];
+            result[i] = self.data[i % self.data.len()];
         }
-        Ok(CpuTensor { data_f32: result, data_i64: None, shape: shape.to_vec(), dtype: self.dtype, autograd: None })
+        Ok(CpuTensor::<T> { data: result, data_i64: None, shape: shape.to_vec(), dtype: self.dtype, autograd: None })
     }
 
     pub fn narrow_impl(&self, axis: usize, start: usize, len: usize) -> tl_backend::BackendResult<Self> {
@@ -1000,13 +992,13 @@ impl CpuTensor {
         for i in 0..outer {
             for j in start..start + len {
                 for k in 0..inner {
-                    result.push(self.data_f32[i * axis_size * inner + j * inner + k]);
+                    result.push(self.data[i * axis_size * inner + j * inner + k]);
                 }
             }
         }
         let mut new_shape = self.shape.clone();
         new_shape[axis] = len;
-        Ok(CpuTensor { data_f32: result, data_i64: None, shape: new_shape, dtype: self.dtype, autograd: None })
+        Ok(CpuTensor::<T> { data: result, data_i64: None, shape: new_shape, dtype: self.dtype, autograd: None })
     }
 
     pub fn contiguous_impl(&self) -> tl_backend::BackendResult<Self> {
@@ -1043,14 +1035,14 @@ impl CpuTensor {
                 let axis_size = t.shape[axis];
                 for j in 0..axis_size {
                     for k in 0..inner {
-                        result.push(t.data_f32[i * axis_size * inner + j * inner + k]);
+                        result.push(t.data[i * axis_size * inner + j * inner + k]);
                     }
                 }
             }
         }
         let mut new_shape = first.shape.clone();
         new_shape[axis] = total_axis;
-        Ok(CpuTensor { data_f32: result, data_i64: None, shape: new_shape, dtype: first.dtype, autograd: None })
+        Ok(CpuTensor::<T> { data: result, data_i64: None, shape: new_shape, dtype: first.dtype, autograd: None })
     }
 
     // ========== 活性化・特殊演算 ==========
@@ -1063,15 +1055,15 @@ impl CpuTensor {
         let outer: usize = self.shape[..axis].iter().product();
         let axis_size = self.shape[axis];
         let inner: usize = self.shape[axis + 1..].iter().product();
-        let mut result = self.data_f32.clone();
+        let mut result = self.data.clone();
         for i in 0..outer {
             for k in 0..inner {
-                let mut max_val = f32::NEG_INFINITY;
+                let mut max_val = T::neg_infinity();
                 for j in 0..axis_size {
                     let idx = i * axis_size * inner + j * inner + k;
                     if result[idx] > max_val { max_val = result[idx]; }
                 }
-                let mut sum = 0.0f32;
+                let mut sum = T::zero();
                 for j in 0..axis_size {
                     let idx = i * axis_size * inner + j * inner + k;
                     result[idx] = (result[idx] - max_val).exp();
@@ -1083,7 +1075,7 @@ impl CpuTensor {
                 }
             }
         }
-        Ok(CpuTensor { data_f32: result, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
+        Ok(CpuTensor::<T> { data: result, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
     }
 
     pub fn embedding_impl(&self, indices: &Self) -> tl_backend::BackendResult<Self> {
@@ -1099,11 +1091,11 @@ impl CpuTensor {
             }
             let start = (idx as usize) * embed_dim;
             let end = start + embed_dim;
-            result.extend_from_slice(&self.data_f32[start..end.min(self.data_f32.len())]);
+            result.extend_from_slice(&self.data[start..end.min(self.data.len())]);
         }
         let mut new_shape = indices.shape.to_vec();
         new_shape.push(embed_dim);
-        Ok(CpuTensor { data_f32: result, data_i64: None, shape: new_shape, dtype: self.dtype, autograd: None })
+        Ok(CpuTensor::<T> { data: result, data_i64: None, shape: new_shape, dtype: self.dtype, autograd: None })
     }
 
     pub fn tril_impl(&self, diagonal: i32) -> tl_backend::BackendResult<Self> {
@@ -1113,44 +1105,44 @@ impl CpuTensor {
         let rows = self.shape[self.shape.len() - 2];
         let cols = self.shape[self.shape.len() - 1];
         let batch: usize = self.shape[..self.shape.len() - 2].iter().product();
-        let mut result = self.data_f32.clone();
+        let mut result = self.data.clone();
         for b in 0..batch.max(1) {
             for i in 0..rows {
                 for j in 0..cols {
                     if (j as i32) > (i as i32) + diagonal {
-                        result[b * rows * cols + i * cols + j] = 0.0;
+                        result[b * rows * cols + i * cols + j] = T::zero();
                     }
                 }
             }
         }
-        Ok(CpuTensor { data_f32: result, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
+        Ok(CpuTensor::<T> { data: result, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
     }
 
     pub fn cross_entropy_impl(&self, target: &Self) -> tl_backend::BackendResult<Self> {
         let batch = self.shape[0];
         let classes = self.shape[1];
-        let mut loss = 0.0f32;
+        let mut loss = T::zero();
         for b in 0..batch {
-            let target_idx = if b < target.data_f32.len() { target.data_f32[b] as usize } else { 0 }; // Handle broadcasting or mismatch?
+            let target_idx = if b < target.data.len() { target.data[b].to_f64() as usize } else { 0 }; // Handle broadcasting or mismatch?
             if target_idx >= classes {
                  return Err(tl_backend::BackendError::IndexOutOfBounds(format!(
                     "Target index {} out of bounds for {} classes", target_idx, classes
                 )));
             }
-            let mut max_val = f32::NEG_INFINITY;
+            let mut max_val = T::neg_infinity();
             for c in 0..classes {
-                let val = self.data_f32[b * classes + c];
+                let val = self.data[b * classes + c];
                 if val > max_val { max_val = val; }
             }
-            let mut sum_exp = 0.0f32;
+            let mut sum_exp = T::zero();
             for c in 0..classes {
-                sum_exp += (self.data_f32[b * classes + c] - max_val).exp();
+                sum_exp += (self.data[b * classes + c] - max_val).exp();
             }
-            let log_softmax = self.data_f32[b * classes + target_idx] - max_val - sum_exp.ln();
+            let log_softmax = self.data[b * classes + target_idx] - max_val - sum_exp.ln();
             loss -= log_softmax;
         }
-        loss /= batch as f32;
-        Ok(CpuTensor { data_f32: vec![loss], data_i64: None, shape: vec![1], dtype: self.dtype, autograd: None })
+        loss /= T::from_f64(batch as f64);
+        Ok(CpuTensor::<T> { data: vec![loss], data_i64: None, shape: vec![1], dtype: self.dtype, autograd: None })
     }
 
     pub fn repeat_interleave_impl(&self, repeats: usize, axis: usize) -> tl_backend::BackendResult<Self> {
@@ -1167,14 +1159,14 @@ impl CpuTensor {
             for j in 0..axis_size {
                 for _ in 0..repeats {
                     for k in 0..inner {
-                        result.push(self.data_f32[i * axis_size * inner + j * inner + k]);
+                        result.push(self.data[i * axis_size * inner + j * inner + k]);
                     }
                 }
             }
         }
         let mut new_shape = self.shape.clone();
         new_shape[axis] *= repeats;
-        Ok(CpuTensor { data_f32: result, data_i64: None, shape: new_shape, dtype: self.dtype, autograd: None })
+        Ok(CpuTensor::<T> { data: result, data_i64: None, shape: new_shape, dtype: self.dtype, autograd: None })
     }
 
     pub fn index_select_impl(&self, axis: usize, indices: &Self) -> tl_backend::BackendResult<Self> {
@@ -1183,7 +1175,7 @@ impl CpuTensor {
                 "Axis {} out of bounds for index_select (rank {})", axis, self.shape.len()
             )));
         }
-        let idx_list: Vec<usize> = indices.data_f32.iter().map(|x| *x as usize).collect();
+        let idx_list: Vec<usize> = indices.data.iter().map(|x| x.to_f64() as usize).collect();
         let outer: usize = self.shape[..axis].iter().product();
         let axis_size = self.shape[axis];
         let inner: usize = self.shape[axis + 1..].iter().product();
@@ -1196,13 +1188,13 @@ impl CpuTensor {
                     )));
                 }
                 for k in 0..inner {
-                    result.push(self.data_f32[i * axis_size * inner + idx * inner + k]);
+                    result.push(self.data[i * axis_size * inner + idx * inner + k]);
                 }
             }
         }
         let mut new_shape = self.shape.clone();
         new_shape[axis] = idx_list.len();
-        Ok(CpuTensor { data_f32: result, data_i64: None, shape: new_shape, dtype: self.dtype, autograd: None })
+        Ok(CpuTensor::<T> { data: result, data_i64: None, shape: new_shape, dtype: self.dtype, autograd: None })
     }
 
     pub fn where_cond_impl(condition: &Self, x: &Self, y: &Self) -> tl_backend::BackendResult<Self> {
@@ -1212,11 +1204,11 @@ impl CpuTensor {
                 condition.shape, x.shape, y.shape
             )));
         }
-        let data: Vec<f32> = condition.data_f32.iter()
-            .zip(x.data_f32.iter().zip(y.data_f32.iter()))
-            .map(|(c, (xv, yv))| if *c != 0.0 { *xv } else { *yv })
+        let data: Vec<T> = condition.data.iter()
+            .zip(x.data.iter().zip(y.data.iter()))
+            .map(|(c, (xv, yv))| if *c != T::zero() { *xv } else { *yv })
             .collect();
-        Ok(CpuTensor { data_f32: data, data_i64: None, shape: x.shape.clone(), dtype: x.dtype, autograd: None })
+        Ok(CpuTensor::<T> { data: data, data_i64: None, shape: x.shape.clone(), dtype: x.dtype, autograd: None })
     }
 
     // ========== Matmul ==========
@@ -1258,14 +1250,14 @@ impl CpuTensor {
             1
         };
         let batch: usize = a_shape[..a_shape.len().saturating_sub(2)].iter().product::<usize>().max(1);
-        let mut result = vec![0.0f32; batch * m * n];
+        let mut result = vec![T::zero(); batch * m * n];
         for b in 0..batch {
             let a_offset = b * m * k;
             let b_batch_size = if b_shape.len() >= 2 { k * n } else { b_shape[0] };
             let b_offset = if b_shape.len() > 2 { b * b_batch_size } else { 0 };
             for i in 0..m {
                 for j in 0..n {
-                    let mut sum = 0.0f32;
+                    let mut sum = T::zero();
                     for p in 0..k {
                         let a_idx = a_offset + i * k + p;
                         let b_idx = if b_shape.len() >= 2 {
@@ -1274,8 +1266,8 @@ impl CpuTensor {
                             // 1D: treat as column vector, index is just p
                             p
                         };
-                        if a_idx < self.data_f32.len() && b_idx < other.data_f32.len() {
-                            sum += self.data_f32[a_idx] * other.data_f32[b_idx];
+                        if a_idx < self.data.len() && b_idx < other.data.len() {
+                            sum += self.data[a_idx] * other.data[b_idx];
                         }
                     }
                     result[b * m * n + i * n + j] = sum;
@@ -1287,33 +1279,35 @@ impl CpuTensor {
         if b_shape.len() >= 2 {
             new_shape.push(n);
         }
-        Ok(CpuTensor { data_f32: result, data_i64: None, shape: new_shape, dtype: self.dtype, autograd: None })
+        Ok(CpuTensor::<T> { data: result, data_i64: None, shape: new_shape, dtype: self.dtype, autograd: None })
     }
 
     // ========== 比較演算 ==========
 
     pub fn eq_impl(&self, other: &Self) -> tl_backend::BackendResult<Self> {
-        self.elementwise_binop(other, |a, b| if (a - b).abs() < 1e-6 { 1.0 } else { 0.0 })
+        let eps = T::from_f64(1e-6);
+        self.elementwise_binop(other, move |a, b| if (a - b).abs() < eps { T::one() } else { T::zero() })
     }
 
     pub fn neq_impl(&self, other: &Self) -> tl_backend::BackendResult<Self> {
-        self.elementwise_binop(other, |a, b| if (a - b).abs() >= 1e-6 { 1.0 } else { 0.0 })
+        let eps = T::from_f64(1e-6);
+        self.elementwise_binop(other, move |a, b| if (a - b).abs() >= eps { T::one() } else { T::zero() })
     }
 
     pub fn gt_impl(&self, other: &Self) -> tl_backend::BackendResult<Self> {
-        self.elementwise_binop(other, |a, b| if a > b { 1.0 } else { 0.0 })
+        self.elementwise_binop(other, |a, b| if a > b { T::one() } else { T::zero() })
     }
 
     pub fn lt_impl(&self, other: &Self) -> tl_backend::BackendResult<Self> {
-        self.elementwise_binop(other, |a, b| if a < b { 1.0 } else { 0.0 })
+        self.elementwise_binop(other, |a, b| if a < b { T::one() } else { T::zero() })
     }
 
     pub fn ge_impl(&self, other: &Self) -> tl_backend::BackendResult<Self> {
-        self.elementwise_binop(other, |a, b| if a >= b { 1.0 } else { 0.0 })
+        self.elementwise_binop(other, |a, b| if a >= b { T::one() } else { T::zero() })
     }
 
     pub fn le_impl(&self, other: &Self) -> tl_backend::BackendResult<Self> {
-        self.elementwise_binop(other, |a, b| if a <= b { 1.0 } else { 0.0 })
+        self.elementwise_binop(other, |a, b| if a <= b { T::one() } else { T::zero() })
     }
 
     // ========== 深層学習演算（簡易版） ==========
@@ -1361,13 +1355,13 @@ impl CpuTensor {
              }
         }
 
-        let mut result = vec![0.0f32; batch * out_ch * out_h * out_w];
+        let mut result = vec![T::zero(); batch * out_ch * out_h * out_w];
 
         for b in 0..batch {
             for oc in 0..out_ch {
                 for oh in 0..out_h {
                     for ow in 0..out_w {
-                        let mut sum = 0.0f32;
+                        let mut sum = T::zero();
                         for ic in 0..in_ch {
                             for ki in 0..kh {
                                 for kj in 0..kw {
@@ -1378,7 +1372,7 @@ impl CpuTensor {
                                     if ih >= 0 && ih < h as isize && iw >= 0 && iw < w as isize {
                                         let in_idx = b * in_ch * h * w + ic * h * w + ih as usize * w + iw as usize;
                                         let w_idx = oc * in_ch * kh * kw + ic * kh * kw + ki * kw + kj;
-                                        sum += self.data_f32[in_idx] * weight.data_f32[w_idx];
+                                        sum += self.data[in_idx] * weight.data[w_idx];
                                     }
                                 }
                             }
@@ -1390,10 +1384,10 @@ impl CpuTensor {
             }
         }
 
-        Ok(CpuTensor { data_f32: result, data_i64: None, shape: vec![batch, out_ch, out_h, out_w], dtype: self.dtype, autograd: None })
+        Ok(CpuTensor::<T> { data: result, data_i64: None, shape: vec![batch, out_ch, out_h, out_w], dtype: self.dtype, autograd: None })
     }
 
-    pub fn batch_norm_impl(&self, gamma: &Self, beta: &Self, running_mean: &Self, running_var: &Self, eps: f32) -> tl_backend::BackendResult<Self> {
+    pub fn batch_norm_impl(&self, gamma: &Self, beta: &Self, running_mean: &Self, running_var: &Self, eps: T) -> tl_backend::BackendResult<Self> {
         // self: [batch, channels, ...] or [batch, features]
         // running_mean/running_var 使用時はチャネルごと正規化
         if self.shape.len() >= 2 {
@@ -1407,24 +1401,24 @@ impl CpuTensor {
             // But strict checking might break lax user code if they rely on broadcast or different logic.
             // Assuming strict.
 
-            let mut result = self.data_f32.clone();
+            let mut result = self.data.clone();
             for c in 0..channels {
                 let (mean, var) = if use_running {
-                    (running_mean.data_f32[c], running_var.data_f32[c])
+                    (running_mean.data[c], running_var.data[c])
                 } else {
                     // バッチ統計量を計算
-                    let n = (batch * spatial) as f32;
-                    let mut m = 0.0f32;
+                    let n = T::from_f64((batch * spatial) as f64);
+                    let mut m = T::zero();
                     for b in 0..batch {
                         for s in 0..spatial {
-                            m += self.data_f32[b * channels * spatial + c * spatial + s];
+                            m += self.data[b * channels * spatial + c * spatial + s];
                         }
                     }
                     m /= n;
-                    let mut v = 0.0f32;
+                    let mut v = T::zero();
                     for b in 0..batch {
                         for s in 0..spatial {
-                            let d = self.data_f32[b * channels * spatial + c * spatial + s] - m;
+                            let d = self.data[b * channels * spatial + c * spatial + s] - m;
                             v += d * d;
                         }
                     }
@@ -1432,9 +1426,9 @@ impl CpuTensor {
                     (m, v)
                 };
 
-                let inv_std = 1.0 / (var + eps).sqrt();
-                let g = if c < gamma.data_f32.len() { gamma.data_f32[c] } else { 1.0 };
-                let bi = if c < beta.data_f32.len() { beta.data_f32[c] } else { 0.0 };
+                let inv_std = T::one() / (var + eps).sqrt();
+                let g = if c < gamma.data.len() { gamma.data[c] } else { T::one() };
+                let bi = if c < beta.data.len() { beta.data[c] } else { T::zero() };
 
                 for b in 0..batch {
                     for s in 0..spatial {
@@ -1443,59 +1437,59 @@ impl CpuTensor {
                     }
                 }
             }
-            Ok(CpuTensor { data_f32: result, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
+            Ok(CpuTensor::<T> { data: result, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
         } else {
             // 1D フォールバック
             let mean = self.mean_all_impl();
-            let data: Vec<f32> = self.data_f32.iter().map(|x| x - mean).collect();
-            let var: f32 = data.iter().map(|x| x * x).sum::<f32>() / data.len() as f32;
-            let inv_std = 1.0 / (var + eps).sqrt();
-            let result: Vec<f32> = data.iter().enumerate().map(|(i, x)| {
-                let g = if i < gamma.data_f32.len() { gamma.data_f32[i % gamma.data_f32.len()] } else { 1.0 };
-                let b = if i < beta.data_f32.len() { beta.data_f32[i % beta.data_f32.len()] } else { 0.0 };
-                x * inv_std * g + b
+            let data: Vec<T> = self.data.iter().map(|x| *x - mean).collect();
+            let var: T = data.iter().map(|x| (*x) * (*x)).sum::<T>() / T::from_f64(data.len() as f64);
+            let inv_std = T::one() / (var + eps).sqrt();
+            let result: Vec<T> = data.iter().enumerate().map(|(i, x)| {
+                let g = if i < gamma.data.len() { gamma.data[i % gamma.data.len()] } else { T::one() };
+                let b = if i < beta.data.len() { beta.data[i % beta.data.len()] } else { T::zero() };
+                *x * inv_std * g + b
             }).collect();
-            Ok(CpuTensor { data_f32: result, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
+            Ok(CpuTensor::<T> { data: result, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
         }
     }
 
-    pub fn layer_norm_impl(&self, gamma: &Self, beta: &Self, eps: f32) -> tl_backend::BackendResult<Self> {
+    pub fn layer_norm_impl(&self, gamma: &Self, beta: &Self, eps: T) -> tl_backend::BackendResult<Self> {
         // 最終次元で正規化 (各行独立)
         let ndim = self.shape.len();
         if ndim < 2 {
             // 1D: 全体を正規化
             let mean = self.mean_all_impl();
-            let var: f32 = self.data_f32.iter().map(|x| (x - mean).powi(2)).sum::<f32>() / self.data_f32.len() as f32;
-            let inv_std = 1.0 / (var + eps).sqrt();
-            let result: Vec<f32> = self.data_f32.iter().enumerate().map(|(i, x)| {
-                let g = gamma.data_f32.get(i).copied().unwrap_or(1.0);
-                let b = beta.data_f32.get(i).copied().unwrap_or(0.0);
-                (x - mean) * inv_std * g + b
+            let var: T = self.data.iter().map(|x| (*x - mean).powi(2)).fold(T::zero(), |a, b| a + b) / T::from_f64(self.data.len() as f64);
+            let inv_std = T::one() / (var + eps).sqrt();
+            let result: Vec<T> = self.data.iter().enumerate().map(|(i, x)| {
+                let g = gamma.data.get(i).copied().unwrap_or(T::one());
+                let b = beta.data.get(i).copied().unwrap_or(T::zero());
+                (*x - mean) * inv_std * g + b
             }).collect();
-            return Ok(CpuTensor { data_f32: result, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None });
+            return Ok(CpuTensor::<T> { data: result, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None });
         }
 
         let last_dim = self.shape[ndim - 1];
         let outer: usize = self.shape[..ndim - 1].iter().product();
-        let mut result = self.data_f32.clone();
+        let mut result = self.data.clone();
 
         for i in 0..outer {
             let start = i * last_dim;
             let end = start + last_dim;
-            let slice = &self.data_f32[start..end];
+            let slice = &self.data[start..end];
 
-            let mean: f32 = slice.iter().sum::<f32>() / last_dim as f32;
-            let var: f32 = slice.iter().map(|x| (x - mean).powi(2)).sum::<f32>() / last_dim as f32;
-            let inv_std = 1.0 / (var + eps).sqrt();
+            let mean: T = slice.iter().copied().sum::<T>() / T::from_f64(last_dim as f64);
+            let var: T = slice.iter().map(|x| (*x - mean).powi(2)).sum::<T>() / T::from_f64(last_dim as f64);
+            let inv_std = T::one() / (var + eps).sqrt();
 
             for j in 0..last_dim {
-                let g = gamma.data_f32.get(j).copied().unwrap_or(1.0);
-                let b = beta.data_f32.get(j).copied().unwrap_or(0.0);
+                let g = gamma.data.get(j).copied().unwrap_or(T::one());
+                let b = beta.data.get(j).copied().unwrap_or(T::zero());
                 result[start + j] = (slice[j] - mean) * inv_std * g + b;
             }
         }
 
-        Ok(CpuTensor { data_f32: result, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
+        Ok(CpuTensor::<T> { data: result, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
     }
 
     pub fn max_pool2d_impl(&self, kernel_size: (usize, usize), stride: (usize, usize)) -> tl_backend::BackendResult<Self> {
@@ -1517,20 +1511,20 @@ impl CpuTensor {
         let out_h = (h - kh) / sh + 1;
         let out_w = (w - kw) / sw + 1;
 
-        let mut result = vec![f32::NEG_INFINITY; batch * channels * out_h * out_w];
+        let mut result = vec![T::neg_infinity(); batch * channels * out_h * out_w];
 
         for b in 0..batch {
             for c in 0..channels {
                 for oh in 0..out_h {
                     for ow in 0..out_w {
-                        let mut max_val = f32::NEG_INFINITY;
+                        let mut max_val = T::neg_infinity();
                         for ki in 0..kh {
                             for kj in 0..kw {
                                 let ih = oh * sh + ki;
                                 let iw = ow * sw + kj;
                                 let idx = b * channels * h * w + c * h * w + ih * w + iw;
-                                if self.data_f32[idx] > max_val {
-                                    max_val = self.data_f32[idx];
+                                if self.data[idx] > max_val {
+                                    max_val = self.data[idx];
                                 }
                             }
                         }
@@ -1541,7 +1535,7 @@ impl CpuTensor {
             }
         }
 
-        Ok(CpuTensor { data_f32: result, data_i64: None, shape: vec![batch, channels, out_h, out_w], dtype: self.dtype, autograd: None })
+        Ok(CpuTensor::<T> { data: result, data_i64: None, shape: vec![batch, channels, out_h, out_w], dtype: self.dtype, autograd: None })
     }
 
     pub fn avg_pool2d_impl(&self, kernel_size: (usize, usize), stride: (usize, usize)) -> tl_backend::BackendResult<Self> {
@@ -1562,21 +1556,21 @@ impl CpuTensor {
         
         let out_h = (h - kh) / sh + 1;
         let out_w = (w - kw) / sw + 1;
-        let pool_size = (kh * kw) as f32;
+        let pool_size = T::from_f64((kh * kw) as f64);
 
-        let mut result = vec![0.0f32; batch * channels * out_h * out_w];
+        let mut result = vec![T::zero(); batch * channels * out_h * out_w];
 
         for b in 0..batch {
             for c in 0..channels {
                 for oh in 0..out_h {
                     for ow in 0..out_w {
-                        let mut sum = 0.0f32;
+                        let mut sum = T::zero();
                         for ki in 0..kh {
                             for kj in 0..kw {
                                 let ih = oh * sh + ki;
                                 let iw = ow * sw + kj;
                                 let idx = b * channels * h * w + c * h * w + ih * w + iw;
-                                sum += self.data_f32[idx];
+                                sum += self.data[idx];
                             }
                         }
                         let out_idx = b * channels * out_h * out_w + c * out_h * out_w + oh * out_w + ow;
@@ -1586,46 +1580,46 @@ impl CpuTensor {
             }
         }
 
-        Ok(CpuTensor { data_f32: result, data_i64: None, shape: vec![batch, channels, out_h, out_w], dtype: self.dtype, autograd: None })
+        Ok(CpuTensor::<T> { data: result, data_i64: None, shape: vec![batch, channels, out_h, out_w], dtype: self.dtype, autograd: None })
     }
 
-    pub fn dropout_impl(&self, _p: f32, _training: bool) -> tl_backend::BackendResult<Self> {
+    pub fn dropout_impl(&self, _p: T, _training: bool) -> tl_backend::BackendResult<Self> {
         Ok(self.shallow_clone())
     }
 }
 
 // GpuTensor トレイトが Send + Sync を要求
-unsafe impl Send for CpuTensor {}
-unsafe impl Sync for CpuTensor {}
+unsafe impl<T: TensorScalar> Send for CpuTensor<T> {}
+unsafe impl<T: TensorScalar> Sync for CpuTensor<T> {}
 
-impl CpuTensor {
-    pub fn sample_impl(&self, temp: f32, top_p: f32) -> tl_backend::BackendResult<Self> {
+impl<T: TensorScalar> CpuTensor<T> {
+    pub fn sample_impl(&self, temp: T, top_p: T) -> tl_backend::BackendResult<Self> {
         // Assume 1D logits for now or last dimension
         let logits = self.data_f32();
         if logits.is_empty() {
              return Err(tl_backend::BackendError::InternalError("Empty tensor for sampling".to_string()));
         }
 
-        if temp <= 0.0 {
+        if temp <= T::zero() {
              // Greedy: argmax
              let max_idx = logits.iter().enumerate()
                 .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
                 .map(|(i, _)| i).unwrap_or(0);
-             return Ok(CpuTensor::from_slice(&[max_idx as f32], &[1], DType::F32));
+             return Ok(CpuTensor::from_slice(&[T::from_f64(max_idx as f64)], &[1], DType::F32));
         }
 
         // Apply temperature
-        let probs: Vec<f32> = logits.iter().map(|&x| x / temp).collect();
+        let probs: Vec<T> = logits.iter().map(|&x| x / temp).collect();
         // Softmax
-        let max_val = probs.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
-        let sum_exp: f32 = probs.iter().map(|x| (x - max_val).exp()).sum();
-        let probs: Vec<f32> = probs.iter().map(|x| (x - max_val).exp() / sum_exp).collect();
+        let max_val = probs.iter().copied().fold(T::neg_infinity(), |a, b| if a > b { a } else { b });
+        let sum_exp: T = probs.iter().map(|x| (*x - max_val).exp()).sum();
+        let probs: Vec<T> = probs.iter().map(|x| (*x - max_val).exp() / sum_exp).collect();
 
         // Top-p sampling
         let mut indices: Vec<usize> = (0..probs.len()).collect();
         indices.sort_by(|&a, &b| probs[b].partial_cmp(&probs[a]).unwrap_or(std::cmp::Ordering::Equal));
         
-        let mut cum_prob = 0.0;
+        let mut cum_prob = T::zero();
         let mut cutoff_index = indices.len() - 1;
         for (i, &idx) in indices.iter().enumerate() {
             cum_prob += probs[idx];
@@ -1635,19 +1629,12 @@ impl CpuTensor {
             }
         }
         
-        // Random sample from top-p
         let cutoff_prob = cum_prob;
         let mut rng = rand::thread_rng();
-        use rand::Rng; // Ensure Rng trait is used if available. Wait, need to check if Rng is in scope or just rand::random
-        // Or simpler: just use weighted choice from filtered probs
-        // Re-normalize top-p probabilities?
-        // Usually: sample r ~ [0, top_p_sum] and select
+        use rand::Rng;
         
-        // Simplified sampling for CPU (mostly for debug/small models):
-        // Just sample from full distribution if top_p is close to 1.0, else cutoff
-        
-        let r: f32 = rng.gen::<f32>() * cutoff_prob;
-        let mut acc = 0.0;
+        let r: T = T::from_f64(rng.gen::<f64>()) * cutoff_prob;
+        let mut acc = T::zero();
         let mut selected_idx = indices[0];
         
         for i in 0..=cutoff_index {
@@ -1659,6 +1646,6 @@ impl CpuTensor {
              }
         }
         
-        Ok(CpuTensor::from_slice(&[selected_idx as f32], &[1], DType::F32))
+        Ok(CpuTensor::from_slice(&[T::from_f64(selected_idx as f64)], &[1], self.dtype))
     }
 }

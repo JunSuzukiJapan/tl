@@ -1,6 +1,7 @@
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 //! CPU テンソルバックエンド
 
+pub mod scalar;
 pub mod tensor;
 pub mod autograd;
 pub mod backend_impl;
@@ -11,5 +12,6 @@ pub mod graph;
 pub mod stream;
 pub mod fused_ops;
 
+pub use scalar::TensorScalar;
 pub use tensor::CpuTensor;
 pub use tl_backend::DType;
