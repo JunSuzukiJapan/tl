@@ -168,8 +168,6 @@ pub fn enter_scope() {
 }
 
 pub fn exit_scope() {
-    // スコープスタックをポップするのみ。
-    // テンソルの解放は codegen の emit_cleanup_vars_in_scope → tl_tensor_release_safe が個別に行う。
     SCOPE_STACK.with(|stack| {
         let _ = stack.borrow_mut().pop();
     });

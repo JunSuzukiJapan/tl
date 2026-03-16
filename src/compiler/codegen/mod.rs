@@ -1873,13 +1873,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 }
                             }
                         }
-                        // R-value の場合のみ mark_temp_no_cleanup を行う。
-                        // Variable の場合は emit_retain (ACQUIRE) + add_temp が行われているため、
-                        // mark_temp_no_cleanup すると対応する RELEASE が失われてリークする。
-                        // R-value の場合は mark_temp_no_cleanup しないと cleanup で DROP → dangling pointer。
-                        if !matches!(&expr.inner, ExprKind::Variable(_)) {
-                            self.mark_temp_no_cleanup(val);
-                        }
+                        // テンポラリを cleanup 対象外にする。
+                        // Variable の場合は emit_retain + add_temp がないためテンポラリに登録されず no-op。
+                        // R-value の場合は戻り値テンソルが cleanup で解放されないよう保護する。
+                        self.mark_temp_no_cleanup(val);
 
                         let mut final_val = val; 
                         match &ty {

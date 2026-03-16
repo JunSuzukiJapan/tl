@@ -2964,9 +2964,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .builder
                         .build_load(llvm_ty, field_ptr, field)
                         .map_err(|e| e.to_string())?;
-                    self.emit_retain(loaded, &field_ty)?; // FIX: Acquire ownership
-                    // FIX: Register as temporary
-                    self.add_temp(loaded, field_ty.clone());
+                    // フィールドは親構造体が所有 — 借用として RC 不変で返す。
+                    // 消費側が必要に応じて retain/clone する。
                     Ok((loaded, field_ty.clone()))
                 } else if obj_val.is_struct_value() {
                     let struct_val = obj_val.into_struct_value();
@@ -2974,9 +2973,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .builder
                         .build_extract_value(struct_val, field_idx as u32, field)
                         .map_err(|e| e.to_string())?;
-                    self.emit_retain(extracted, &field_ty)?; // FIX: Acquire ownership
-                    // FIX: Register as temporary
-                    self.add_temp(extracted, field_ty.clone());
+                    // フィールドは親構造体が所有 — 借用として RC 不変で返す。
                     Ok((extracted, field_ty.clone()))
                 } else {
                     Err("Cannot access field of non-pointer and non-struct value".into())
@@ -3001,15 +2998,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 .build_load(llvm_ty, ptr, name)
                                 .map_err(|e| e.to_string())?;
 
-                          self.emit_retain(loaded, &ty)?;
-                          // FIX: Register as temporary to ensure cleanup at end of statement
-                          // (Variable returns +1 ref, so it acts as a temporary copy)
-                          self.add_temp(loaded, ty.clone());
+                          // Variable は借用として返す。RC は変更しない。
+                          // 消費側（Let の emit_deep_clone, FnCall 引数等）が必要に応じて
+                          // retain/clone を行う。
                           Ok((loaded, ty))
                      } else {
-                          self.emit_retain(val, &ty)?;
-                          // FIX: Register as temporary
-                          self.add_temp(val, ty.clone());
                           Ok((val, ty))
                      }
                 } else {
