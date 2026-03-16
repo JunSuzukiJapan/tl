@@ -95,6 +95,13 @@ pub fn register_system_types(manager: &mut TypeManager) {
         vec![],
         Type::Void
     );
+    // System::mem_report() -> Void — メモリ統計レポート出力
+    system.register_evaluated_static_method(
+        "mem_report", 
+        compile_mem_report,
+        vec![],
+        Type::Void
+    );
 
     // Internal: System::free_hashmap(ptr: i64) -> Void
     system.register_evaluated_static_method(
@@ -330,6 +337,19 @@ fn compile_metal_sync<'ctx>(
     if !args.is_empty() { return Err("System::metal_sync takes no arguments".into()); }
     let fn_val = codegen.module.get_function("tl_metal_sync").ok_or("tl_metal_sync not found")?;
     codegen.builder.build_call(fn_val, &[], "metal_sync").map_err(|e| e.to_string())?;
+    
+    let void_val = codegen.context.i64_type().const_int(0, false).into();
+    Ok((void_val, Type::Void))
+}
+
+fn compile_mem_report<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if !args.is_empty() { return Err("System::mem_report takes no arguments".into()); }
+    let fn_val = codegen.module.get_function("tl_system_mem_report").ok_or("tl_system_mem_report not found")?;
+    codegen.builder.build_call(fn_val, &[], "mem_report").map_err(|e| e.to_string())?;
     
     let void_val = codegen.context.i64_type().const_int(0, false).into();
     Ok((void_val, Type::Void))

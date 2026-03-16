@@ -597,6 +597,19 @@ pub extern "C" fn tl_kv_cache_clear(cache_ptr: i64) {
     }
 }
 
+// ========== メモリ統計 ==========
+
+#[unsafe(no_mangle)]
+/// @ffi_sig () -> void
+/// メモリ統計レポート — CPU/GPU 両対応
+pub extern "C" fn tl_system_mem_report() {
+    if crate::device_ffi::is_cpu() {
+        tl_cpu::ffi::tl_cpu_mem_stats_report();
+    } else {
+        eprintln!("[MEM] GPU mode: use TL_GPU_POOL_STATS for GPU statistics");
+    }
+}
+
 // ========== 追加 System 関数 ==========
 
 // tl_checkpoint と tl_trace_mem は memory_ffi.rs で定義済み

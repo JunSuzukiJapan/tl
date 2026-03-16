@@ -2387,6 +2387,7 @@ fn make_tensor(t: CpuTensor<f32>) -> *mut OpaqueTensor {
         eprintln!("[ALLOC] Ptr: {:p} at {}:{}", ptr, loc.file(), loc.line());
     }
     crate::memory::register_tensor(ptr);
+    crate::memory::count_tensor_alloc();
     ptr as *mut OpaqueTensor
 }
 #[no_mangle]
@@ -2835,4 +2836,21 @@ pub extern "C" fn tl_cpu_tensor_new_causal_mask(size: usize) -> *mut OpaqueTenso
         }
     }
     make_tensor(CpuTensor::from_slice(&data, &shape, DType::F32))
+}
+
+// ========== メモリ統計 FFI ==========
+
+/// メモリ統計レポートを stderr に出力
+pub extern "C" fn tl_cpu_mem_stats_report() {
+    crate::memory::mem_stats_report();
+}
+
+/// 現在のライブテンソル数を返す
+pub extern "C" fn tl_cpu_mem_live_count() -> i64 {
+    crate::memory::get_live_count() as i64
+}
+
+/// メモリ統計が有効かどうか (TL_MEM_STATS=1)
+pub extern "C" fn tl_cpu_mem_stats_enabled() -> bool {
+    crate::memory::is_mem_stats_enabled()
 }
