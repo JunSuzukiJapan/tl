@@ -14,7 +14,7 @@ use tl_metal::device_impl::MetalDeviceImpl;
 
 /// TL_DEVICE 環境変数のキャッシュ
 #[inline]
-fn is_cpu() -> bool {
+pub(crate) fn is_cpu() -> bool {
     static IS_CPU: OnceLock<bool> = OnceLock::new();
     *IS_CPU.get_or_init(|| std::env::var("TL_DEVICE").map_or(false, |d| d == "cpu"))
 }

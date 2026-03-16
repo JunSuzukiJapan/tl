@@ -368,20 +368,51 @@ pub struct OpaqueKVCache {
 }
 
 /// テンソルポインタに対して Arc RC+1 を行い、新しいポインタを返す。
-/// V5.0 Strategy: テンソルは Arc<UnsafeCell<CpuTensor>> で管理されており、
-/// Arc::from_raw で復元 → Arc::clone (RC+1) → 両方を Arc::into_raw で戻す。
+/// CPU/GPU 両対応: is_cpu() で正しい型にキャストしてから Arc 操作を行う。
+/// macOS では OpaqueTensor = MetalTensor だが、--device cpu 時の実テンソルは
+/// Arc<UnsafeCell<CpuTensor<f32>>> のため、型を正しく選択する必要がある。
 fn tensor_arc_retain(ptr: *mut crate::OpaqueTensor) -> *mut crate::OpaqueTensor {
     if ptr.is_null() {
         return ptr;
     }
-    unsafe {
-        let arc =
-            std::sync::Arc::from_raw(ptr as *const std::cell::UnsafeCell<crate::OpaqueTensor>);
-        let cloned = std::sync::Arc::clone(&arc);
-        // 元の Arc を戻す（所有権を返す）
-        let _ = std::sync::Arc::into_raw(arc);
-        // 新しい Arc をポインタとして返す
-        std::sync::Arc::into_raw(cloned) as *mut crate::OpaqueTensor
+    if crate::device_ffi::is_cpu() {
+        // CPU: テンソルは Arc<UnsafeCell<CpuTensor<f32>>> で管理
+        unsafe {
+            let arc = std::sync::Arc::from_raw(
+                ptr as *const std::cell::UnsafeCell<tl_cpu::CpuTensor<f32>>,
+            );
+            let cloned = std::sync::Arc::clone(&arc);
+            let _ = std::sync::Arc::into_raw(arc);
+            std::sync::Arc::into_raw(cloned) as *mut crate::OpaqueTensor
+        }
+    } else {
+        // GPU: テンソルは Arc<UnsafeCell<OpaqueTensor>> で管理
+        unsafe {
+            let arc = std::sync::Arc::from_raw(
+                ptr as *const std::cell::UnsafeCell<crate::OpaqueTensor>,
+            );
+            let cloned = std::sync::Arc::clone(&arc);
+            let _ = std::sync::Arc::into_raw(arc);
+            std::sync::Arc::into_raw(cloned) as *mut crate::OpaqueTensor
+        }
+    }
+}
+
+/// CPU/GPU 両対応のテンソル解放ヘルパー。
+/// Arc の参照カウントを -1 する。RC=0 になればテンソルが Drop される。
+fn release_tensor_safe(ptr: *mut crate::OpaqueTensor) {
+    if ptr.is_null() {
+        return;
+    }
+    if crate::device_ffi::is_cpu() {
+        unsafe {
+            let arc = std::sync::Arc::from_raw(
+                ptr as *const std::cell::UnsafeCell<tl_cpu::CpuTensor<f32>>,
+            );
+            drop(arc); // RC-1
+        }
+    } else {
+        crate::memory_ffi::tl_tensor_release_safe(ptr);
     }
 }
 
@@ -390,12 +421,12 @@ impl Drop for OpaqueKVCache {
         for (k_opt, v_opt) in &self.layers {
             if let Some(k) = k_opt {
                 if !k.is_null() {
-                    crate::memory_ffi::tl_tensor_release_safe(*k);
+                    release_tensor_safe(*k);
                 }
             }
             if let Some(v) = v_opt {
                 if !v.is_null() {
-                    crate::memory_ffi::tl_tensor_release_safe(*v);
+                    release_tensor_safe(*v);
                 }
             }
         }
@@ -436,12 +467,12 @@ pub extern "C" fn tl_kv_cache_resize(cache_ptr: i64, max_len: i64) {
         for (k_opt, v_opt) in cache.layers.drain(new_len..) {
             if let Some(k) = k_opt {
                 if !k.is_null() {
-                    crate::memory_ffi::tl_tensor_release_safe(k);
+                    release_tensor_safe(k);
                 }
             }
             if let Some(v) = v_opt {
                 if !v.is_null() {
-                    crate::memory_ffi::tl_tensor_release_safe(v);
+                    release_tensor_safe(v);
                 }
             }
         }
@@ -522,12 +553,12 @@ pub extern "C" fn tl_kv_cache_update(
     // 古い値を解放
     if let Some(old_k) = cache.layers[idx].0 {
         if !old_k.is_null() {
-            crate::memory_ffi::tl_tensor_release_safe(old_k);
+            release_tensor_safe(old_k);
         }
     }
     if let Some(old_v) = cache.layers[idx].1 {
         if !old_v.is_null() {
-            crate::memory_ffi::tl_tensor_release_safe(old_v);
+            release_tensor_safe(old_v);
         }
     }
     // Arc RC+1 でキャッシュに保存（JITの自動解放とは独立した参照）
@@ -555,12 +586,12 @@ pub extern "C" fn tl_kv_cache_clear(cache_ptr: i64) {
     for (k_opt, v_opt) in cache.layers.iter_mut() {
         if let Some(k) = k_opt.take() {
             if !k.is_null() {
-                crate::memory_ffi::tl_tensor_release_safe(k);
+                release_tensor_safe(k);
             }
         }
         if let Some(v) = v_opt.take() {
             if !v.is_null() {
-                crate::memory_ffi::tl_tensor_release_safe(v);
+                release_tensor_safe(v);
             }
         }
     }
