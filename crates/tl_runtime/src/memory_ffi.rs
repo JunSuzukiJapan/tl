@@ -43,18 +43,16 @@ pub extern "C" fn tl_get_refcount_count() -> i64 {
 }
 
 /// @ffi_sig () -> void
-/// 関数スコープ開始
+/// 関数スコープ開始（デバイス非依存）
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_mem_function_enter() {
     tl_mem_enter_scope();
-    tl_cpu::ffi::tl_cpu_enter_scope();
 }
 
 /// @ffi_sig () -> void
-/// 関数スコープ終了
+/// 関数スコープ終了（デバイス非依存）
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_mem_function_exit() {
-    tl_cpu::ffi::tl_cpu_exit_scope();
     tl_mem_exit_scope();
 }
 
@@ -142,7 +140,7 @@ pub extern "C" fn tl_mem_unregister(_ptr: *mut c_void) {
 /// テンソル取得（Arc RC +1）
 /// FieldAccess 等で構造体フィールドのテンソルを参照する際に呼ばれる。
 /// tl_tensor_release_safe と対になり、retain/release の対称性を保証する。
-/// CPU/GPU 両対応: is_cpu() で正しい型にキャストして Arc 操作を行う。
+/// 全デバイス共通: Arc::increment_strong_count で RC+1。
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_acquire(t: *mut crate::OpaqueTensor) -> *mut crate::OpaqueTensor {
     if !t.is_null() {
@@ -164,17 +162,16 @@ pub extern "C" fn tl_tensor_acquire(t: *mut crate::OpaqueTensor) -> *mut crate::
 }
 
 /// @ffi_sig (Tensor*) -> void
-/// テンソル解放（Arc ベース）
+/// テンソル解放（Arc ベース、全デバイス統一）
 /// Arc の参照カウントを -1 する。RC=0 になれば Tensor（autograd グラフ含む）が
 /// 自然に Drop される。
-/// CPU/GPU 両対応: is_cpu() で正しい型にキャストして Arc 操作を行う。
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_release_safe(t: *mut crate::OpaqueTensor) {
     if t.is_null() {
         return;
     }
     if crate::device_ffi::is_cpu() {
-        // CPU: memory::release_tensor 経由で解放（スコープ除去も行う）
+        // CPU: release_tensor 経由（メモリ統計 + ログ対応）
         tl_cpu::memory::release_tensor(t as *mut tl_cpu::CpuTensor<f32>);
     } else {
         unsafe {

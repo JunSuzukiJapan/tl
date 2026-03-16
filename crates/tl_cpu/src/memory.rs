@@ -152,87 +152,47 @@ fn get_rss_bytes() -> usize {
     }
 }
 
-// ========== スコープ管理 ==========
-
-thread_local! {
-    // Stack of scopes. Each scope contains a list of tensors allocated within it.
-    // スコープスタック: 各スコープはそのスコープ内で割り当てられた Arc の生ポインタを保持。
-    // スコープ脱出時に codegen が tl_tensor_release_safe を個別に呼ぶ。
-    static SCOPE_STACK: std::cell::RefCell<Vec<Vec<*mut CpuTensor<f32>>>> = const { std::cell::RefCell::new(Vec::new()) };
-}
+// ========== スコープ管理 (V6: 廃止 → No-op) ==========
+// V5 では CPU 固有の SCOPE_STACK で全テンソルを追跡していたが、
+// Metal/CUDA と統一するため廃止。テンソル寿命は Arc RC のみで管理。
+// codegen の emit_cleanup_vars_in_scope → tl_tensor_release_safe が唯一の解放パス。
 
 pub fn enter_scope() {
-    SCOPE_STACK.with(|stack| {
-        stack.borrow_mut().push(Vec::new());
-    });
+    // No-op: Metal/CUDA と統一
 }
 
 pub fn exit_scope() {
-    SCOPE_STACK.with(|stack| {
-        let _ = stack.borrow_mut().pop();
-    });
+    // No-op: Metal/CUDA と統一
 }
 
-pub fn register_tensor(t: *mut CpuTensor<f32>) {
-    if t.is_null() { return; }
-    SCOPE_STACK.with(|stack| {
-        let mut stack_ref = stack.borrow_mut();
-        if let Some(current_scope) = stack_ref.last_mut() {
-            current_scope.push(t);
-        }
-    });
+pub fn register_tensor(_t: *mut CpuTensor<f32>) {
+    // No-op: Metal/CUDA と統一。make_tensor でのスコープ登録を廃止。
 }
 
-/// スコープスタックからテンソルを除去（release_tensor から呼ばれる）
-fn unregister_from_scope(t: *mut CpuTensor<f32>) {
-    SCOPE_STACK.with(|stack| {
-        let mut stack_ref = stack.borrow_mut();
-        // 最も内側のスコープから探して除去
-        for scope in stack_ref.iter_mut().rev() {
-            if let Some(pos) = scope.iter().rposition(|&x| x == t) {
-                scope.remove(pos);
-                return;
-            }
-        }
-    });
-}
-
-pub fn promote_tensor(t: *mut CpuTensor<f32>) {
-    if t.is_null() { return; }
-    SCOPE_STACK.with(|stack| {
-        let mut stack_ref = stack.borrow_mut();
-        if let Some(current_scope) = stack_ref.last_mut() {
-             if let Some(pos) = current_scope.iter().rposition(|&x| x == t) {
-                 current_scope.remove(pos);
-             }
-        }
-    });
+pub fn promote_tensor(_t: *mut CpuTensor<f32>) {
+    // No-op: Metal/CUDA と統一
 }
 
 // Diagnostics
 pub fn get_pool_size() -> usize {
-    0  // プールは Arc 化で廃止（Arc の参照カウントが管理）
+    0
 }
 
 /// Arc ベースでテンソルを解放する (RC-1)。
 /// RC が 0 になれば CpuTensor（autograd グラフ含む）が自然に Drop される。
+/// Metal/CUDA の release_if_live と同等の処理。
 pub fn release_tensor(t: *mut CpuTensor<f32>) {
     if t.is_null() { return; }
-    // スコープスタックからこのテンソルを除去（exit_scope での二重解放防止）
-    unregister_from_scope(t);
     unsafe {
         let arc_ref = Arc::from_raw(t as *const UnsafeCell<CpuTensor<f32>>);
         if is_mem_log_enabled() {
             let rc = Arc::strong_count(&arc_ref);
             eprintln!("[RELEASE] Ptr: {:p} (RC={}, {})", t, rc, if rc == 1 { "DROP" } else { "RC-1" });
         }
-        // track_free は CpuTensor の Drop 内で呼ばれるべきだが、
-        // ここで RC==1 (最終 drop) の場合にカウント
         if Arc::strong_count(&arc_ref) == 1 {
             count_tensor_release();
-            // UnsafeCell::get() は *mut CpuTensor<f32> を返す
             let tensor_ptr = arc_ref.get();
-            let data_len = unsafe { (*tensor_ptr).data.capacity() };
+            let data_len = (*tensor_ptr).data.capacity();
             let bytes = data_len * std::mem::size_of::<f32>();
             if bytes > 0 {
                 track_free(bytes);
@@ -241,3 +201,4 @@ pub fn release_tensor(t: *mut CpuTensor<f32>) {
         drop(arc_ref);
     }
 }
+
