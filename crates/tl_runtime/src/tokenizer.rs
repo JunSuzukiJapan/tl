@@ -55,7 +55,8 @@ pub extern "C" fn tl_tokenizer_encode(
         
         match tok.encode(text_str.as_ref(), false) {
             Ok(encoding) => {
-                let ids: Vec<f32> = encoding.get_ids().iter().map(|&id| id as f32).collect();
+                let mut ids: Vec<f32> = vec![1.0]; // Prepend BOS token (ID=1)
+                ids.extend(encoding.get_ids().iter().map(|&id| id as f32));
                 let shape = vec![ids.len()];
                 crate::device_ffi::create_runtime_tensor_f32(&ids, &shape) as *mut crate::OpaqueTensor
             }
@@ -199,5 +200,47 @@ pub extern "C" fn tl_tokenizer_encode_chat(
         let f32_ids: Vec<f32> = ids.iter().map(|&id| id as f32).collect();
         let shape = vec![f32_ids.len()];
         crate::device_ffi::create_runtime_tensor_f32(&f32_ids, &shape) as *mut crate::OpaqueTensor
+    }
+}
+
+/// @ffi_sig (i64, i8*) -> Tensor*
+/// TinyLlama Zephyr chat template encode
+/// Full template is encoded as a single string so SentencePiece handles it correctly.
+/// The tokenizer recognizes </s> as special token (ID=2) from added_tokens.
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_tokenizer_encode_chat_zephyr(
+    tokenizer_handle: i64,
+    user_text: *const c_char,
+) -> *mut crate::OpaqueTensor {
+    unsafe {
+        if tokenizer_handle == 0 || user_text.is_null() {
+            return std::ptr::null_mut();
+        }
+        let tokenizer = &*(tokenizer_handle as *const OpaqueTokenizer);
+        let tok = &tokenizer.inner;
+        let user_str = CStr::from_ptr(user_text).to_string_lossy();
+
+        // Build the complete template as a single string
+        // Format: <|system|>\nYou are a helpful assistant.</s>\n<|user|>\n{user_input}</s>\n<|assistant|>\n
+        let full_text = format!(
+            "<|system|>\nYou are a helpful assistant.</s>\n<|user|>\n{}</s>\n<|assistant|>\n",
+            user_str
+        );
+
+        match tok.encode(full_text.as_str(), false) {
+            Ok(encoding) => {
+                // Prepend BOS token (ID=1) manually
+                // LLaMA architectures typically require BOS token as an Attention Sink
+                // tokenizers doesn't always automatically inject BOS, so we add it here
+                let mut ids: Vec<f32> = vec![1.0];
+                ids.extend(encoding.get_ids().iter().map(|&id| id as f32));
+                let shape = vec![ids.len()];
+                crate::device_ffi::create_runtime_tensor_f32(&ids, &shape) as *mut crate::OpaqueTensor
+            }
+            Err(e) => {
+                eprintln!("Tokenizer encode_chat_zephyr error: {}", e);
+                std::ptr::null_mut()
+            }
+        }
     }
 }
