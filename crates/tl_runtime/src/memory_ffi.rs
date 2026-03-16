@@ -142,13 +142,22 @@ pub extern "C" fn tl_mem_unregister(_ptr: *mut c_void) {
 /// テンソル取得（Arc RC +1）
 /// FieldAccess 等で構造体フィールドのテンソルを参照する際に呼ばれる。
 /// tl_tensor_release_safe と対になり、retain/release の対称性を保証する。
+/// CPU/GPU 両対応: is_cpu() で正しい型にキャストして Arc 操作を行う。
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_acquire(t: *mut crate::OpaqueTensor) -> *mut crate::OpaqueTensor {
     if !t.is_null() {
-        unsafe {
-            std::sync::Arc::increment_strong_count(
-                t as *const std::cell::UnsafeCell<crate::OpaqueTensor>,
-            );
+        if crate::device_ffi::is_cpu() {
+            unsafe {
+                std::sync::Arc::increment_strong_count(
+                    t as *const std::cell::UnsafeCell<tl_cpu::CpuTensor<f32>>,
+                );
+            }
+        } else {
+            unsafe {
+                std::sync::Arc::increment_strong_count(
+                    t as *const std::cell::UnsafeCell<crate::OpaqueTensor>,
+                );
+            }
         }
     }
     t
@@ -158,15 +167,26 @@ pub extern "C" fn tl_tensor_acquire(t: *mut crate::OpaqueTensor) -> *mut crate::
 /// テンソル解放（Arc ベース）
 /// Arc の参照カウントを -1 する。RC=0 になれば Tensor（autograd グラフ含む）が
 /// 自然に Drop される。
-/// CPU/Metal 共通: Arc::from_raw で復元し drop で RC-1。
+/// CPU/GPU 両対応: is_cpu() で正しい型にキャストして Arc 操作を行う。
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_release_safe(t: *mut crate::OpaqueTensor) {
     if t.is_null() {
         return;
     }
-    unsafe {
-        let arc = std::sync::Arc::from_raw(t as *const std::cell::UnsafeCell<crate::OpaqueTensor>);
-        drop(arc);
+    if crate::device_ffi::is_cpu() {
+        unsafe {
+            let arc = std::sync::Arc::from_raw(
+                t as *const std::cell::UnsafeCell<tl_cpu::CpuTensor<f32>>,
+            );
+            drop(arc);
+        }
+    } else {
+        unsafe {
+            let arc = std::sync::Arc::from_raw(
+                t as *const std::cell::UnsafeCell<crate::OpaqueTensor>,
+            );
+            drop(arc);
+        }
     }
 }
 
