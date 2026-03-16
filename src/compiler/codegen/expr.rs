@@ -2964,9 +2964,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .builder
                         .build_load(llvm_ty, field_ptr, field)
                         .map_err(|e| e.to_string())?;
-                    self.emit_retain(loaded, &field_ty)?; // FIX: Acquire ownership
-                    // FIX: Register as temporary
-                    self.add_temp(loaded, field_ty.clone());
+                    // フィールドは親構造体が所有 — 借用として RC 不変で返す。
+                    // 消費側が必要に応じて retain/clone する。
                     Ok((loaded, field_ty.clone()))
                 } else if obj_val.is_struct_value() {
                     let struct_val = obj_val.into_struct_value();
@@ -2974,9 +2973,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .builder
                         .build_extract_value(struct_val, field_idx as u32, field)
                         .map_err(|e| e.to_string())?;
-                    self.emit_retain(extracted, &field_ty)?; // FIX: Acquire ownership
-                    // FIX: Register as temporary
-                    self.add_temp(extracted, field_ty.clone());
+                    // フィールドは親構造体が所有 — 借用として RC 不変で返す。
                     Ok((extracted, field_ty.clone()))
                 } else {
                     Err("Cannot access field of non-pointer and non-struct value".into())
@@ -3001,15 +2998,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 .build_load(llvm_ty, ptr, name)
                                 .map_err(|e| e.to_string())?;
 
-                          self.emit_retain(loaded, &ty)?;
-                          // FIX: Register as temporary to ensure cleanup at end of statement
-                          // (Variable returns +1 ref, so it acts as a temporary copy)
-                          self.add_temp(loaded, ty.clone());
+                          // Variable は借用として返す。RC は変更しない。
+                          // 消費側（Let の emit_deep_clone, FnCall 引数等）が必要に応じて
+                          // retain/clone を行う。
                           Ok((loaded, ty))
                      } else {
-                          self.emit_retain(val, &ty)?;
-                          // FIX: Register as temporary
-                          self.add_temp(val, ty.clone());
                           Ok((val, ty))
                      }
                 } else {
@@ -8374,16 +8367,10 @@ impl<'ctx> CodeGenerator<'ctx> {
             for arg in args {
                 let (val, ty) = self.compile_expr(arg)?;
 
-                // ARGUMENT PASSING FIX: Retain ownership because Callee takes ownership (and releases at end)
-                let should_retain = match &ty {
-                    Type::Struct(n, _) if n != "String" => true,
-                    Type::Enum(_, _) | Type::Tensor(_, _) | Type::Tuple(_) => true,
-                    _ => false, 
-                };
-                
-                if should_retain {
-                        self.emit_retain(val, &ty)?;
-                }
+                // NOTE: 引数は Callee に「借用」として渡される (CLEANUP_NONE)。
+                // Callee は関数終了時に引数を release しない。
+                // したがって caller 側で retain (RC+1) する必要はない。
+                // 以前ここに emit_retain があったが、対応する release が存在せずリークの原因だった。
 
                 compiled_args_vals.push(val.into());
                 compiled_args_types.push((val, ty));

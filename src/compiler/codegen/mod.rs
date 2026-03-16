@@ -1873,7 +1873,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 }
                             }
                         }
-                        // Also mark temp no cleanup (for direct expressions)
+                        // テンポラリを cleanup 対象外にする。
+                        // Variable の場合は emit_retain + add_temp がないためテンポラリに登録されず no-op。
+                        // R-value の場合は戻り値テンソルが cleanup で解放されないよう保護する。
                         self.mark_temp_no_cleanup(val);
 
                         let mut final_val = val; 

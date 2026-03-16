@@ -116,6 +116,7 @@ pub use system::{
     tl_qtensor_free, tl_qtensor_matmul,
     tl_metal_sync, tl_report_runtime_error, tl_handle_runtime_error,
     tl_adam_step, tl_sgd_step, tl_lr_cosine_annealing, tl_lr_step,
+    tl_system_mem_report,
 };
 
 // ========== Image Exports ==========

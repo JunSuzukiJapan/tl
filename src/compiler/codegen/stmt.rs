@@ -1850,14 +1850,14 @@ impl<'ctx> CodeGenerator<'ctx> {
                 
                 let (val_ir, val_ty) = self.compile_expr(value)?;
 
-                if let Ok((Some(lhs_ptr), lhs_type, _, lhs_scope_name)) = lvalue_res {
+                if let Ok((Some(lhs_ptr), lhs_type, lhs_cleanup_mode, lhs_scope_name)) = lvalue_res {
                      // STANDARD ASSIGNMENT (Var or Field)
                     match op {
                         AssignOp::Assign => {
                             let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
                             
-                            // Free old if needed
-                            if matches!(lhs_type, Type::Struct(_,_) | Type::Tensor(_,_)) {
+                            // Free old if needed — but only if the variable owns the value (CLEANUP_NONE = borrowed, e.g. function args)
+                            if lhs_cleanup_mode != super::CLEANUP_NONE && matches!(lhs_type, Type::Struct(_,_) | Type::Tensor(_,_)) {
                                  let old_val = self.builder.build_load(load_type, lhs_ptr, "old").unwrap().into_pointer_value();
                                  let null_ptr = load_type.const_null();
                                  let is_not_null = self.builder.build_int_compare(inkwell::IntPredicate::NE, old_val, null_ptr, "").unwrap();
@@ -2437,12 +2437,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                 for stmt in body {
                     self.compile_stmt(stmt)?;
                 }
-                self.exit_scope();
 
-                // Pop loop context
-                self.loop_stack.pop();
-
-                // Loop back to condition
+                // ループバック前に: スコープ内の変数・テンポラリを cleanup
+                // これにより各イテレーションの中間テンソルが解放される。
                 if self
                     .builder
                     .get_insert_block()
@@ -2450,10 +2447,27 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .get_terminator()
                     .is_none()
                 {
+                    self.emit_cleanup_vars_in_scope(self.variables.len() - 1);
+                    if let Some(f) = self.module.get_function("tl_mem_exit_scope") {
+                        self.builder.build_call(f, &[], "").unwrap();
+                    }
+                    // 次のイテレーション用に再度 enter_scope
+                    if let Some(f) = self.module.get_function("tl_mem_enter_scope") {
+                        self.builder.build_call(f, &[], "").unwrap();
+                    }
+                    // ループバック: cond_block へジャンプ
                     self.builder
                         .build_unconditional_branch(cond_block)
                         .map_err(|e| e.to_string())?;
                 }
+
+                // exit_scope: codegen state (variables/temporaries) の pop のみ。
+                // cleanup IR は上で emit 済み。ブロックは terminated なので
+                // exit_scope 内の is_terminated チェックで cleanup は skip される。
+                self.exit_scope();
+
+                // Pop loop context
+                self.loop_stack.pop();
 
                 // Continue at end
                 self.builder.position_at_end(end_block);

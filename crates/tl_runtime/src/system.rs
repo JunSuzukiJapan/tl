@@ -400,20 +400,13 @@ fn tensor_arc_retain(ptr: *mut crate::OpaqueTensor) -> *mut crate::OpaqueTensor 
 
 /// CPU/GPU 両対応のテンソル解放ヘルパー。
 /// Arc の参照カウントを -1 する。RC=0 になればテンソルが Drop される。
+/// memory_ffi::tl_tensor_release_safe 経由に統一し、CPU メモリ統計も正しく更新。
 fn release_tensor_safe(ptr: *mut crate::OpaqueTensor) {
     if ptr.is_null() {
         return;
     }
-    if crate::device_ffi::is_cpu() {
-        unsafe {
-            let arc = std::sync::Arc::from_raw(
-                ptr as *const std::cell::UnsafeCell<tl_cpu::CpuTensor<f32>>,
-            );
-            drop(arc); // RC-1
-        }
-    } else {
-        crate::memory_ffi::tl_tensor_release_safe(ptr);
-    }
+    // 全デバイス統一: memory_ffi 経由で解放（CPU 統計カウンタも更新される）
+    crate::memory_ffi::tl_tensor_release_safe(ptr);
 }
 
 impl Drop for OpaqueKVCache {
@@ -594,6 +587,19 @@ pub extern "C" fn tl_kv_cache_clear(cache_ptr: i64) {
                 release_tensor_safe(v);
             }
         }
+    }
+}
+
+// ========== メモリ統計 ==========
+
+#[unsafe(no_mangle)]
+/// @ffi_sig () -> void
+/// メモリ統計レポート — CPU/GPU 両対応
+pub extern "C" fn tl_system_mem_report() {
+    if crate::device_ffi::is_cpu() {
+        tl_cpu::ffi::tl_cpu_mem_stats_report();
+    } else {
+        eprintln!("[MEM] GPU mode: use TL_GPU_POOL_STATS for GPU statistics");
     }
 }
 

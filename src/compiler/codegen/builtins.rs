@@ -1243,6 +1243,10 @@ pub fn declare_runtime_functions<'ctx>(
     let metal_sync_type = void_type.fn_type(&[], false);
     add_fn("tl_metal_sync", metal_sync_type);
 
+    // tl_system_mem_report() -> void — メモリ統計レポート
+    let mem_report_type = void_type.fn_type(&[], false);
+    add_fn("tl_system_mem_report", mem_report_type);
+
     // Memory Scope
     let enter_scope_type = void_type.fn_type(&[], false);
     add_fn("tl_mem_enter_scope", enter_scope_type);
@@ -2191,6 +2195,9 @@ pub fn declare_runtime_functions<'ctx>(
     }
     if let Some(f) = module.get_function("tl_metal_sync") {
         execution_engine.add_global_mapping(&f, runtime::tl_metal_sync as *const () as usize);
+    }
+    if let Some(f) = module.get_function("tl_system_mem_report") {
+        execution_engine.add_global_mapping(&f, runtime::tl_system_mem_report as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_trace_mem") {
         execution_engine.add_global_mapping(&f, runtime::tl_trace_mem as *const () as usize);
