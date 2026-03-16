@@ -185,6 +185,20 @@ pub fn register_tensor(t: *mut CpuTensor<f32>) {
     });
 }
 
+/// スコープスタックからテンソルを除去（release_tensor から呼ばれる）
+fn unregister_from_scope(t: *mut CpuTensor<f32>) {
+    SCOPE_STACK.with(|stack| {
+        let mut stack_ref = stack.borrow_mut();
+        // 最も内側のスコープから探して除去
+        for scope in stack_ref.iter_mut().rev() {
+            if let Some(pos) = scope.iter().rposition(|&x| x == t) {
+                scope.remove(pos);
+                return;
+            }
+        }
+    });
+}
+
 pub fn promote_tensor(t: *mut CpuTensor<f32>) {
     if t.is_null() { return; }
     SCOPE_STACK.with(|stack| {
@@ -206,6 +220,8 @@ pub fn get_pool_size() -> usize {
 /// RC が 0 になれば CpuTensor（autograd グラフ含む）が自然に Drop される。
 pub fn release_tensor(t: *mut CpuTensor<f32>) {
     if t.is_null() { return; }
+    // スコープスタックからこのテンソルを除去（exit_scope での二重解放防止）
+    unregister_from_scope(t);
     unsafe {
         let arc_ref = Arc::from_raw(t as *const UnsafeCell<CpuTensor<f32>>);
         if is_mem_log_enabled() {

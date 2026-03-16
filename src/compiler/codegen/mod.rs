@@ -1873,8 +1873,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 }
                             }
                         }
-                        // Also mark temp no cleanup (for direct expressions)
-                        self.mark_temp_no_cleanup(val);
+                        // R-value の場合のみ mark_temp_no_cleanup を行う。
+                        // Variable の場合は emit_retain (ACQUIRE) + add_temp が行われているため、
+                        // mark_temp_no_cleanup すると対応する RELEASE が失われてリークする。
+                        // R-value の場合は mark_temp_no_cleanup しないと cleanup で DROP → dangling pointer。
+                        if !matches!(&expr.inner, ExprKind::Variable(_)) {
+                            self.mark_temp_no_cleanup(val);
+                        }
 
                         let mut final_val = val; 
                         match &ty {

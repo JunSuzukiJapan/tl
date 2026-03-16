@@ -8374,16 +8374,10 @@ impl<'ctx> CodeGenerator<'ctx> {
             for arg in args {
                 let (val, ty) = self.compile_expr(arg)?;
 
-                // ARGUMENT PASSING FIX: Retain ownership because Callee takes ownership (and releases at end)
-                let should_retain = match &ty {
-                    Type::Struct(n, _) if n != "String" => true,
-                    Type::Enum(_, _) | Type::Tensor(_, _) | Type::Tuple(_) => true,
-                    _ => false, 
-                };
-                
-                if should_retain {
-                        self.emit_retain(val, &ty)?;
-                }
+                // NOTE: 引数は Callee に「借用」として渡される (CLEANUP_NONE)。
+                // Callee は関数終了時に引数を release しない。
+                // したがって caller 側で retain (RC+1) する必要はない。
+                // 以前ここに emit_retain があったが、対応する release が存在せずリークの原因だった。
 
                 compiled_args_vals.push(val.into());
                 compiled_args_types.push((val, ty));

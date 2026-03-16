@@ -174,12 +174,8 @@ pub extern "C" fn tl_tensor_release_safe(t: *mut crate::OpaqueTensor) {
         return;
     }
     if crate::device_ffi::is_cpu() {
-        unsafe {
-            let arc = std::sync::Arc::from_raw(
-                t as *const std::cell::UnsafeCell<tl_cpu::CpuTensor<f32>>,
-            );
-            drop(arc);
-        }
+        // CPU: memory::release_tensor 経由で解放（スコープ除去も行う）
+        tl_cpu::memory::release_tensor(t as *mut tl_cpu::CpuTensor<f32>);
     } else {
         unsafe {
             let arc = std::sync::Arc::from_raw(
