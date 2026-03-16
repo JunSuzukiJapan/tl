@@ -64,6 +64,7 @@ extern "C" {
         vocab_size: i32,
         token_len: i32,
         penalty: f32,
+        total_elements: i32,
         stream: cudaStream_t,
     );
 }
@@ -291,7 +292,9 @@ impl CudaTensor {
         tokens: &CudaTensor,
         penalty: f32,
     ) -> BackendResult<CudaTensor> {
-        let vocab_size = self.elem_count();
+        let shape = self.shape();
+        let vocab_size = *shape.last().unwrap_or(&1);
+        let total_elements = self.elem_count();
         let token_len = tokens.elem_count();
         let output = CudaTensor::uninit(self.shape(), DType::F32);
         let stream = crate::stream::get_stream().raw();
@@ -303,6 +306,7 @@ impl CudaTensor {
                 vocab_size as i32,
                 token_len as i32,
                 penalty,
+                total_elements as i32,
                 stream,
             );
         }

@@ -160,7 +160,7 @@ fn main() {
     
     while true {
         let input_str = read_line("User> ");
-        if (input_str == "exit" || input_str == "quit") {
+        if (input_str == "exit" || input_str == "quit" || input_str == "") {
             return;
         }
         
@@ -185,8 +185,8 @@ fn main() {
             }
             let lo = oh.forward(on.forward(x));
             // Apply repetition penalty to discourage template tag regeneration
-            let lo_penalized = lo.repetition_penalty(tokens, 1.2 as f64);
-            let nxt = lo_penalized.narrow(0, batch_len - 1, 1).sample(0.6, 0.9);
+            let lo_penalized = lo.repetition_penalty(tokens, 1.1 as f64);
+            let nxt = lo_penalized.narrow(0, batch_len - 1, 1).sample(0.1, 0.9);
             let tid = nxt.item_i64();
             let s_nxt = tok.decode(nxt);
             

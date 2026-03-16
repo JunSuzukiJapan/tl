@@ -2064,14 +2064,15 @@ __global__ void top_p_sample_kernel(const float *logits, float *output,
 __global__ void repetition_penalty_kernel(const float *logits,
                                           const float *tokens, float *output,
                                           int vocab_size, int token_len,
-                                          float penalty) {
+                                          float penalty, int total_elements) {
   int i = blockIdx.x * blockDim.x + threadIdx.x;
-  if (i < vocab_size) {
+  if (i < total_elements) {
+    int vocab_idx = i % vocab_size;
     float val = logits[i];
     // token_list に含まれるか確認
     bool found = false;
     for (int t = 0; t < token_len; t++) {
-      if ((int)tokens[t] == i) {
+      if ((int)tokens[t] == vocab_idx) {
         found = true;
         break;
       }
@@ -2347,11 +2348,12 @@ void launch_top_p_sample_kernel(const float *logits, float *output,
 void launch_repetition_penalty_kernel(const float *logits, const float *tokens,
                                       float *output, int vocab_size,
                                       int token_len, float penalty,
+                                      int total_elements,
                                       cudaStream_t stream) {
   int threads = 256;
-  int blocks = (vocab_size + threads - 1) / threads;
+  int blocks = (total_elements + threads - 1) / threads;
   repetition_penalty_kernel<<<blocks, threads, 0, stream>>>(
-      logits, tokens, output, vocab_size, token_len, penalty);
+      logits, tokens, output, vocab_size, token_len, penalty, total_elements);
 }
 
 // --- Phase D: fused ---

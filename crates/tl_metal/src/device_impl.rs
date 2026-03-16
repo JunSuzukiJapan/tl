@@ -626,16 +626,28 @@ impl IDevice for MetalDeviceImpl {
         let mut data = tl.to_vec::<f32>();
         let tok = tt.to_vec::<f32>();
         let p = penalty as f32;
-        for &idx in &tok {
-            let i = idx as usize;
-            if i < data.len() {
-                data[i] = if data[i] > 0.0 {
-                    data[i] / p
+        
+        let shape = tl.shape();
+        let vocab_size = *shape.last().unwrap_or(&1);
+        let seq_len = data.len() / vocab_size;
+        
+        // Deduplicate tokens to apply penalty only once per unique token
+        let mut unique_toks = tok.iter().map(|&x| x as usize).filter(|&i| i < vocab_size).collect::<Vec<_>>();
+        unique_toks.sort_unstable();
+        unique_toks.dedup();
+        
+        for s in 0..seq_len {
+            let offset = s * vocab_size;
+            for &i in &unique_toks {
+                let val = data[offset + i];
+                data[offset + i] = if val > 0.0 {
+                    val / p
                 } else {
-                    data[i] * p
+                    val * p
                 };
             }
         }
+        
         Ok(ffi_ops::make_tensor(MetalTensor::from_slice(
             &data,
             tl.shape(),
