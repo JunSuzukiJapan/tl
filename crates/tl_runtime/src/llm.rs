@@ -87,12 +87,12 @@ pub extern "C" fn tl_tensor_rms_norm_llm(t: *mut OpaqueTensor, eps: f64) -> *mut
     if t.is_null() {
         return std::ptr::null_mut();
     }
-    let tensor = unsafe { &*t };
-    let data: Vec<f32> = tensor.to_vec();
+    let data: Vec<f32> = crate::device_ffi::read_runtime_tensor_to_f32_vec(t as *mut std::ffi::c_void);
+    let shape = crate::device_ffi::read_runtime_tensor_shape(t as *mut std::ffi::c_void);
     let mean_sq: f32 = data.iter().map(|&x| x * x).sum::<f32>() / data.len() as f32;
     let rms = (mean_sq + eps as f32).sqrt();
     let result_data: Vec<f32> = data.iter().map(|&x| x / rms).collect();
-    crate::device_ffi::create_runtime_tensor_f32(&result_data, tensor.shape()) as *mut OpaqueTensor
+    crate::device_ffi::create_runtime_tensor_f32(&result_data, &shape) as *mut OpaqueTensor
 }
 
 // tl_gguf_load と tl_tokenizer_new_from_gguf は system.rs で定義

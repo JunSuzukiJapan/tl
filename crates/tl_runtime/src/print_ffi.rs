@@ -94,8 +94,7 @@ pub extern "C" fn tl_tensor_display(t: *mut OpaqueTensor) {
         return;
     }
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let tensor = unsafe { &*t };
-        let data: Vec<f32> = tensor.to_vec();
+        let data: Vec<f32> = crate::device_ffi::read_runtime_tensor_to_f32_vec(t as *mut std::ffi::c_void);
         if data.len() <= 10 {
             print!("{:?}", data);
         } else {
@@ -172,9 +171,8 @@ pub extern "C" fn tl_tensor_print_1(t: *mut OpaqueTensor) {
         println!("Tensor: [null]");
         return;
     }
-    let tensor = unsafe { &*t };
-    let shape = tensor.shape();
-    let data: Vec<f32> = tensor.to_vec();
+    let shape = crate::device_ffi::read_runtime_tensor_shape(t as *mut std::ffi::c_void);
+    let data: Vec<f32> = crate::device_ffi::read_runtime_tensor_to_f32_vec(t as *mut std::ffi::c_void);
     println!("Tensor shape={:?} data={:?}", shape, &data[..data.len().min(20)]);
 }
 
@@ -192,9 +190,8 @@ pub extern "C" fn tl_tensor_print_2(name: *mut StringStruct, t: *mut OpaqueTenso
             println!("{}: [null]", name_str);
             return;
         }
-        let tensor = &*t;
-        let shape = tensor.shape();
-        let data: Vec<f32> = tensor.to_vec();
+        let shape = crate::device_ffi::read_runtime_tensor_shape(t as *mut std::ffi::c_void);
+        let data: Vec<f32> = crate::device_ffi::read_runtime_tensor_to_f32_vec(t as *mut std::ffi::c_void);
         println!("{} shape={:?} data={:?}", name_str, shape, &data[..data.len().min(20)]);
     }
 }
@@ -213,9 +210,8 @@ pub extern "C" fn tl_tensor_print_3(name: *mut StringStruct, t: *mut OpaqueTenso
             println!("{}: [null]", name_str);
             return;
         }
-        let tensor = &*t;
-        let shape = tensor.shape();
-        let data: Vec<f32> = tensor.to_vec();
+        let shape = crate::device_ffi::read_runtime_tensor_shape(t as *mut std::ffi::c_void);
+        let data: Vec<f32> = crate::device_ffi::read_runtime_tensor_to_f32_vec(t as *mut std::ffi::c_void);
         let max = max_items.max(1) as usize;
         println!("{} shape={:?} data={:?}", name_str, shape, &data[..data.len().min(max)]);
     }

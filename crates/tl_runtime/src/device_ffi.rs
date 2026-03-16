@@ -1633,6 +1633,35 @@ pub fn read_runtime_tensor_to_i64_vec(t: *mut c_void) -> Vec<i64> {
     }
 }
 
+/// テンソル shape 読み取りヘルパー: CPU/GPU 両対応
+/// OpaqueTensor ポインタから shape を Vec<usize> として読み出す
+pub fn read_runtime_tensor_shape(t: *mut c_void) -> Vec<usize> {
+    if t.is_null() {
+        return Vec::new();
+    }
+    if is_cpu() {
+        let tensor = unsafe { &*(t as *mut tl_cpu::CpuTensor<f32>) };
+        tensor.shape().to_vec()
+    } else {
+        #[cfg(target_os = "macos")]
+        {
+            let tensor = unsafe { &*(t as *const std::cell::UnsafeCell<tl_metal::MetalTensor>) };
+            unsafe { (*tensor.get()).shape().to_vec() }
+        }
+        #[cfg(target_os = "linux")]
+        {
+            let tensor =
+                unsafe { &*(t as *const std::cell::UnsafeCell<tl_cuda::tensor::CudaTensor>) };
+            unsafe { (*tensor.get()).shape().to_vec() }
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        {
+            let tensor = unsafe { &*(t as *mut tl_cpu::CpuTensor<f32>) };
+            tensor.shape().to_vec()
+        }
+    }
+}
+
 /// U8 テンソル作成ヘルパー
 pub fn create_runtime_tensor_u8(data: &[u8], shape: &[usize]) -> *mut c_void {
     if is_cpu() {

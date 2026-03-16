@@ -82,8 +82,7 @@ pub extern "C" fn tl_tokenizer_decode(
         }
         let tokenizer = &*(tokenizer_handle as *const OpaqueTokenizer);
         let tok = &tokenizer.inner;
-        let tensor = &*ids;
-        let data: Vec<f32> = tensor.to_vec();
+        let data: Vec<f32> = crate::device_ffi::read_runtime_tensor_to_f32_vec(ids as *mut std::ffi::c_void);
         let token_ids: Vec<u32> = data.iter().map(|&f| f as u32).collect();
         
         let text = if token_ids.len() == 1 {

@@ -31,33 +31,30 @@ impl TensorValue {
                 if ptr.is_null() {
                     return None;
                 }
-                unsafe {
-                    let tensor = &**ptr;
-                    let shape = tensor.shape();
+                let shape = crate::device_ffi::read_runtime_tensor_shape(*ptr as *mut std::ffi::c_void);
                     
-                    // インデックスを線形アドレスに変換
-                    if indices.len() != shape.len() {
+                // インデックスを線形アドレスに変換
+                if indices.len() != shape.len() {
+                    return None;
+                }
+                    
+                let mut linear_idx = 0usize;
+                let mut stride = 1usize;
+                for i in (0..indices.len()).rev() {
+                    let idx = indices[i] as usize;
+                    if idx >= shape[i] {
                         return None;
                     }
+                    linear_idx += idx * stride;
+                    stride *= shape[i];
+                }
                     
-                    let mut linear_idx = 0usize;
-                    let mut stride = 1usize;
-                    for i in (0..indices.len()).rev() {
-                        let idx = indices[i] as usize;
-                        if idx >= shape[i] {
-                            return None;
-                        }
-                        linear_idx += idx * stride;
-                        stride *= shape[i];
-                    }
-                    
-                    // テンソルからデータを取得
-                    let data: Vec<f32> = tensor.to_vec();
-                    if linear_idx < data.len() {
-                        Some(data[linear_idx] as f64)
-                    } else {
-                        None
-                    }
+                // テンソルからデータを取得
+                let data: Vec<f32> = crate::device_ffi::read_runtime_tensor_to_f32_vec(*ptr as *mut std::ffi::c_void);
+                if linear_idx < data.len() {
+                    Some(data[linear_idx] as f64)
+                } else {
+                    None
                 }
             }
             TensorValue::Null => None,
