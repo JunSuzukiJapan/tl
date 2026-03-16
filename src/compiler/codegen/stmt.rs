@@ -1850,14 +1850,14 @@ impl<'ctx> CodeGenerator<'ctx> {
                 
                 let (val_ir, val_ty) = self.compile_expr(value)?;
 
-                if let Ok((Some(lhs_ptr), lhs_type, _, lhs_scope_name)) = lvalue_res {
+                if let Ok((Some(lhs_ptr), lhs_type, lhs_cleanup_mode, lhs_scope_name)) = lvalue_res {
                      // STANDARD ASSIGNMENT (Var or Field)
                     match op {
                         AssignOp::Assign => {
                             let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
                             
-                            // Free old if needed
-                            if matches!(lhs_type, Type::Struct(_,_) | Type::Tensor(_,_)) {
+                            // Free old if needed — but only if the variable owns the value (CLEANUP_NONE = borrowed, e.g. function args)
+                            if lhs_cleanup_mode != super::CLEANUP_NONE && matches!(lhs_type, Type::Struct(_,_) | Type::Tensor(_,_)) {
                                  let old_val = self.builder.build_load(load_type, lhs_ptr, "old").unwrap().into_pointer_value();
                                  let null_ptr = load_type.const_null();
                                  let is_not_null = self.builder.build_int_compare(inkwell::IntPredicate::NE, old_val, null_ptr, "").unwrap();
