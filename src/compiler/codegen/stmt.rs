@@ -3428,129 +3428,82 @@ impl<'ctx> CodeGenerator<'ctx> {
                     return self.emit_deep_clone(val, &Type::String(name.clone()));
                 }
 
-                // Built-in opaque types: ARC参照カウントで共有所有権を管理
-                // File/Path: tl_ptr_acquire で参照カウントを増やす
-                //   (以降の汎用 Struct ARC パスにフォールスルー)
-                // Env/Http: ステートレスなシングルトン（内部状態を持たず、
-                //   グローバルな静的インスタンスへのポインタ）のため、
-                //   参照カウント操作は不要でポインタをそのまま返す
+                // Built-in opaque types
+                // Env/Http: ステートレスなシングルトンのためポインタをそのまま返す
                 if name == "Env" || name == "Http" {
                     return Ok(val);
                 }
 
-                // Reference Semantics for Structs (Shared Ownership)
-                // Instead of deep copying (malloc + loop), we treat structs like RefCounted objects (like Tensors).
-                // We acquire a reference and return the same pointer.
-                
                 // Check if it is a ZST (Value Type)
                 if !val.is_pointer_value() {
                     return Ok(val);
                 }
 
-                // 1. Acquire reference
-                let acquire_fn = self
-                    .module
-                    .get_function("tl_ptr_acquire")
-                    .ok_or("tl_ptr_acquire not found")?;
-
-                let ptr = val.into_pointer_value();
-                let void_ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
-                let cast_ptr = self
-                    .builder
-                    .build_pointer_cast(ptr, void_ptr_type, "cast_struct_ptr")
-                    .unwrap();
-
-                 self.builder
-                    .build_call(acquire_fn, &[cast_ptr.into()], "")
-                    .map_err(|e| e.to_string())?;
-
-                // 2. Return SAME pointer
-                return Ok(val);
-
-                /* 
-                 * DEPRECATED: Deep Copy Logic (removed)
-                 * This caused massive leaks & trace traps because copies were unregistered.
-                 */
-                #[allow(unreachable_code)]
+                // V6.0: True Deep Copy — source と dest が完全に独立したメモリを持つ
+                // これにより `let mut s = self` でフィールド更新が互いに影響しない
+                // (V5.1 の SRET RC 蓄積問題の根本解決)
                 let simple_name = name.as_str();
 
                 let struct_def = self
                     .struct_defs
                     .get(simple_name)
-                    .ok_or(format!("Struct {} definition not found", name))?;
+                    .ok_or(format!("Struct {} definition not found for deep clone", name))?
+                    .clone();
                 let st_llvm_ty = *self
                     .struct_types
                     .get(simple_name)
-                    .ok_or("LLVM Struct type not found")?;
+                    .ok_or(format!("LLVM Struct type {} not found for deep clone", name))?;
 
-                // Calculate size manually for correct alignment/type (i64)
-                let size_ptr = unsafe {
-                    self.builder.build_gep(
-                        st_llvm_ty,
-                        self.context.ptr_type(inkwell::AddressSpace::default()).const_null(),
-                        &[self.context.i64_type().const_int(1, false)],
-                        "size_ptr",
-                    ).map_err(|e| e.to_string())?
+                // 1. Allocate new struct memory
+                let size = st_llvm_ty
+                    .size_of()
+                    .ok_or(format!("Cannot get size of struct {}", name))?;
+                let size_i64 = if size.get_type() == self.context.i32_type() {
+                    self.builder.build_int_z_extend(size, self.context.i64_type(), "size_i64").unwrap()
+                } else {
+                    size
                 };
-                let size = self.builder
-                    .build_ptr_to_int(size_ptr, self.context.i64_type(), "size")
-                    .map_err(|e| e.to_string())?;
-
                 let malloc_fn = self.module.get_function("malloc").ok_or("malloc not found")?;
-                let new_struct_ptr_val = match self.builder
-                    .build_call(malloc_fn, &[size.into()], &format!("copy_{}", name))
+                let new_struct_ptr = match self.builder
+                    .build_call(malloc_fn, &[size_i64.into()], &format!("deep_clone_{}", name))
                     .map_err(|e| e.to_string())?
                     .try_as_basic_value() {
                         inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
                         _ => return Err("malloc returned void".into()),
                     };
 
-                // Cast if necessary (malloc returns i8* usually/void* so cast to struct*)
-                let new_struct_ptr = new_struct_ptr_val; // Inkwell pointer is typed/untyped depending on version but GEP needs type
+                // 2. Register with MemoryManager
+                let void_ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                if let Some(register_fn) = self.module.get_function("tl_mem_register") {
+                    let cast = self.builder
+                        .build_pointer_cast(new_struct_ptr, void_ptr_type, "reg_cast")
+                        .unwrap();
+                    self.builder.build_call(register_fn, &[cast.into()], "").unwrap();
+                }
 
-                // Register with MemoryManager (important for nested structs which are not Variables)
-                // Actually, if it's a field, it's owned by the parent struct.
-                // The parent struct's free will recursively free this.
-                // But wait, standard malloc isn't tracked by MemoryManager unless registered.
-                // If we use recursive_free for the parent, it calls libc::free on fields.
-                // So checking registration is not strictly needed for fields if recursive_free handles it.
-                // However, for consistency/debug, we could register? No, let's stick to recursive_free logic.
-
+                // 3. Deep copy each field
                 let src_ptr = val.into_pointer_value();
-
                 for (i, (field_name, field_ty)) in struct_def.fields.iter().enumerate() {
                     let src_field_ptr = self
                         .builder
-                        .build_struct_gep(
-                            st_llvm_ty,
-                            src_ptr,
-                            i as u32,
-                            &format!("src_{}", field_name),
-                        )
+                        .build_struct_gep(st_llvm_ty, src_ptr, i as u32, &format!("src_{}", field_name))
                         .map_err(|e| e.to_string())?;
                     let dst_field_ptr = self
                         .builder
-                        .build_struct_gep(
-                            st_llvm_ty,
-                            new_struct_ptr,
-                            i as u32,
-                            &format!("dst_{}", field_name),
-                        )
+                        .build_struct_gep(st_llvm_ty, new_struct_ptr, i as u32, &format!("dst_{}", field_name))
                         .map_err(|e| e.to_string())?;
 
-                    let val = match field_ty {
+                    let store_val = match field_ty {
                         Type::Tensor(_, _)
                         | Type::TensorShaped(_, _)
                         | Type::Struct(_, _)
                         | Type::Enum(_, _)
-                        | Type::Tuple(_) => {
+                        | Type::Tuple(_)
+                        | Type::String(_) => {
+                            let ptr_ty: inkwell::types::BasicTypeEnum = self.context.ptr_type(inkwell::AddressSpace::default()).into();
                             let loaded = self
                                 .builder
-                                .build_load(
-                                    self.context.ptr_type(inkwell::AddressSpace::default()),
-                                    src_field_ptr,
-                                    "f_val",
-                                )
+                                .build_load(ptr_ty, src_field_ptr, "f_val")
                                 .map_err(|e| e.to_string())?;
                             self.emit_deep_clone(loaded, field_ty)?
                         }
@@ -3558,12 +3511,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                             let llvm_ty: inkwell::types::BasicTypeEnum = match field_ty {
                                 Type::F32 => self.context.f32_type().into(),
                                 Type::F64 => self.context.f64_type().into(),
-                                Type::I64 => self.context.i64_type().into(),
-                                Type::I32 => self.context.i32_type().into(),
+                                Type::I64 | Type::Usize | Type::Entity => self.context.i64_type().into(),
+                                Type::I32 | Type::Char(_) => self.context.i32_type().into(),
+                                Type::U8 => self.context.i8_type().into(),
                                 Type::Bool => self.context.bool_type().into(),
-                                _ => {
-                                    return Err(format!("Unsupported clone field: {:?}", field_ty))
-                                }
+                                _ => self.context.i64_type().into(),
                             };
                             self.builder
                                 .build_load(llvm_ty, src_field_ptr, "prim_val")
@@ -3572,10 +3524,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                     };
 
                     self.builder
-                        .build_store(dst_field_ptr, val)
+                        .build_store(dst_field_ptr, store_val)
                         .map_err(|e| e.to_string())?;
                 }
-                // Return new struct ptr
+
+                // 4. Return new independent struct pointer
                 Ok(new_struct_ptr.into())
             }
             Type::Tuple(ts) => {
