@@ -21,11 +21,16 @@ pub type OpaqueTensor = MetalTensor;
 #[no_mangle]
 pub extern "C" fn tl_metal_clone(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
-    unsafe {
-        let arc = Arc::from_raw(t as *const UnsafeCell<MetalTensor>);
-        let cloned = arc.clone();
-        let _ = Arc::into_raw(arc); // Keep original alive
-        Arc::into_raw(cloned) as *mut OpaqueTensor
+    let tensor = unsafe { &*t };
+    // Deep copy: データを完全にコピーして独立した新しいテンソルを作成。
+    // Arc::clone() だけでは同じデータを共有するため、学習ループでの
+    // パラメータ更新時に共有データの不整合が発生し SIGBUS になる。
+    match tensor.clone_data() {
+        Ok(cloned) => crate::ffi_ops::make_tensor(cloned),
+        Err(e) => {
+            eprintln!("Metal clone failed: {}", e);
+            std::ptr::null_mut()
+        }
     }
 }
 

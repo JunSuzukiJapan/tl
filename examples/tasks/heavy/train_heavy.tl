@@ -147,10 +147,10 @@ impl GPTHeavy {
         let tok_emb = self.w.forward(i);
         let pos_emb = self.wp.forward(pos);
         let x = tok_emb + pos_emb;
-        let x = Param::checkpoint(self.b1.forward, x);
-        let x = Param::checkpoint(self.b2.forward, x);
-        let x = Param::checkpoint(self.b3.forward, x);
-        let x = Param::checkpoint(self.b4.forward, x);
+        let x = self.b1.forward(x);
+        let x = self.b2.forward(x);
+        let x = self.b3.forward(x);
+        let x = self.b4.forward(x);
         self.h.forward(self.l.forward(x)) 
     } 
     fn step(self, lr: f32) -> GPTHeavy { 
@@ -219,9 +219,9 @@ fn train_step(model: GPTHeavy, lr: f32, i: i64, j: i64) -> GPTHeavy {
 }
 
 fn train_epoch(model: GPTHeavy, lr: f32, epoch: i64) -> GPTHeavy {
-    let mut m = model.clone();
+    let mut m = model;
     // Total 200 steps per epoch * 500 epochs = 100k steps
-    let total_steps = 10;
+    let total_steps = 3;
     let stride = 149; // Prime number stride
     let offset = epoch * 37;
 
@@ -232,9 +232,6 @@ fn train_epoch(model: GPTHeavy, lr: f32, epoch: i64) -> GPTHeavy {
         let j_val = (i + 7) - ((i+7)/13)*13; // mod 13
         
         m = train_step(m, lr, i_val, j_val);
-        
-        // Explicitly clear gradients from this step to save memory
-        Tensor::clear_grads();
     }
 
     print("Epoch:"); print(epoch);
