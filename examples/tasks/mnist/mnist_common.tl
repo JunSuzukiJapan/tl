@@ -42,6 +42,15 @@ impl Linear {
 
 }
 
+// Read a big-endian i32 from 4 consecutive bytes in a Vec<u8>
+fn read_i32_be(vec: Vec<u8>, offset: i64) -> i64 {
+    let b0 = vec.get(offset) as i64;
+    let b1 = vec.get(offset + 1) as i64;
+    let b2 = vec.get(offset + 2) as i64;
+    let b3 = vec.get(offset + 3) as i64;
+    b0 * 16777216 + b1 * 65536 + b2 * 256 + b3
+}
+
 fn load_mnist_images(path: String) -> Tensor<f32, 2> {
     println("Loading images from: {}", path);
     let vec = File::read_binary(path);
@@ -53,27 +62,31 @@ fn load_mnist_images(path: String) -> Tensor<f32, 2> {
         return t;
     }
 
-    let magic = vec.read_i32_be(0);
-    let count = vec.read_i32_be(4);
-    let rows = vec.read_i32_be(8);
-    let cols = vec.read_i32_be(12);
+    let magic = read_i32_be(vec, 0);
+    let count = read_i32_be(vec, 4);
+    let rows = read_i32_be(vec, 8);
+    let cols = read_i32_be(vec, 12);
     
     println("  Count: {} Shape: {} x {}", count, rows, cols);
     
     let dim = rows * cols;
     
-    // Use the new specialized to_tensor_2d method
-    if count == 60000 {
-        let t = vec.to_tensor_2d(16, 60000, 784);
-        vec.free();
-        return t as Tensor<f32, 2>;
+    // Use Tensor::from_vec_u8 to convert byte data to tensor
+    // Pixel data starts at offset 16
+    // First, we need to create a sub-view from offset 16
+    // Since from_vec_u8 doesn't support offset, we'll read manually
+    let mut result: Tensor<f32, 2> = Tensor::zeros([count, 784], false);
+    
+    let total_pixels = count * 784;
+    for i in range(0, total_pixels) {
+        let byte_val = vec.get(16 + i);
+        let row = i / 784;
+        let col = i - (row * 784);
+        result[row, col] = (byte_val as f32) / 255.0;
     }
     
-    // Assume 10000 for test set
-    let t = vec.to_tensor_2d(16, 10000, 784);
-    
     vec.free();
-    t as Tensor<f32, 2>
+    result
 }
 
 fn load_mnist_labels(path: String) -> Tensor<i64, 1> {
@@ -86,8 +99,8 @@ fn load_mnist_labels(path: String) -> Tensor<i64, 1> {
         return t;
     }
     
-    let magic = vec.read_i32_be(0);
-    let count = vec.read_i32_be(4);
+    let magic = read_i32_be(vec, 0);
+    let count = read_i32_be(vec, 4);
     println("  Count: {}", count);
     
     let t = Tensor::from_u8_labels(vec, 8, count);

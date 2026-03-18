@@ -5,8 +5,8 @@ fn main() {
     print("=== MNIST Training ===");
     Param::set_device(Device::Auto);
     
-    let train_x = mnist_common::load_mnist_images("examples/tasks/mnist/data/train-images-idx3-ubyte");
-    let train_y = mnist_common::load_mnist_labels("examples/tasks/mnist/data/train-labels-idx1-ubyte");
+    let train_x = mnist_common::load_mnist_images("data/train-images-idx3-ubyte");
+    let train_y = mnist_common::load_mnist_labels("data/train-labels-idx1-ubyte");
     
     // Use fully qualified name
     let mut model = mnist_common::Linear::new(784, 10);
@@ -61,6 +61,6 @@ fn main() {
     }
     
     print("Saving model weights...");
-    Param::save(model, "examples/tasks/mnist/mnist_weights.safetensors");
+    Param::save(model, "mnist_weights.safetensors");
     print("Model saved.");
 }

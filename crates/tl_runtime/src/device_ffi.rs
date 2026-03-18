@@ -1205,14 +1205,23 @@ pub extern "C" fn tl_device_tensor_transpose(
 ) -> *mut c_void {
     dispatch(|d| d.tensor_transpose(a, dim0, dim1))
 }
-/// @ffi_sig (Tensor*, i64, i64, i64) -> Tensor*
+/// @ffi_sig (Tensor*, i64, i64, i64, i64) -> Tensor*
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_device_tensor_slice(
     a: *mut c_void,
     dim: i64,
     start: i64,
-    len: i64,
+    end: i64,
+    step: i64,
 ) -> *mut c_void {
+    // Convert (dim, start, end, step) to (dim, start, len)
+    // step は現在1のみ対応
+    let len = if step == 1 {
+        end - start
+    } else {
+        // step != 1: (end - start + step - 1) / step
+        (end - start + step - 1) / step
+    };
     dispatch(|d| d.tensor_slice(a, dim, start, len))
 }
 /// @ffi_sig (Tensor*, usize, usize, usize) -> Tensor*

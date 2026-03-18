@@ -25,47 +25,7 @@ fn get_causal_mask(size: i64) -> Tensor<f32, 2> {
     return mask.detach(false);
 }
 
-// Cross Entropy (手動実装)
-fn my_cross_entropy(logits: Tensor<f32, 3>, targets: Tensor<f32, 2>) -> Tensor<f32, 1> {
-    let T = 12;
-    let V = 13;
-    
-    let probs = logits.softmax(2);
-    let log_probs = probs.log();
-    
-    let log_probs_flat = log_probs.reshape([T, V]);
-    let targets_flat = targets.reshape([T]);
-    
-    let mut mask: Tensor<f32, 2> = Tensor::randn([T, V], false) * 0.0;
-    for i in range(0, T) {
-        let t = targets_flat[i] as i64;
-        mask[i, t] = 1.0;
-    }
-    let mask_d = mask.detach(false);
-    
-    let selected = mask_d * log_probs_flat;
-    print("DEBUG: my_cross_entropy selected calculated");
-    let sum_log_probs = selected.sumall();
-    print("DEBUG: my_cross_entropy sumall calculated");
-    
-    // -1 * mean を計算
-    let mut neg_one: Tensor<f32, 1> = Tensor::randn([1], false) * 0.0;
-    neg_one[0] = -1.0;
-    let neg_one_d = neg_one.detach(false);
-    print("DEBUG: neg_one created");
-    
-    let mut n_float: Tensor<f32, 1> = Tensor::randn([1], false) * 0.0;
-    n_float[0] = 12.0;
-    let n_float_d = n_float.detach(false);
-    print("DEBUG: n_float created");
-    
-    let mean = sum_log_probs / n_float_d;
-    print("DEBUG: mean calculated");
-    let neg_mean = mean * neg_one_d;
-    print("DEBUG: neg_mean calculated");
-    
-    neg_mean
-}
+// Cross Entropy: ビルトインの cross_entropy() を使用
 
 // ---------------
 // Model Components
@@ -347,7 +307,7 @@ fn train_step(model: GPT, lr: f32, i: i64, j: i64) -> GPT {
 
     let logits = model_forward.forward(X);
     // print("DEBUG: loss computed");
-    let loss = my_cross_entropy(logits, Y);
+    let loss = logits.cross_entropy(Y);
     // print("DEBUG: loss backward start");
 
     loss.backward();
@@ -375,8 +335,8 @@ fn train_epoch(model: GPT, lr: f32, epoch: i64) -> GPT {
     model
 }
 
-fn get_memory() -> i64 {
-    System::memory_mb() as i64
+fn get_memory() -> f64 {
+    System::memory_mb()
 }
 
 fn main() {

@@ -8499,87 +8499,20 @@ fn compile_checkpoint<'ctx>(
     if args.len() != 2 {
         return Err("checkpoint requires 2 arguments: (method_ref, input)".into());
     }
-    // Parse args[0] as obj.method
-    let (obj_ptr, fn_ptr) = if let ExprKind::FieldAccess(obj_expr, method_name) = &args[0].inner {
-        let (obj_val, obj_ty) = codegen.compile_expr(obj_expr)?;
 
-        // Get struct type
-        let struct_name = match obj_ty {
-            Type::Struct(n, _) => n,
-            _ => return Err("checkpoint arg 1 must be object.method".into()),
-        };
+    // Inline expansion: Param::checkpoint(obj.method, input) → obj.method(input)
+    // Instead of going through the runtime (which has JIT ABI issues),
+    // we directly compile the method call using the normal codegen path.
+    if let ExprKind::FieldAccess(obj_expr, method_name) = &args[0].inner {
+        // Compile input as the method argument
+        let input_args = &args[1..2];
 
-        // Find function: Struct_Method
-        let fn_name = format!("tl_{}_{}", struct_name, method_name);
-        let fn_val = codegen
-            .module
-            .get_function(&fn_name)
-            .ok_or(format!("Method {} not found", fn_name))?;
-
-        // Cast function to void pointer
-        let fn_ptr_val = fn_val.as_global_value().as_pointer_value();
-        let void_fn_ptr = codegen
-            .builder
-            .build_bit_cast(
-                fn_ptr_val,
-                codegen.context.ptr_type(inkwell::AddressSpace::default()),
-                "fn_void_ptr",
-            )
-            .map_err(|e| e.to_string())?;
-
-        let obj_ptr = codegen
-            .builder
-            .build_bit_cast(
-                obj_val.into_pointer_value(),
-                codegen.context.ptr_type(inkwell::AddressSpace::default()),
-                "obj_void_ptr",
-            )
-            .map_err(|e| e.to_string())?;
-
-        (obj_ptr, void_fn_ptr)
+        // Use the standard method call compilation path
+        let (val, ty) = codegen.compile_method_call(obj_expr, method_name, input_args)?;
+        Ok((val, ty))
     } else {
-        return Err("checkpoint first argument must be 'obj.method'".into());
-    };
-
-    // Compile input
-    let (arg_val, arg_ty) = codegen.compile_expr(&args[1])?;
-    if !matches!(arg_ty, Type::Tensor(_, _)) {
-        return Err("checkpoint input must be tensor".into());
+        Err("checkpoint first argument must be 'obj.method'".into())
     }
-
-    // Call runtime
-    let cp_fn = codegen
-        .module
-        .get_function("tl_checkpoint")
-        .expect("tl_checkpoint not found");
-    let arg_ptr = codegen
-        .builder
-        .build_bit_cast(
-            arg_val.into_pointer_value(),
-            codegen.context.ptr_type(inkwell::AddressSpace::default()),
-            "arg_cast",
-        )
-        .map_err(|e| e.to_string())?;
-
-    let call = codegen
-        .builder
-        .build_call(
-            cp_fn,
-            &[obj_ptr.into(), fn_ptr.into(), arg_ptr.into()],
-            "checkpoint_res",
-        )
-        .map_err(|e| e.to_string())?;
-
-    let res_val = match call.try_as_basic_value() {
-        inkwell::values::ValueKind::Basic(v) => v,
-        _ => return Err("tl_checkpoint did not return a value".into()),
-    };
-
-    // Register result
-    let res_ty = arg_ty.clone(); // Checkpoint returns same type as input
-    codegen.emit_register_tensor(res_val, &res_ty)?;
-
-    Ok((res_val, res_ty))
 }
 
 fn compile_print_common<'ctx>(

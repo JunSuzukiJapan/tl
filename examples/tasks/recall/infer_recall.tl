@@ -294,7 +294,7 @@ fn main() {
         
         let val_logits_flat = val_logits.reshape([13, 30]);
         let val_logits_1d = val_logits_flat.reshape([390]);
-        let last_row = val_logits_1d.slice(360, 30); // 12 * 30 = 360
+        let last_row = val_logits_1d.slice(0, 360, 390, 1); // dim=0, start=360, end=390, step=1
         
         // Double cast workaround for argmax U32 -> F32 issue
         let pred_t = last_row.argmax(0);

@@ -1,9 +1,10 @@
-// 論文アーキテクチャ(2層) + 実績のある強めの初期化(std=0.1) + d_model=256
+// セグフォルトの最小再現テスト v4
+// Paper と同一構造 (clone なし)
+
 struct Linear { W: Tensor<f32, 2>, b: Tensor<f32, 1> }
 impl Linear { 
     fn new(i: i64, o: i64) -> Linear { 
-        // 0.1
-        return Linear((Tensor::randn([i, o], true)*0.1).detach(), (Tensor::randn([o], true)*0.0).detach()); 
+        Linear((Tensor::randn([i, o], true)*0.1).detach(), (Tensor::randn([o], true)*0.0).detach()) 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
         x.matmul(self.W) + self.b 
@@ -59,8 +60,6 @@ impl CausalSelfAttention {
         let q = self.q_proj.forward(x); 
         let k = self.k_proj.forward(x); 
         let v = self.v_proj.forward(x); 
-        // scale = 1/sqrt(d_model) = 1/sqrt(256) = 0.0625
-        // Original: matmul(softmax(tril(matmul(q, transpose(k, 1, 2))*0.0625, 0), 2), v)
         let k_t = k.transpose(1, 2);
         let qk = q.matmul(k_t) * 0.0625;
         let masked = qk.tril(0);
@@ -80,9 +79,7 @@ impl CausalSelfAttention {
 
 struct MLP { f: Linear, p: Linear }
 impl MLP { 
-    fn new(d: i64) -> MLP { 
-        MLP(Linear::new(d, d*4), Linear::new(d*4, d)) 
-    } 
+    fn new(d: i64) -> MLP { MLP(Linear::new(d, d*4), Linear::new(d*4, d)) } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
         self.p.forward(self.f.forward(x).relu()) 
     } 
@@ -113,18 +110,10 @@ impl Block {
     } 
 }
 
-// 2-Layer GPT (論文に合わせた設定)
 struct GPT2 { w: Embedding, wp: Embedding, b1: Block, b2: Block, l: LayerNorm, h: Linear }
 impl GPT2 { 
     fn new(v: i64, d: i64) -> GPT2 { 
-        GPT2(
-            Embedding::new(v, d), 
-            Embedding::new(12, d), 
-            Block::new(d), 
-            Block::new(d), 
-            LayerNorm::new(d), 
-            Linear::new(d, v)
-        ) 
+        GPT2(Embedding::new(v, d), Embedding::new(12, d), Block::new(d), Block::new(d), LayerNorm::new(d), Linear::new(d, v)) 
     } 
     fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> { 
         let pos_data = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0];
@@ -150,7 +139,6 @@ impl GPT2 {
 
 fn train_step(model: GPT2, lr: f32, i: i64, j: i64) -> GPT2 {
     let sum = i + j;
-    
     let i_d10 = i / 10;
     let i_d1 = i - (i_d10 * 10);
     let j_d10 = j / 10;
@@ -174,7 +162,6 @@ fn train_step(model: GPT2, lr: f32, i: i64, j: i64) -> GPT2 {
         v_s_d1, v_s_d10, v_s_d100, 
         12.0, 12.0, 12.0
     ];
-    
     let target = [
         v_i_d10, 10.0, 
         v_j_d1, v_j_d10, 11.0, 
@@ -194,52 +181,14 @@ fn train_step(model: GPT2, lr: f32, i: i64, j: i64) -> GPT2 {
     model.step(lr)
 }
 
-fn train_epoch(model: GPT2, lr: f32, epoch: i64) -> GPT2 {
-    let total_steps = 300;
-    let stride = 137;
-    let offset = epoch * 79; 
-
-    for s in range(0, total_steps) {
-        let raw = s * stride + offset;
-        let idx = raw - ((raw / 10000) * 10000);
-        let i = idx / 100;
-        let j = idx - ((idx / 100) * 100);
-        model = train_step(model, lr, i, j);
-    }
-    
-    // テストケース
-    for r in range(0, 5) {
-        model = train_step(model, lr, 12, 34);  // 46
-        model = train_step(model, lr, 99, 1);   // 100
-    }
-    
-    print("Epoch:"); print(epoch);
-    model
-}
-
 fn main() {
-    // 論文に合わせたパラメータ (d=256)
-    let vocab_size = 13;
-    let d_model = 256;  
-    
-    let mut model = GPT2::new(vocab_size, d_model);
-    
-    // 既存モデルがあればロードして再開
-    Param::load_all("model_paper.safetensors");
-    
-    // 論文より強めの学習率 (0.001)
+    let mut model = GPT2::new(13, 256);
     let lr = 0.001;
-    let epochs = 100;
-
-    print("Paper-based Training: 2-layer GPT, d_model=256, lr=0.001, 100 epochs");
-
-    for epoch in range(0, epochs) {
-        model = train_epoch(model, lr, epoch);
-        if epoch - ((epoch / 5) * 5) == 4 {
-            Param::save_all("model_paper.safetensors");
-            print("Saved checkpoint.");
-        }
+    
+    print("Starting training loop...");
+    for s in range(0, 10) {
+        model = train_step(model, lr, 12, 34);
+        print("Step:"); print(s);
     }
-    print("Training Complete!");
-    Param::save_all("model_paper.safetensors");
+    print("Training completed!");
 }

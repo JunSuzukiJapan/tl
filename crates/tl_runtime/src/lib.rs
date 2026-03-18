@@ -136,7 +136,7 @@ pub use memory_ffi::{tl_ptr_acquire, tl_tensor_release_safe, tl_tensor_finalize,
 
 // ========== Checkpoint Exports ==========
 pub use checkpoint::{
-    tl_checkpoint_save, tl_checkpoint_load,
+    tl_checkpoint,
 };
 
 // ========== File Exports ==========

@@ -1,18 +1,18 @@
-// SKIP: Requires external resources or model files
 // MNIST Inference
+
 mod mnist_common;
 
 fn main() {
     print("=== MNIST Inference ===");
     
-    let test_x = mnist_common::load_mnist_images("examples/tasks/mnist/data/t10k-images-idx3-ubyte");
-    let test_y = mnist_common::load_mnist_labels("examples/tasks/mnist/data/t10k-labels-idx1-ubyte");
+    let test_x = mnist_common::load_mnist_images("data/t10k-images-idx3-ubyte");
+    let test_y = mnist_common::load_mnist_labels("data/t10k-labels-idx1-ubyte");
     
     // Initialize model structure (use fully qualified name)
     let model = mnist_common::Linear::new(784, 10);
     
     print("Loading weights...");
-    Param::load(model, "examples/tasks/mnist/mnist_weights.safetensors");
+    Param::load(model, "mnist_weights.safetensors");
     
     print("Evaluating on test set (first 1000 samples)...");
     

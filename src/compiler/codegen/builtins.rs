@@ -408,8 +408,8 @@ pub fn declare_runtime_functions<'ctx>(
     let get_type = f32_type.fn_type(&[void_ptr.into(), i64_type.into()], false);
     add_fn("tl_tensor_get", get_type);
 
-    // tl_vec_slice(t: *mut, start: usize, len: usize) -> *mut
-    let slice_type = void_ptr.fn_type(&[void_ptr.into(), i64_type.into(), i64_type.into()], false);
+    // tl_tensor_slice(t: *mut, dim: i64, start: i64, end: i64, step: i64) -> *mut
+    let slice_type = void_ptr.fn_type(&[void_ptr.into(), i64_type.into(), i64_type.into(), i64_type.into(), i64_type.into()], false);
     add_fn("tl_tensor_slice", slice_type);
 
 
@@ -2391,7 +2391,7 @@ pub fn declare_runtime_functions<'ctx>(
     add_fn("tl_tensor_argmin", sum_dim_type);
     // [IDevice] map_tensor_fn! → device_ffi
     if let Some(f) = module.get_function("tl_tensor_argmin") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_argmin as *const () as usize); }
-    add_fn("tl_tensor_argmax", unary_type);
+    add_fn("tl_tensor_argmax", sum_dim_type);
     // [IDevice] map_tensor_fn! → device_ffi
     if let Some(f) = module.get_function("tl_tensor_argmax") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_argmax as *const () as usize); }
 
