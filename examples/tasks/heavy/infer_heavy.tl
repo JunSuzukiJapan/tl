@@ -49,9 +49,9 @@ impl GPTHeavy {
 
 fn main() {
     let vocab_size = 13;
-    let d_model = 32; 
+    let d_model = 64; 
     
-    print("Inference with Heavy Model (1-Layer, d_model=32)");
+    print("Inference with Heavy Model (1-Layer, d_model=64)");
     let model = GPTHeavy::new(vocab_size, d_model);
     
     if File::exists("model_heavy.safetensors") {

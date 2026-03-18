@@ -113,7 +113,7 @@ impl Block {
     } 
 }
 
-// 2-Layer GPT (論文に合わせた設定)
+// 1-Layer GPT
 struct GPT2 { w: Embedding, wp: Embedding, b1: Block, l: LayerNorm, h: Linear }
 impl GPT2 { 
     fn new(v: i64, d: i64) -> GPT2 { 
@@ -192,7 +192,7 @@ fn train_step(model: GPT2, lr: f32, i: i64, j: i64) -> GPT2 {
 }
 
 fn train_epoch(model: GPT2, lr: f32, epoch: i64) -> GPT2 {
-    let total_steps = 3;
+    let total_steps = 10;
     let stride = 137;
     let offset = epoch * 79; 
 
@@ -209,9 +209,9 @@ fn train_epoch(model: GPT2, lr: f32, epoch: i64) -> GPT2 {
 }
 
 fn main() {
-    // 論文に合わせたパラメータ (d=256)
+    // 論文に合わせたパラメータ
     let vocab_size = 13;
-    let d_model = 32;  
+    let d_model = 64;  
     
     let mut model = GPT2::new(vocab_size, d_model);
     
@@ -220,19 +220,17 @@ fn main() {
         Param::load(model, "model_paper.safetensors");
     }
     
-    // 論文より強めの学習率 (0.001)
     let lr = 0.001;
     let epochs = 20;
 
-    print("Paper-based Training: 2-layer GPT, d_model=256, lr=0.001");
+    print("Paper-based Training: 1-layer GPT, d_model=64, lr=0.001");
 
     for epoch in range(0, epochs) {
         model = train_epoch(model, lr, epoch);
-        
-        // 毎エポック: セーブ → 再ロードでメモリ解放
-        Param::save(model, "model_paper.safetensors");
-        model = GPT2::new(vocab_size, d_model);
-        Param::load(model, "model_paper.safetensors");
+        if epoch - ((epoch / 5) * 5) == 4 {
+            Param::save(model, "model_paper.safetensors");
+            print("Saved checkpoint.");
+        }
     }
     print("Training Complete!");
     Param::save(model, "model_paper.safetensors");

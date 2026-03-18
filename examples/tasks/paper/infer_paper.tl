@@ -51,9 +51,9 @@ impl GPT2 {
 
 fn main() {
     let vocab_size = 13;
-    let d_model = 32; 
+    let d_model = 64; 
     
-    print("Inference with Paper Settings (1-Layer, d_model=32)");
+    print("Inference with Paper Settings (1-Layer, d_model=64)");
     let model = GPT2::new(vocab_size, d_model);
     
     if File::exists("model_paper.safetensors") {

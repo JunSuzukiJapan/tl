@@ -318,21 +318,16 @@ fn get_memory() -> f64 {
 
 fn main() {
     let vocab_size = 13;
-    let d_model = 32; 
+    let d_model = 64; 
     let mut model = GPT::new(vocab_size, d_model);
     
     let lr = 0.0005;
     let epochs = 20;
 
-    print("Training 2-digit addition (1-layer GPT, d_model=32) - 20 Epochs");
+    print("Training 2-digit addition (1-layer GPT, d_model=64) - 20 Epochs");
 
     for epoch in range(0, epochs) {
         model = train_epoch(model, lr, epoch);
-        
-        // 毎エポック: save/reload でメモリ解放
-        Param::save(model, "model_add.safetensors");
-        model = GPT::new(vocab_size, d_model);
-        Param::load(model, "model_add.safetensors");
         
         if epoch - ((epoch / 5) * 5) == 0 {
              let mem = get_memory();

@@ -2366,16 +2366,29 @@ impl<'ctx> CodeGenerator<'ctx> {
                     self.compile_stmt(stmt)?;
                 }
 
-                self.exit_scope();
-
-                // Branch to latch if body didn't terminate (e.g. return/break)
+                // ループバック前に: スコープ内の変数・テンポラリを cleanup
+                // これにより各イテレーションの中間テンソルが解放される (while ループと同等)
                 let body_end_block = self.builder.get_insert_block().unwrap();
 
                 if body_end_block.get_terminator().is_none() {
+                    self.emit_cleanup_vars_in_scope(self.variables.len() - 1);
+                    if let Some(f) = self.module.get_function("tl_mem_exit_scope") {
+                        self.builder.build_call(f, &[], "").unwrap();
+                    }
+                    // 次のイテレーション用に再度 enter_scope
+                    if let Some(f) = self.module.get_function("tl_mem_enter_scope") {
+                        self.builder.build_call(f, &[], "").unwrap();
+                    }
+                    // ループバック: latch へジャンプ
                     self.builder
                         .build_unconditional_branch(loop_latch)
                         .map_err(|e| e.to_string())?;
                 }
+
+                // exit_scope: codegen state (variables/temporaries) の pop のみ。
+                // cleanup IR は上で emit 済み。ブロックは terminated なので
+                // exit_scope 内の is_terminated チェックで cleanup は skip される。
+                self.exit_scope();
 
                 // Latch block: clear grads + increment index and branch back to header
                 self.builder.position_at_end(loop_latch);

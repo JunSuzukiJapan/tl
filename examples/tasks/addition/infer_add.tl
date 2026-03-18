@@ -129,7 +129,7 @@ fn main() {
     let model_path = "model_add.safetensors";
     
     let vocab_size = 13;
-    let d_model = 128; 
+    let d_model = 64; 
     
     print("Model Inference - Addition (train_add.tl structure)");
     let model = GPT::new(vocab_size, d_model);

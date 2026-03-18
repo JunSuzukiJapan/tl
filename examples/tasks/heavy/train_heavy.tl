@@ -202,7 +202,7 @@ fn train_step(model: GPTHeavy, lr: f32, i: i64, j: i64) -> GPTHeavy {
 fn train_epoch(model: GPTHeavy, lr: f32, epoch: i64) -> GPTHeavy {
     let mut m = model;
     // Total 200 steps per epoch * 500 epochs = 100k steps
-    let total_steps = 3;
+    let total_steps = 10;
     let stride = 149; // Prime number stride
     let offset = epoch * 37;
 
@@ -222,21 +222,20 @@ fn train_epoch(model: GPTHeavy, lr: f32, epoch: i64) -> GPTHeavy {
 
 fn main() {
     print("Initializing Runtime: CPU backend selected.");
-    let mut model = GPTHeavy::new(13, 32);
+    let mut model = GPTHeavy::new(13, 64);
     
     if File::exists("model_heavy.safetensors") {
         Param::load(model, "model_heavy.safetensors");
         print("Loaded parameters from model_heavy.safetensors");
     }
     
-    print("Training Heavy Model: 1-layer GPT, d_model=32, lr=0.0005, 20 epochs");
+    print("Training Heavy Model: 1-layer GPT, d_model=64, lr=0.0005, 20 epochs");
     for epoch in range(0, 20) {
         model = train_epoch(model, 0.0005, epoch);
-        
-        // 毎エポック: セーブ → 再ロードでメモリ解放
-        Param::save(model, "model_heavy.safetensors");
-        model = GPTHeavy::new(13, 32);
-        Param::load(model, "model_heavy.safetensors");
+        if epoch - ((epoch / 5) * 5) == 4 {
+            Param::save(model, "model_heavy.safetensors");
+            print("Saved checkpoint.");
+        }
     }
     print("Training Complete!");
     Param::save(model, "model_heavy.safetensors");
