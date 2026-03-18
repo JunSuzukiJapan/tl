@@ -1894,17 +1894,21 @@ impl<'ctx> CodeGenerator<'ctx> {
                     for ty in fields_def {
                         let llvm_ty = match ty {
                             Type::F32 => self.context.f32_type().into(),
-                            Type::I64 => self.context.i64_type().into(),
+                            Type::F64 => self.context.f64_type().into(),
+                            Type::I64 | Type::Usize | Type::Entity => self.context.i64_type().into(),
+                            Type::I32 | Type::Char(_) => self.context.i32_type().into(),
+                            Type::U8 => self.context.i8_type().into(),
                             Type::Bool => self.context.bool_type().into(),
-                            Type::Tensor(_, _)
-                            | Type::Struct(_, _)
-                            | Type::Enum(_, _)
-                            | Type::String(_)
-                            | Type::Tuple(_) => self
+                            Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::GradTensor(_, _)
+                            | Type::Struct(_, _) | Type::Enum(_, _)
+                            | Type::String(_) | Type::Ptr(_) | Type::Tuple(_) => self
                                 .context
                                 .ptr_type(inkwell::AddressSpace::default())
                                 .into(),
-                            _ => self.context.i64_type().into(),
+                            Type::Void => self.context.i8_type().into(),
+                            Type::Array(inner, size) => self.get_llvm_type(&Type::Array(inner.clone(), *size)).unwrap_or(self.context.i64_type().into()),
+                            Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::UnifiedType { .. } | Type::Never | Type::Undefined(_) | Type::Range
+                             => self.context.i64_type().into(),
                         };
                         field_types.push(llvm_ty);
                     }
@@ -1991,17 +1995,22 @@ impl<'ctx> CodeGenerator<'ctx> {
                         for ty in types {
                              let llvm_ty = match ty {
                                 Type::F32 => self.context.f32_type().into(),
-                                Type::I64 => self.context.i64_type().into(),
+                                Type::F64 => self.context.f64_type().into(),
+                                Type::I64 | Type::Usize | Type::Entity => self.context.i64_type().into(),
+                                Type::I32 | Type::Char(_) => self.context.i32_type().into(),
+                                Type::U8 => self.context.i8_type().into(),
                                 Type::Bool => self.context.bool_type().into(),
-                                Type::Struct(_, _)
-                                | Type::Enum(_, _)
-                                | Type::String(_)
-                                | Type::Tensor(_, _)
-                                | Type::Tuple(_) => self
+                                Type::Struct(_, _) | Type::Enum(_, _)
+                                | Type::String(_) | Type::Tensor(_, _)
+                                | Type::TensorShaped(_, _) | Type::GradTensor(_, _)
+                                | Type::Ptr(_) | Type::Tuple(_) => self
                                     .context
                                     .ptr_type(inkwell::AddressSpace::default())
                                     .into(),
-                                _ => self.context.i64_type().into(),
+                                Type::Void => self.context.i8_type().into(),
+                                Type::Array(inner, size) => self.get_llvm_type(&Type::Array(inner.clone(), *size)).unwrap_or(self.context.i64_type().into()),
+                                Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::UnifiedType { .. } | Type::Never | Type::Undefined(_) | Type::Range
+                                 => self.context.i64_type().into(),
                             };
                             field_types_llvm.push(llvm_ty);
                         }
@@ -2075,7 +2084,19 @@ impl<'ctx> CodeGenerator<'ctx> {
                                     .ptr_type(inkwell::AddressSpace::default())
                                     .into(),
                                 Type::Char(_) => self.context.i32_type().into(),
-                                _ => self.context.i64_type().into(),
+                                Type::U8 => self.context.i8_type().into(),
+                                Type::F64 => self.context.f64_type().into(),
+                                Type::Usize | Type::Entity => self.context.i64_type().into(),
+                                Type::I32 => self.context.i32_type().into(),
+                                Type::Ptr(_) | Type::Tuple(_)
+                                | Type::TensorShaped(_, _) | Type::GradTensor(_, _) => self
+                                    .context
+                                    .ptr_type(inkwell::AddressSpace::default())
+                                    .into(),
+                                Type::Void => self.context.i8_type().into(),
+                                Type::Array(inner, size) => self.get_llvm_type(&Type::Array(inner.clone(), *size)).unwrap_or(self.context.i64_type().into()),
+                                Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::UnifiedType { .. } | Type::Never | Type::Undefined(_) | Type::Range
+                                 => self.context.i64_type().into(),
                             };
                             field_types_llvm.push(llvm_ty);
                         }
@@ -2974,7 +2995,14 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
                             .into(),
-                        _ => self.context.i64_type().into(), // Placeholder
+                        Type::U8 => self.context.i8_type().into(),
+                        Type::F64 => self.context.f64_type().into(),
+                        Type::Usize | Type::Entity => self.context.i64_type().into(),
+                        Type::TensorShaped(_, _) | Type::GradTensor(_, _)
+                        | Type::Array(_, _) => self.get_llvm_type(&field_ty).unwrap_or(self.context.i64_type().into()),
+                        Type::Void => self.context.i8_type().into(),
+                        Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::UnifiedType { .. } | Type::Never | Type::Undefined(_) | Type::Range
+                         => self.context.i64_type().into(),
                     };
 
                     let loaded = self
@@ -3480,13 +3508,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let (val, ty) = self.compile_expr(expr)?;
                 match op {
                     UnOp::Neg => match &ty {
-                        Type::I64 => {
+                        Type::I64 | Type::I32 => {
                             let i = val.into_int_value();
                             let res = self
                                 .builder
                                 .build_int_neg(i, "negtmp")
                                 .map_err(|e| e.to_string())?;
-                            Ok((res.into(), Type::I64))
+                            Ok((res.into(), ty))
                         }
                         Type::F32 => {
                             let f = val.into_float_value();
@@ -3495,6 +3523,14 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 .build_float_neg(f, "negtmp")
                                 .map_err(|e| e.to_string())?;
                             Ok((res.into(), Type::F32))
+                        }
+                        Type::F64 => {
+                            let f = val.into_float_value();
+                            let res = self
+                                .builder
+                                .build_float_neg(f, "negtmp")
+                                .map_err(|e| e.to_string())?;
+                            Ok((res.into(), Type::F64))
                         }
                         Type::Tensor(_inner, _rank) => {
                             let neg_fn = self.module.get_function("tl_tensor_neg").unwrap();
@@ -3511,7 +3547,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                             Ok((res, ty.clone()))
 
                         }
-                        _ => Err("Negation only on int/float/tensor".into()),
+                        Type::U8 | Type::Bool | Type::String(_) | Type::Struct(_, _)
+                        | Type::Enum(_, _) | Type::Tuple(_) | Type::Ptr(_) | Type::Void
+                        | Type::Usize | Type::Entity | Type::Char(_) | Type::Array(_, _)
+                        | Type::TensorShaped(_, _) | Type::GradTensor(_, _)
+                        | Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::UnifiedType { .. } | Type::Never | Type::Undefined(_) | Type::Range
+                         => Err(format!("Negation not supported for type {:?}", ty)),
                     },
 
                     UnOp::Not => {
@@ -3886,7 +3927,19 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
                             .into(),
-                        _ => self.context.i64_type().into(),
+                        Type::F64 => self.context.f64_type().into(),
+                        Type::I32 | Type::Char(_) => self.context.i32_type().into(),
+                        Type::U8 => self.context.i8_type().into(),
+                        Type::I64 | Type::Usize | Type::Entity => self.context.i64_type().into(),
+                        Type::Enum(_, _) | Type::Ptr(_) | Type::GradTensor(_, _)
+                        | Type::TensorShaped(_, _) => self
+                            .context
+                            .ptr_type(inkwell::AddressSpace::default())
+                            .into(),
+                        Type::Void => self.context.i8_type().into(),
+                        Type::Array(inner, size) => self.get_llvm_type(&Type::Array(inner.clone(), *size)).unwrap_or(self.context.i64_type().into()),
+                        Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::UnifiedType { .. } | Type::Never | Type::Undefined(_) | Type::Range
+                         => self.context.i64_type().into(),
                     };
 
                     let phi = self
