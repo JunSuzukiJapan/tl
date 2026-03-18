@@ -673,12 +673,12 @@ fn compile_tensor_tril<'ctx>(
     if args.len() != 1 { return Err("tril requires 1 argument (diagonal)".into()); }
     let fn_val = codegen.module.get_function("tl_tensor_tril").ok_or("tl_tensor_tril not found")?;
     let (diag_val, diag_ty) = &args[0];
-    let diag_i32 = match diag_ty {
-        Type::I64 => codegen.builder.build_int_cast(diag_val.into_int_value(), codegen.context.i32_type(), "tril_diag_cast").unwrap(),
-        Type::I32 => diag_val.into_int_value(),
+    let diag_i64 = match diag_ty {
+        Type::I64 => diag_val.into_int_value(),
+        Type::I32 => codegen.builder.build_int_s_extend(diag_val.into_int_value(), codegen.context.i64_type(), "tril_diag_ext").unwrap(),
         _ => return Err("tril argument must be integer".into()),
     };
-    let call = codegen.builder.build_call(fn_val, &[obj.into(), diag_i32.into()], "tril_res").map_err(|e| e.to_string())?;
+    let call = codegen.builder.build_call(fn_val, &[obj.into(), diag_i64.into()], "tril_res").map_err(|e| e.to_string())?;
     let res = match call.try_as_basic_value() {
         ValueKind::Basic(v) => v,
         _ => return Err("Invalid return from tril()".into()),

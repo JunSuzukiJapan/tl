@@ -122,10 +122,10 @@ impl Block {
     }
 }
 
-// 4-Layer GPT
+// 1-Layer GPT (メモリ制約対応)
 struct GPTHeavy { 
     w: Embedding, wp: Embedding, 
-    b1: Block, b2: Block, b3: Block, b4: Block, 
+    b1: Block, 
     l: LayerNorm, h: Linear 
 }
 impl GPTHeavy { 
@@ -134,9 +134,6 @@ impl GPTHeavy {
             Embedding::new(v, d), 
             Embedding::new(12, d), 
             Block::new(d), 
-            Block::new(d), 
-            Block::new(d),
-            Block::new(d),
             LayerNorm::new(d), 
             Linear::new(d, v)
         ) 
@@ -148,9 +145,6 @@ impl GPTHeavy {
         let pos_emb = self.wp.forward(pos);
         let x = tok_emb + pos_emb;
         let x = self.b1.forward(x);
-        let x = self.b2.forward(x);
-        let x = self.b3.forward(x);
-        let x = self.b4.forward(x);
         self.h.forward(self.l.forward(x)) 
     } 
     fn step(self, lr: f32) -> GPTHeavy { 
@@ -158,24 +152,13 @@ impl GPTHeavy {
         s.w = s.w.step(lr); 
         s.wp = s.wp.step(lr); 
         s.b1 = s.b1.step(lr); 
-        s.b2 = s.b2.step(lr); 
-        s.b3 = s.b3.step(lr); 
-        s.b4 = s.b4.step(lr); 
         s.l = s.l.step(lr); 
         s.h = s.h.step(lr); 
         s 
     }
-    fn clone(self) -> GPTHeavy {
-        GPTHeavy(
-            self.w.clone(), self.wp.clone(),
-            self.b1.clone(), self.b2.clone(), self.b3.clone(), self.b4.clone(),
-            self.l.clone(), self.h.clone()
-        )
-    }
 }
 
 fn train_step(model: GPTHeavy, lr: f32, i: i64, j: i64) -> GPTHeavy {
-    let mut m = model.clone();
     let sum_raw = i + j;
     let sum = sum_raw - (sum_raw/13)*13;
     
@@ -200,22 +183,20 @@ fn train_step(model: GPTHeavy, lr: f32, i: i64, j: i64) -> GPTHeavy {
     let X_data = [i, j, sum, i_d10, j_d10, i_m10, j_m10, i_idx, j_idx, 0, 1, 2];
     let X = X_data.reshape([1, 12]);
 
-    // target: 12 tokens (shifted?) Simple task: predict sum
+    // target: 12 tokens
     let Y_data = [sum, i, j, i_d10, j_d10, i_m10, j_m10, i_idx, j_idx, 0, 1, 2];
     let Y = Y_data.reshape([1, 12]);
 
     // Forward
-    let logits = m.forward(X);
+    let logits = model.forward(X);
     let logits_flat = logits.reshape([12, 13]);
     let Y_flat = Y.reshape([12]);
     let loss = logits_flat.cross_entropy(Y_flat);
     
-    loss.backward(); // gradients accumulated in model (args)
+    loss.backward();
     
     // Step
-    m = m.step(lr);
-    
-    m
+    model.step(lr)
 }
 
 fn train_epoch(model: GPTHeavy, lr: f32, epoch: i64) -> GPTHeavy {
@@ -241,20 +222,22 @@ fn train_epoch(model: GPTHeavy, lr: f32, epoch: i64) -> GPTHeavy {
 
 fn main() {
     print("Initializing Runtime: CPU backend selected.");
-    let mut model = GPTHeavy::new(13, 384);
-    // Param::load(model, "model_heavy.safetensors");
-    print("Loaded 70 parameters from model_heavy.safetensors");
+    let mut model = GPTHeavy::new(13, 32);
     
-    // 500 epochs
-    print("Training Heavy Model: 4-layer GPT, d_model=384, lr=0.0005, 500 epochs");
-    for epoch in range(0, 500) {
+    if File::exists("model_heavy.safetensors") {
+        Param::load(model, "model_heavy.safetensors");
+        print("Loaded parameters from model_heavy.safetensors");
+    }
+    
+    print("Training Heavy Model: 1-layer GPT, d_model=32, lr=0.0005, 20 epochs");
+    for epoch in range(0, 20) {
         model = train_epoch(model, 0.0005, epoch);
         
-        // Save
-        if (epoch - (epoch/5)*5) == 4 {
-             Param::save(model, "model_heavy.safetensors");
-             print("Saved 70 parameters to model_heavy.safetensors");
-             print("Saved checkpoint.");
-        }
+        // 毎エポック: セーブ → 再ロードでメモリ解放
+        Param::save(model, "model_heavy.safetensors");
+        model = GPTHeavy::new(13, 32);
+        Param::load(model, "model_heavy.safetensors");
     }
+    print("Training Complete!");
+    Param::save(model, "model_heavy.safetensors");
 }

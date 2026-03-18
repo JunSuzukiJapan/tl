@@ -88,22 +88,35 @@ impl Block {
     } 
 }
 
-// 3-Layer GPT (train_add.tl と同一構造)
-struct GPT { b1: Block, b2: Block, b3: Block, h: Linear }
+// Embedding
+struct Embedding { w: Tensor<f32, 2> }
+impl Embedding {
+    fn new(v: i64, d: i64) -> Embedding {
+        Embedding((Tensor::randn([v, d], true)*0.1).detach(true))
+    }
+    fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> {
+        i.embedding(self.w)
+    }
+}
+
+// 1-Layer GPT (train_add.tl と同一構造)
+struct GPT { w: Embedding, wp: Embedding, b1: Block, h: Linear }
 impl GPT { 
     fn new(v: i64, d: i64) -> GPT { 
         GPT(
-            Block::new(d), 
-            Block::new(d), 
+            Embedding::new(v, d),
+            Embedding::new(12, d),
             Block::new(d), 
             Linear::new(d, v)
         ) 
     } 
     fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> { 
-        let x = Tensor::randn([1, 12, 128], false);
+        let pos_data = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0];
+        let pos = pos_data.reshape([1, 12]);
+        let tok_emb = self.w.forward(i);
+        let pos_emb = self.wp.forward(pos);
+        let x = tok_emb + pos_emb;
         let x = self.b1.forward(x);
-        let x = self.b2.forward(x);
-        let x = self.b3.forward(x);
         self.h.forward(x)
     } 
 }

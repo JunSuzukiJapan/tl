@@ -26,13 +26,13 @@ impl MLP { fn new(d: i64) -> MLP { MLP(Linear::new(d, d*4), Linear::new(d*4, d))
 struct Block { l1: LayerNorm, a: CausalSelfAttention, l2: LayerNorm, m: MLP }
 impl Block { fn new(d: i64) -> Block { Block(LayerNorm::new(d), CausalSelfAttention::new(d), LayerNorm::new(d), MLP::new(d)) } fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { let x = x + self.a.forward(self.l1.forward(x)); x + self.m.forward(self.l2.forward(x)) } }
 
-// 4-Layer GPT
-struct GPTHeavy { w: Embedding, wp: Embedding, b1: Block, b2: Block, b3: Block, b4: Block, l: LayerNorm, h: Linear }
+// 1-Layer GPT (train_heavy.tl と同一構造)
+struct GPTHeavy { w: Embedding, wp: Embedding, b1: Block, l: LayerNorm, h: Linear }
 impl GPTHeavy { 
     fn new(v: i64, d: i64) -> GPTHeavy { 
         GPTHeavy(
             Embedding::new(v, d), Embedding::new(12, d), 
-            Block::new(d), Block::new(d), Block::new(d), Block::new(d),
+            Block::new(d),
             LayerNorm::new(d), Linear::new(d, v)
         ) 
     } 
@@ -43,22 +43,24 @@ impl GPTHeavy {
         let pos_emb = self.wp.forward(pos);
         let x = tok_emb + pos_emb;
         let x = self.b1.forward(x);
-        let x = self.b2.forward(x);
-        let x = self.b3.forward(x);
-        let x = self.b4.forward(x);
         self.h.forward(self.l.forward(x)) 
     } 
 }
 
 fn main() {
     let vocab_size = 13;
-    let d_model = 384; 
+    let d_model = 32; 
     
-    print("Inference with Heavy Model (4-Layers, d_model=384)");
+    print("Inference with Heavy Model (1-Layer, d_model=32)");
     let model = GPTHeavy::new(vocab_size, d_model);
     
-    Param::load(model, "model_heavy.safetensors");
-    print("Parameters Loaded from model_heavy.safetensors");
+    if File::exists("model_heavy.safetensors") {
+        Param::load(model, "model_heavy.safetensors");
+        print("Parameters Loaded from model_heavy.safetensors");
+    } else {
+        print("ERROR: model_heavy.safetensors not found. Run train_heavy.tl first.");
+        return;
+    }
     
     // Autoregressive Inference Logic using PAD=12
     

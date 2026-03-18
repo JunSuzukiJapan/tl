@@ -196,66 +196,50 @@ impl Block {
     }
 }
 
-// 3-Layer GPT
-// struct GPT { w: Embedding, wp: Embedding, b1: Block, b2: Block, b3: Block, l: LayerNorm, h: Linear }
-// struct GPT { b1: Block, b2: Block, b3: Block, l: LayerNorm, h: Linear }
-struct GPT { b1: Block, b2: Block, b3: Block, h: Linear }
-struct GPTPair { a: GPT, b: GPT }
+// 3-Layer GPT with Embedding
+struct Embedding { w: Tensor<f32, 2> }
+impl Embedding {
+    fn new(v: i64, d: i64) -> Embedding {
+        Embedding((Tensor::randn([v, d], true)*0.1).detach(true))
+    }
+    fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> {
+        i.embedding(self.w)
+    }
+    fn update(self, lr: f32) -> Embedding {
+        let mut s = self;
+        let g = s.w.grad();
+        s.w = (s.w - g * lr).detach(true);
+        s
+    }
+}
+
+struct GPT { w: Embedding, wp: Embedding, b1: Block, h: Linear }
 impl GPT { 
     fn new(v: i64, d: i64) -> GPT { 
         GPT(
-            // Embedding::new(v, d), 
-            // Embedding::new(12, d), 
+            Embedding::new(v, d), 
+            Embedding::new(12, d), 
             Block::new(d), 
-            Block::new(d), 
-            Block::new(d), 
-            // LayerNorm::new(d), 
             Linear::new(d, v)
         ) 
     } 
     fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> { 
         let pos_data = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0];
         let pos = pos_data.reshape([1, 12]);
-        // let tok_emb = self.w.forward(i);
-        // let pos_emb = self.wp.forward(pos);
-        let x = Tensor::randn([1, 12, 128], false); // dummy x
+        let tok_emb = self.w.forward(i);
+        let pos_emb = self.wp.forward(pos);
+        let x = tok_emb + pos_emb;
         let x = self.b1.forward(x);
-        let x = self.b2.forward(x);
-        let x = self.b3.forward(x);
-        // self.h.forward(self.l.forward(x)) 
         self.h.forward(x)
     } 
     fn update(self, lr: f32) -> GPT { 
-        print("DEBUG: GPT::update start");
         let mut s = self; 
-        // s.w = s.w.update(lr); 
-        // s.wp = s.wp.update(lr); 
+        s.w = s.w.update(lr); 
+        s.wp = s.wp.update(lr); 
         s.b1 = s.b1.update(lr); 
-        print("DEBUG: b1 updated");
-        s.b2 = s.b2.update(lr); 
-        s.b3 = s.b3.update(lr); 
-        // s.l = s.l.update(lr); 
         s.h = s.h.update(lr); 
         s 
     } 
-    fn dup(self) -> GPTPair {
-        let b1 = self.b1.dup();
-        let b2 = self.b2.dup();
-        let b3 = self.b3.dup();
-        let h = self.h.dup();
-        GPTPair(
-            GPT(b1.a, b2.a, b3.a, h.a),
-            GPT(b1.b, b2.b, b3.b, h.b)
-        )
-    }
-    fn clone(self) -> GPT {
-        GPT(
-            self.b1.clone(), 
-            self.b2.clone(), 
-            self.b3.clone(), 
-            self.h.clone()
-        )
-    }
 }
 
 // ---------------
@@ -300,26 +284,19 @@ fn train_step(model: GPT, lr: f32, i: i64, j: i64) -> GPT {
     let X = data.reshape([1, 12]);
     let Y = target.reshape([1, 12]);
     
-    // Duplicate model to keep one copy for update while forward consumes the other
-    // let models = model.dup();
-    let model_update = model.clone();
-    let model_forward = model;
-
-    let logits = model_forward.forward(X);
-    // print("DEBUG: loss computed");
-    let loss = logits.cross_entropy(Y);
-    // print("DEBUG: loss backward start");
+    let logits = model.forward(X);
+    let logits_flat = logits.reshape([12, 13]);
+    let Y_flat = Y.reshape([12]);
+    let loss = logits_flat.cross_entropy(Y_flat);
 
     loss.backward();
-    // print("DEBUG: backward done");
 
-    let model = model_update.update(lr);
-    // print("DEBUG: update done");
+    let model = model.update(lr);
     model
 }
 
 fn train_epoch(model: GPT, lr: f32, epoch: i64) -> GPT {
-    let total_steps = 500;
+    let total_steps = 10;
     let stride = 137;
     let offset = epoch * 79; 
 
@@ -341,21 +318,26 @@ fn get_memory() -> f64 {
 
 fn main() {
     let vocab_size = 13;
-    let d_model = 128; 
+    let d_model = 32; 
     let mut model = GPT::new(vocab_size, d_model);
     
     let lr = 0.0005;
-    let epochs = 100;
+    let epochs = 20;
 
-    print("Training 2-digit addition (Explicit Implementation) - 100 Epochs");
+    print("Training 2-digit addition (1-layer GPT, d_model=32) - 20 Epochs");
 
     for epoch in range(0, epochs) {
         model = train_epoch(model, lr, epoch);
+        
+        // 毎エポック: save/reload でメモリ解放
+        Param::save(model, "model_add.safetensors");
+        model = GPT::new(vocab_size, d_model);
+        Param::load(model, "model_add.safetensors");
+        
         if epoch - ((epoch / 5) * 5) == 0 {
              let mem = get_memory();
              print("Epoch:"); print(epoch);
              print("Mem(MB):"); print(mem);
-             Param::save(model, "model_add.safetensors");
         }
     }
     

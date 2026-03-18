@@ -491,9 +491,8 @@ pub fn declare_runtime_functions<'ctx>(
     // tl_tensor_gelu(t: *mut Tensor) -> *mut Tensor
     add_fn("tl_tensor_gelu", unary_type);
 
-    // tl_tensor_tril(t: *mut Tensor, diagonal: i32) -> *mut Tensor
-    let i32_type = context.i32_type();
-    let tril_type = void_ptr.fn_type(&[void_ptr.into(), i32_type.into()], false);
+    // tl_tensor_tril(t: *mut Tensor, diagonal: i64) -> *mut Tensor
+    let tril_type = void_ptr.fn_type(&[void_ptr.into(), i64_type.into()], false);
     add_fn("tl_tensor_tril", tril_type);
 
     // Explicitly add tl_clear_grads
