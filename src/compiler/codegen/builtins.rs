@@ -2498,8 +2498,8 @@ pub fn declare_runtime_functions<'ctx>(
 
 
     // Binary file I/O mappings
-    if let Some(f) = module.get_function("tl_file_read_binary") {
-        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_file_read_binary as *const () as usize);
+    if let Some(f) = module.get_function("tl_file_read_binary_all") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_file_read_binary_all as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_file_write_binary") {
         execution_engine.add_global_mapping(&f, runtime::stdlib::tl_file_write_binary as *const () as usize);
@@ -3221,9 +3221,9 @@ pub fn declare_runtime_functions<'ctx>(
     // --- Binary file I/O ---
     let i8_ptr = context.ptr_type(inkwell::AddressSpace::default());
 
-    // tl_file_read_binary(path) -> *mut Vec<u8>
+    // tl_file_read_binary_all(path) -> *mut Vec<u8>
     let file_read_binary_type = ptr_type.fn_type(&[i8_ptr.into()], false);
-    module.add_function("tl_file_read_binary", file_read_binary_type, None);
+    module.add_function("tl_file_read_binary_all", file_read_binary_type, None);
 
     // tl_file_write_binary(path, data) -> bool
     let file_write_binary_type = context

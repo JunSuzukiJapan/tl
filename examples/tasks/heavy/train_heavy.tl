@@ -242,7 +242,7 @@ fn train_epoch(model: GPTHeavy, lr: f32, epoch: i64) -> GPTHeavy {
 fn main() {
     print("Initializing Runtime: CPU backend selected.");
     let mut model = GPTHeavy::new(13, 384);
-    // Param::load_all("model_heavy.safetensors");
+    // Param::load(model, "model_heavy.safetensors");
     print("Loaded 70 parameters from model_heavy.safetensors");
     
     // 500 epochs
@@ -252,7 +252,7 @@ fn main() {
         
         // Save
         if (epoch - (epoch/5)*5) == 4 {
-             Param::save_all("model_heavy.safetensors");
+             Param::save(model, "model_heavy.safetensors");
              print("Saved 70 parameters to model_heavy.safetensors");
              print("Saved checkpoint.");
         }

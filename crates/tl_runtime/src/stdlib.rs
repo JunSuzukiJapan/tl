@@ -78,6 +78,7 @@ pub use crate::file_io::{
     tl_file_read_string,
     tl_file_write_string,
     tl_file_read_binary,
+    tl_file_read_binary_all,
     tl_file_write_binary,
     tl_file_append,
     tl_file_delete,

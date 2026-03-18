@@ -1,4 +1,4 @@
-// SKIP: Requires external resources or model files
+// Associative Recall 推論 (train_recall.tl で学習したモデルを使用)
 // Associative Recall Task with Transformer
 // Task: Input "k1 v1 k2 v2 ... k3 ?" -> Output "v3"
 // This tests the model's ability to "attend" back to where "k3" appeared and retrieve "v3".

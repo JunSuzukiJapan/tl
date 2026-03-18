@@ -355,10 +355,10 @@ fn main() {
              let mem = get_memory();
              print("Epoch:"); print(epoch);
              print("Mem(MB):"); print(mem);
-             Param::save_all("model_add.safetensors");
+             Param::save(model, "model_add.safetensors");
         }
     }
     
     print("Training Complete!");
-    Param::save_all("model_add.safetensors");
+    Param::save(model, "model_add.safetensors");
 }

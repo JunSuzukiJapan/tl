@@ -2560,7 +2560,8 @@ impl SemanticAnalyzer {
                 }
                 match method {
                     "exists" => Some(Ok(Type::Bool)),
-                    "read" | "read_binary" => Some(Ok(Type::String("String".to_string()))),
+                    "read" => Some(Ok(Type::String("String".to_string()))),
+                    "read_binary" => Some(Ok(Type::Struct("Vec".to_string(), vec![Type::U8]))),
                     "write" => Some(Ok(Type::Bool)),
                     _ => None,
                 }
@@ -6080,6 +6081,9 @@ impl SemanticAnalyzer {
                     (Type::F32, Type::Struct(name, _)) if name == "u8" => Ok(target_type.clone()),
                     (Type::I64, Type::U8) => Ok(Type::U8), // Just in case it's Type::U8
                     (Type::I32, Type::U8) => Ok(Type::U8),
+                    (Type::U8, Type::I64) => Ok(Type::I64), // U8 → I64
+                    (Type::U8, Type::I32) => Ok(Type::I32), // U8 → I32
+                    (Type::U8, Type::F32) => Ok(Type::F32), // U8 → F32
                     // Allow casting u8 struct (used in parser) to integer types for printing/manipulation
                     (Type::Struct(name, _), Type::I64) if name == "u8" => Ok(Type::I64),
                     (Type::Struct(name, _), Type::I32) if name == "u8" => Ok(Type::I32),
@@ -6401,19 +6405,35 @@ impl SemanticAnalyzer {
                     return res;
                 }
 
-                // Try as a module function (fallback) or error
+                // Try as a module function (fallback)
                 let full_name = format!("{}::{}", type_name, method_name);
-                if let Some(_func) = self.functions.get(&full_name).cloned() {
-                    // ... Simple check implementation or just error for now to save space if not needed?
-                    // Let's just return error for MethodNotFound if not built-in,
-                    // unless we restore full module logic.
-                    // For 'shortest_path', we don't need module logic.
-                    // But verify specific error requires it?
-                    // Let's just fail for now.
-                    self.err(
-                        SemanticError::FunctionNotFound(full_name),
-                        Some(expr.span.clone()),
-                    )
+                if let Some(func) = self.functions.get(&full_name).cloned() {
+                    // Check arg count (excluding self since this is a module function, not a method)
+                    if func.args.len() != args.len() {
+                        return self.err(
+                            SemanticError::ArgumentCountMismatch {
+                                name: full_name,
+                                expected: func.args.len(),
+                                found: args.len(),
+                            },
+                            Some(expr.span.clone()),
+                        );
+                    }
+                    // Check arg types
+                    for (i, arg) in args.iter_mut().enumerate() {
+                        let arg_ty = self.check_expr(arg)?;
+                        let expected_ty = &func.args[i].1;
+                        if !self.are_types_compatible(&arg_ty, expected_ty) {
+                            return self.err(
+                                SemanticError::TypeMismatch {
+                                    expected: expected_ty.clone(),
+                                    found: arg_ty,
+                                },
+                                Some(arg.span.clone()),
+                            );
+                        }
+                    }
+                    return Ok(func.return_type.clone());
                 } else {
                     self.err(
                         SemanticError::MethodNotFound {

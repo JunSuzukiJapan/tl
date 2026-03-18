@@ -2312,6 +2312,23 @@ impl<'ctx> CodeGenerator<'ctx> {
                          let i = self.builder.build_float_to_unsigned_int(f, self.context.i8_type(), "cast_u8").map_err(|e| e.to_string())?;
                          Ok((i.into(), Type::U8))
                     }
+                    // U8 -> wider types
+                    (Type::U8, Type::I64) => {
+                         let i = val.into_int_value();
+                         let extended = self.builder.build_int_z_extend(i, self.context.i64_type(), "cast_u8_i64").map_err(|e| e.to_string())?;
+                         Ok((extended.into(), Type::I64))
+                    }
+                    (Type::U8, Type::I32) => {
+                         let i = val.into_int_value();
+                         let extended = self.builder.build_int_z_extend(i, self.context.i32_type(), "cast_u8_i32").map_err(|e| e.to_string())?;
+                         Ok((extended.into(), Type::I32))
+                    }
+                    (Type::U8, Type::F32) => {
+                         let i = val.into_int_value();
+                         let extended = self.builder.build_int_z_extend(i, self.context.i32_type(), "cast_u8_i32").map_err(|e| e.to_string())?;
+                         let f = self.builder.build_unsigned_int_to_float(extended, self.context.f32_type(), "cast_u8_f32").map_err(|e| e.to_string())?;
+                         Ok((f.into(), Type::F32))
+                    }
                     // Tensor -> GradTensor: enable_grad and return same ptr as GradTensor type
                     (Type::Tensor(inner, rank), Type::GradTensor(_, _)) => {
                         let enable_fn = self
@@ -3391,8 +3408,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                          let (idx_val, _) = self.compile_expr(&indices[0])?;
                          
                          unsafe {
+                             // Use actual element type for correct GEP offset calculation
+                             // (e.g. u8 = i8 = 1 byte, not ptr = 8 bytes)
+                             let elem_llvm_ty = self.get_llvm_type(&inner)?;
                              let elem_ptr = self.builder.build_gep(
-                                 self.context.ptr_type(inkwell::AddressSpace::default()),
+                                 elem_llvm_ty,
                                  ptr,
                                  &[idx_val.into_int_value()],
                                  "ptr_idx"

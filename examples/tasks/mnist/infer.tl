@@ -1,15 +1,15 @@
 // MNIST Inference
 
-mod mnist_common;
+use mnist_common::*;
 
 fn main() {
     print("=== MNIST Inference ===");
     
-    let test_x = mnist_common::load_mnist_images("data/t10k-images-idx3-ubyte");
-    let test_y = mnist_common::load_mnist_labels("data/t10k-labels-idx1-ubyte");
+    let test_x = load_mnist_images("data/t10k-images-idx3-ubyte");
+    let test_y = load_mnist_labels("data/t10k-labels-idx1-ubyte");
     
     // Initialize model structure (use fully qualified name)
-    let model = mnist_common::Linear::new(784, 10);
+    let model = Linear::new(784, 10);
     
     print("Loading weights...");
     Param::load(model, "mnist_weights.safetensors");
@@ -21,11 +21,11 @@ fn main() {
     let mut i = 0;
     
     while i < total {
-        let x = test_x.slice(i, 1);
-        let y = test_y.slice(i, 1); 
+        let x = test_x.slice(0, i, i + 1, 1);
+        let y = test_y.slice(0, i, i + 1, 1); 
         
         let logits = model.forward(x);
-        let preds = logits.argmax(1, false);
+        let preds = logits.argmax(1);
         
         // preds is float (index), y is int (label)
         // item() returns float for both (due to runtime casting)

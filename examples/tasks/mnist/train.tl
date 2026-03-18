@@ -1,15 +1,15 @@
 // MNIST Training
-mod mnist_common;
+use mnist_common::*;
 
 fn main() {
     print("=== MNIST Training ===");
     Param::set_device(Device::Auto);
     
-    let train_x = mnist_common::load_mnist_images("data/train-images-idx3-ubyte");
-    let train_y = mnist_common::load_mnist_labels("data/train-labels-idx1-ubyte");
+    let train_x = load_mnist_images("data/train-images-idx3-ubyte");
+    let train_y = load_mnist_labels("data/train-labels-idx1-ubyte");
     
     // Use fully qualified name
-    let mut model = mnist_common::Linear::new(784, 10);
+    let mut model = Linear::new(784, 10);
     // let lr = 0.1;
     let lr = 0.05; // Slightly reduced for stability with more updates
     let batch_size = 64;
@@ -30,7 +30,7 @@ fn main() {
         
         while b < num_batches {
             let start = b * batch_size;
-            let bx = train_x.slice(start, batch_size);
+            let bx = train_x.slice(0, start, start + batch_size, 1);
             
             if b == 0 {
                 // Check input scale via sum
@@ -38,7 +38,7 @@ fn main() {
                 print(bx.sumall().item());
             }
 
-            let by = train_y.slice(start, batch_size);
+            let by = train_y.slice(0, start, start + batch_size, 1);
             
             let logits = model.forward(bx);
             let loss = logits.cross_entropy(by);
@@ -55,7 +55,7 @@ fn main() {
         println("Epoch complete: {} Avg Loss: {}", epoch, running_loss / (num_batches as f32));
         
         print("W check (row 400):");
-        print(model.W.slice(400, 1));
+        print(model.W.slice(0, 400, 401, 1));
 
         epoch = epoch + 1;
     }

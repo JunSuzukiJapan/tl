@@ -1,14 +1,10 @@
-// SKIP: Requires external resources or model files
-// 2桁足し算タスク推論 - 組み込み関数を最小限に抑えた実装
+// 2桁足し算タスク推論 - train_add.tl と同じモデル構造
 // 自己回帰生成による推論
-
-struct File {}
 
 // ---------------
 // Helper Functions
 // ---------------
 
-// 手動argmax (元のコードから維持)
 fn my_argmax(t: Tensor<f32, 1>) -> i64 {
     let mut max_val = -1000000.0;
     let mut idx = 0;
@@ -22,22 +18,6 @@ fn my_argmax(t: Tensor<f32, 1>) -> i64 {
     return idx;
 }
 
-// One-Hot Embedding (embedding()の代替)
-fn my_embedding(indices: Tensor<f32, 2>, w: Tensor<f32, 2>, V: i64) -> Tensor<f32, 3> {
-    let T = 12;
-    let flat_indices = indices.reshape([T]);
-    
-    let mut one_hot: Tensor<f32, 2> = Tensor::randn([T, V], false) * 0.0;
-    for t in range(0, T) {
-        let mut idx = flat_indices[t] as i64;
-        one_hot[t, idx] = 1.0;
-    }
-    let one_hot_d = one_hot.detach();
-    
-    let out_flat = one_hot_d.matmul(w);
-    out_flat.reshape([1, 12, 128])
-}
-
 // Causal Mask (tril()の代替)
 fn get_causal_mask(size: i64) -> Tensor<f32, 2> {
     let mut mask: Tensor<f32, 2> = Tensor::randn([size, size], false) * 0.0;
@@ -48,40 +28,20 @@ fn get_causal_mask(size: i64) -> Tensor<f32, 2> {
             }
         }
     }
-    return mask.detach();
+    return mask.detach(false);
 }
 
 // ---------------
-// Model Components (Inference Only)
+// Model Components (train_add.tl と同一)
 // ---------------
 
 struct Linear { W: Tensor<f32, 2>, b: Tensor<f32, 1> }
 impl Linear { 
     fn new(i: i64, o: i64) -> Linear { 
-        Linear((Tensor::randn([i, o], true)*0.1).detach(), (Tensor::randn([o], true)*0.0).detach()) 
+        Linear((Tensor::randn([i, o], true)*0.1).detach(true), (Tensor::randn([o], true)*0.0).detach(true))
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
         x.matmul(self.W) + self.b 
-    } 
-}
-
-struct Embedding { w: Tensor<f32, 2>, vocab_size: i64 }
-impl Embedding { 
-    fn new(v: i64, d: i64) -> Embedding { 
-        Embedding((Tensor::randn([v, d], true)*0.1).detach(), v) 
-    } 
-    fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> { 
-        my_embedding(i, self.w, self.vocab_size) 
-    } 
-}
-
-struct LayerNorm { w: Tensor<f32, 1>, b: Tensor<f32, 1> }
-impl LayerNorm { 
-    fn new(d: i64) -> LayerNorm { 
-        LayerNorm((Tensor::randn([d], true)*0.0+1.0).detach(), (Tensor::randn([d], true)*0.0).detach()) 
-    } 
-    fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
-        x * self.w + self.b 
     } 
 }
 
@@ -98,7 +58,6 @@ impl CausalSelfAttention {
         let kt = k.transpose(1, 2);
         let scores = q.matmul(kt) * 0.08839;
         
-        // 手動因果マスク
         let mask = get_causal_mask(12);
         let masked_scores = scores * mask;
         
@@ -118,41 +77,34 @@ impl MLP {
     } 
 }
 
-struct Block { l1: LayerNorm, a: CausalSelfAttention, l2: LayerNorm, m: MLP }
+struct Block { a: CausalSelfAttention, m: MLP }
 impl Block { 
     fn new(d: i64) -> Block { 
-        Block(LayerNorm::new(d), CausalSelfAttention::new(d), LayerNorm::new(d), MLP::new(d)) 
+        Block(CausalSelfAttention::new(d), MLP::new(d)) 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
-        let x = x + self.a.forward(self.l1.forward(x)); 
-        x + self.m.forward(self.l2.forward(x)) 
+        let x = x + self.a.forward(x); 
+        x + self.m.forward(x) 
     } 
 }
 
-// 3-Layer GPT (Inference only)
-struct GPT { w: Embedding, wp: Embedding, b1: Block, b2: Block, b3: Block, l: LayerNorm, h: Linear }
+// 3-Layer GPT (train_add.tl と同一構造)
+struct GPT { b1: Block, b2: Block, b3: Block, h: Linear }
 impl GPT { 
     fn new(v: i64, d: i64) -> GPT { 
         GPT(
-            Embedding::new(v, d), 
-            Embedding::new(12, d), 
             Block::new(d), 
             Block::new(d), 
             Block::new(d), 
-            LayerNorm::new(d), 
             Linear::new(d, v)
         ) 
     } 
     fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> { 
-        let pos_data = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0];
-        let pos = pos_data.reshape([1, 12]);
-        let tok_emb = self.w.forward(i);
-        let pos_emb = self.wp.forward(pos);
-        let x = tok_emb + pos_emb;
+        let x = Tensor::randn([1, 12, 128], false);
         let x = self.b1.forward(x);
         let x = self.b2.forward(x);
         let x = self.b3.forward(x);
-        self.h.forward(self.l.forward(x)) 
+        self.h.forward(x)
     } 
 }
 
@@ -163,44 +115,26 @@ impl GPT {
 fn main() {
     let model_path = "model_add.safetensors";
     
-    // モデルファイルの存在確認
-    if !File::exists(model_path) {
-        println("Error: Model file not found: {}", model_path);
-        println("Please run train_add.tl first to create the model.");
-        return;
-    }
-    
     let vocab_size = 13;
     let d_model = 128; 
     
-    print("Model Inference - Autoregressive (Explicit Implementation)");
+    print("Model Inference - Addition (train_add.tl structure)");
     let model = GPT::new(vocab_size, d_model);
     
-    Param::load_all(model_path);
+    Param::load(model, model_path);
     print("Parameters Loaded.");
     
     // Test 12 + 34 = 46
-    // 逆順: 2, 1, +, 4, 3, =, 6, 4, 0
     print("Test: 12 + 34 = 46");
     print("Expected (Reverse): 6, 4, 0");
     
-    // Step 1: Predict first result digit
-    // Correct input for Teacher Forcing check: [2, 1, 10, 4, 3, 11, 6, 4, 0, 12, 12, 12]
-    // Note: We fill the answer positions with correct values to see if the model predicts the NEXT token correctly
-    // Position 5 (11.0) predicts Position 6 (should be 6)
     let data1 = [2.0, 1.0, 10.0, 4.0, 3.0, 11.0, 6.0, 4.0, 0.0, 12.0, 12.0, 12.0];
     let input1 = data1.reshape([1, 12]);
     let logits1 = model.forward(input1);
     let logits1_flat = logits1.reshape([12, 13]);
-    let p1 = my_argmax(logits1_flat.slice(5, 1).reshape([13]));
-    
-    // Step 2: Predict second digit at Position 7 (should be 4)
-    // Position 6 (6.0) predicts Position 7
-    let p2 = my_argmax(logits1_flat.slice(6, 1).reshape([13]));
-    
-    // Step 3: Predict third digit at Position 8 (should be 0)
-    // Position 7 (4.0) predicts Position 8
-    let p3 = my_argmax(logits1_flat.slice(7, 1).reshape([13]));
+    let p1 = my_argmax(logits1_flat.slice(0, 5, 6, 1).reshape([13]));
+    let p2 = my_argmax(logits1_flat.slice(0, 6, 7, 1).reshape([13]));
+    let p3 = my_argmax(logits1_flat.slice(0, 7, 8, 1).reshape([13]));
     
     print("Predicted:"); print(p1); print(p2); print(p3);
     
@@ -208,15 +142,14 @@ fn main() {
     print("Test: 99 + 1 = 100");
     print("Expected (Reverse): 0, 0, 1");
     
-    // Correct input: [9, 9, 10, 1, 0, 11, 0, 0, 1, 12, 12, 12]
     let q_data1 = [9.0, 9.0, 10.0, 1.0, 0.0, 11.0, 0.0, 0.0, 1.0, 12.0, 12.0, 12.0];
     let q_input1 = q_data1.reshape([1, 12]);
     let q_logits1 = model.forward(q_input1);
     let q_logits1_flat = q_logits1.reshape([12, 13]);
     
-    let q1 = my_argmax(q_logits1_flat.slice(5, 1).reshape([13]));
-    let q2 = my_argmax(q_logits1_flat.slice(6, 1).reshape([13]));
-    let q3 = my_argmax(q_logits1_flat.slice(7, 1).reshape([13]));
+    let q1 = my_argmax(q_logits1_flat.slice(0, 5, 6, 1).reshape([13]));
+    let q2 = my_argmax(q_logits1_flat.slice(0, 6, 7, 1).reshape([13]));
+    let q3 = my_argmax(q_logits1_flat.slice(0, 7, 8, 1).reshape([13]));
     
     print("Predicted:"); print(q1); print(q2); print(q3);
     

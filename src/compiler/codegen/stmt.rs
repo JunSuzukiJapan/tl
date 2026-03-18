@@ -2869,7 +2869,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                  };
                  Ok((res, Type::String("String".to_string())))
             }
-            (Type::I64, Type::I64) | (Type::I32, Type::I32) => {
+            (Type::I64, Type::I64) | (Type::I32, Type::I32) | (Type::U8, Type::U8) => {
                 let l = lhs.into_int_value();
                 let r = rhs.into_int_value();
                 let res = match op {
@@ -3812,8 +3812,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                  let load_ty: inkwell::types::BasicTypeEnum = match &res.1 {
                      Type::Struct(_,_) | Type::Tensor(_,_) => self.context.ptr_type(inkwell::AddressSpace::default()).into(),
                      Type::F32 => self.context.f32_type().into(),
+                     Type::F64 => self.context.f64_type().into(),
                      Type::I64 => self.context.i64_type().into(),
-                     _ => self.context.i64_type().into(), // fallback
+                     Type::I32 => self.context.i32_type().into(),
+                     Type::U8 => self.context.i8_type().into(),
+                     Type::Bool => self.context.bool_type().into(),
+                     Type::Usize => self.context.i64_type().into(),
+                     _ => self.get_llvm_type(&res.1).unwrap_or(self.context.i64_type().into()),
                  };
                  Ok((self.builder.build_load(load_ty, ptr, "").unwrap(), res.1))
              }
@@ -3823,8 +3828,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                      let load_ty: inkwell::types::BasicTypeEnum = match &res.1 {
                          Type::Struct(_,_) | Type::Tensor(_,_) => self.context.ptr_type(inkwell::AddressSpace::default()).into(),
                          Type::F32 => self.context.f32_type().into(),
+                         Type::F64 => self.context.f64_type().into(),
                          Type::I64 => self.context.i64_type().into(),
-                         _ => self.context.i64_type().into(), 
+                         Type::I32 => self.context.i32_type().into(),
+                         Type::U8 => self.context.i8_type().into(),
+                         Type::Bool => self.context.bool_type().into(),
+                         Type::Usize => self.context.i64_type().into(),
+                         _ => self.get_llvm_type(&res.1).unwrap_or(self.context.i64_type().into()),
                      };
                      Ok((self.builder.build_load(load_ty, ptr, "").unwrap(), res.1))
                  } else {

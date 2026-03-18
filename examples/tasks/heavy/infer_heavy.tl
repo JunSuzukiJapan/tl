@@ -1,4 +1,4 @@
-// SKIP: Requires external resources or model files
+// 4層GPT 推論 (train_heavy.tl で学習したモデルを使用)
 fn argmax(t: Tensor<f32, 1>) -> i64 {
     let mut max_val = -1000000.0;
     let mut idx = 0;
@@ -57,7 +57,7 @@ fn main() {
     print("Inference with Heavy Model (4-Layers, d_model=384)");
     let model = GPTHeavy::new(vocab_size, d_model);
     
-    Param::load_all("model_heavy.safetensors");
+    Param::load(model, "model_heavy.safetensors");
     print("Parameters Loaded from model_heavy.safetensors");
     
     // Autoregressive Inference Logic using PAD=12
@@ -70,21 +70,21 @@ fn main() {
     let input1 = data1.reshape([1, 12]);
     let logits1 = model.forward(input1);
     let logits1_flat = logits1.reshape([12, 13]);
-    let p1 = argmax(logits1_flat.slice(5, 1).reshape([13]));
+    let p1 = argmax(logits1_flat.slice(0, 5, 6, 1).reshape([13]));
     
     let v1 = p1 as f32;
     let data2 = [2.0, 1.0, 10.0, 4.0, 3.0, 11.0, v1, 12.0, 12.0, 12.0, 12.0, 12.0];
     let input2 = data2.reshape([1, 12]);
     let logits2 = model.forward(input2);
     let logits2_flat = logits2.reshape([12, 13]);
-    let p2 = argmax(logits2_flat.slice(6, 1).reshape([13]));
+    let p2 = argmax(logits2_flat.slice(0, 6, 7, 1).reshape([13]));
     
     let v2 = p2 as f32;
     let data3 = [2.0, 1.0, 10.0, 4.0, 3.0, 11.0, v1, v2, 12.0, 12.0, 12.0, 12.0];
     let input3 = data3.reshape([1, 12]);
     let logits3 = model.forward(input3);
     let logits3_flat = logits3.reshape([12, 13]);
-    let p3 = argmax(logits3_flat.slice(7, 1).reshape([13]));
+    let p3 = argmax(logits3_flat.slice(0, 7, 8, 1).reshape([13]));
     
     print("Predicted:"); print(p1); print(p2); print(p3);
     
@@ -96,21 +96,21 @@ fn main() {
     let q_input1 = q_data1.reshape([1, 12]);
     let q_logits1 = model.forward(q_input1);
     let q_logits1_flat = q_logits1.reshape([12, 13]);
-    let q1 = argmax(q_logits1_flat.slice(5, 1).reshape([13]));
+    let q1 = argmax(q_logits1_flat.slice(0, 5, 6, 1).reshape([13]));
     
     let qv1 = q1 as f32;
     let q_data2 = [9.0, 9.0, 10.0, 1.0, 0.0, 11.0, qv1, 12.0, 12.0, 12.0, 12.0, 12.0];
     let q_input2 = q_data2.reshape([1, 12]);
     let q_logits2 = model.forward(q_input2);
     let q_logits2_flat = q_logits2.reshape([12, 13]);
-    let q2 = argmax(q_logits2_flat.slice(6, 1).reshape([13]));
+    let q2 = argmax(q_logits2_flat.slice(0, 6, 7, 1).reshape([13]));
     
     let qv2 = q2 as f32;
     let q_data3 = [9.0, 9.0, 10.0, 1.0, 0.0, 11.0, qv1, qv2, 12.0, 12.0, 12.0, 12.0];
     let q_input3 = q_data3.reshape([1, 12]);
     let q_logits3 = model.forward(q_input3);
     let q_logits3_flat = q_logits3.reshape([12, 13]);
-    let q3 = argmax(q_logits3_flat.slice(7, 1).reshape([13]));
+    let q3 = argmax(q_logits3_flat.slice(0, 7, 8, 1).reshape([13]));
     
     print("Predicted:"); print(q1); print(q2); print(q3);
     

@@ -530,8 +530,24 @@ pub fn compile_file_read_binary<'ctx>(
     _target: Option<&Type>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
     if args.len() != 1 { return Err("File::read_binary requires 1 argument".into()); }
-    let fn_val = codegen.module.get_function("tl_file_read_binary").ok_or("tl_file_read_binary not found")?;
-    let call = codegen.builder.build_call(fn_val, &[args[0].0.into()], "file_read_binary").map_err(|e| e.to_string())?;
+    
+    // Extract char* from String struct (same pattern as compile_file_read_static)
+    let (path_val, path_ty) = &args[0];
+    let path_ptr_val = if matches!(path_ty, Type::String(_)) {
+        let struct_ty = Type::String("String".to_string());
+        let v = codegen.load_struct_i64_field(*path_val, &struct_ty, "ptr")?;
+        v.into_int_value()
+    } else {
+        return Err(format!("Expected String argument, got {:?}", path_ty));
+    };
+    let path_ptr = codegen.builder.build_int_to_ptr(
+        path_ptr_val,
+        codegen.context.ptr_type(inkwell::AddressSpace::default()),
+        "path_ptr"
+    ).map_err(|e| e.to_string())?;
+    
+    let fn_val = codegen.module.get_function("tl_file_read_binary_all").ok_or("tl_file_read_binary_all not found")?;
+    let call = codegen.builder.build_call(fn_val, &[path_ptr.into()], "file_read_binary_all").map_err(|e| e.to_string())?;
     let res = match call.try_as_basic_value() {
         inkwell::values::ValueKind::Basic(v) => v,
         _ => return Err("Invalid return from File::read_binary".into()),
@@ -539,20 +555,15 @@ pub fn compile_file_read_binary<'ctx>(
     
     // Cast void* to Vec*
     // Vec is a generic type, so we need to ensure it's monomorphized first
-    // Note: mangle_type_name returns "Vec<u8>" format, not "Vec_u8"
-    let vec_ty_name = "Vec<u8>";
+    // Note: mangle_type_name returns "Vec[u8]" format (square brackets)
+    let vec_ty_name = "Vec[u8]";
     let vec_struct_ty = if let Some(ty) = codegen.struct_types.get(vec_ty_name) {
-        *ty
-    } else if let Some(ty) = codegen.struct_types.get("Vec") {
-        // Fallback to base name (unlikely to exist)
         *ty
     } else {
         // Monomorphize Vec<u8> on-demand
         let vec_u8_generics = vec![Type::U8];
         codegen.monomorphize_struct("Vec", &vec_u8_generics)
-            .map_err(|e| format!("Failed to monomorphize Vec<u8>: {}", e))?;
-        *codegen.struct_types.get(vec_ty_name)
-            .ok_or(format!("Vec<u8> type not found after monomorphization (tried {})", vec_ty_name))?
+            .map_err(|e| format!("Failed to monomorphize Vec<u8>: {}", e))?
     };
     let vec_ptr_ty = vec_struct_ty.ptr_type(inkwell::AddressSpace::default());
     let vec_ptr = codegen.builder.build_pointer_cast(

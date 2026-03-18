@@ -1,4 +1,4 @@
-// SKIP: Requires external resources or model files
+// Sequence Reversal 推論 (reverse_train.tl で学習したモデルを使用)
 // Sequence Reversal Inference
 //
 // Matches improved architecture instructions.
@@ -160,22 +160,22 @@ fn inference(model: SeqModel) {
     print("Checking predictions...");
     
     // Step 1: Pos 4 -> Expect 4
-    let l_step1 = logits_flat.slice(4, 1);
+    let l_step1 = logits_flat.slice(0, 4, 5, 1);
     print("Step 1 (Pos 4) -> Expect '4':");
     print(l_step1);
 
     // Step 2: Pos 5 -> Expect 3
-    let l_step2 = logits_flat.slice(5, 1);
+    let l_step2 = logits_flat.slice(0, 5, 6, 1);
     print("Step 2 (Pos 5) -> Expect '3':");
     print(l_step2);
 
     // Step 3: Pos 6 -> Expect 2
-    let l_step3 = logits_flat.slice(6, 1);
+    let l_step3 = logits_flat.slice(0, 6, 7, 1);
     print("Step 3 (Pos 6) -> Expect '2':");
     print(l_step3);
 
     // Step 4: Pos 7 -> Expect 1
-    let l_step4 = logits_flat.slice(7, 1);
+    let l_step4 = logits_flat.slice(0, 7, 8, 1);
     print("Step 4 (Pos 7) -> Expect '1':");
     print(l_step4);
 }

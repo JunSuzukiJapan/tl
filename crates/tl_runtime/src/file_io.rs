@@ -370,6 +370,53 @@ pub extern "C" fn tl_file_read_binary(f: *mut std::ffi::c_void, buf: *mut u8, le
     }
 }
 
+/// TL Vec<u8> のメモリレイアウト (vec.tl の定義に一致)
+#[repr(C)]
+pub struct TlVecU8 {
+    pub ptr: *mut u8,
+    pub cap: i64,
+    pub len: i64,
+}
+
+/// パスからファイル全体をバイナリで読み込み、TL の Vec<u8> を返す
+/// codegen の File::read_binary(path) -> Vec<u8> に対応
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_file_read_binary_all(path: *const c_char) -> *mut TlVecU8 {
+    if path.is_null() {
+        return std::ptr::null_mut();
+    }
+    let path_str = unsafe { CStr::from_ptr(path).to_string_lossy() };
+    let path_buf = expand_path(&path_str);
+
+    match std::fs::read(&path_buf) {
+        Ok(data) => {
+            let len = data.len() as i64;
+            let cap = len;
+            // malloc でデータバッファを確保してコピー
+            let data_ptr = unsafe {
+                let layout = std::alloc::Layout::from_size_align(data.len(), 1).unwrap();
+                let ptr = std::alloc::alloc(layout);
+                std::ptr::copy_nonoverlapping(data.as_ptr(), ptr, data.len());
+                ptr
+            };
+            // Vec<u8> 構造体を確保
+            let vec_ptr = unsafe {
+                let layout = std::alloc::Layout::new::<TlVecU8>();
+                let ptr = std::alloc::alloc(layout) as *mut TlVecU8;
+                (*ptr).ptr = data_ptr;
+                (*ptr).cap = cap;
+                (*ptr).len = len;
+                ptr
+            };
+            vec_ptr
+        }
+        Err(e) => {
+            eprintln!("Error reading binary file {:?}: {}", path_buf, e);
+            std::ptr::null_mut()
+        }
+    }
+}
+
 /// ファイルにバイナリ書き込み
 #[unsafe(no_mangle)]
 /// @ffi_sig (c_void, u8, usize) -> bool

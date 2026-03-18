@@ -225,7 +225,7 @@ fn main() {
     let mut model = GPT2::new(vocab_size, d_model);
     
     // 既存モデルがあればロードして再開
-    Param::load_all("model_paper.safetensors");
+    Param::load(model, "model_paper.safetensors");
     
     // 論文より強めの学習率 (0.001)
     let lr = 0.001;
@@ -236,10 +236,10 @@ fn main() {
     for epoch in range(0, epochs) {
         model = train_epoch(model, lr, epoch);
         if epoch - ((epoch / 5) * 5) == 4 {
-            Param::save_all("model_paper.safetensors");
+            Param::save(model, "model_paper.safetensors");
             print("Saved checkpoint.");
         }
     }
     print("Training Complete!");
-    Param::save_all("model_paper.safetensors");
+    Param::save(model, "model_paper.safetensors");
 }

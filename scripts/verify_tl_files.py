@@ -5,6 +5,7 @@ tests/ と examples/ 内の .tl ファイルを実行し、動作を確認しま
 
 使用方法:
     python scripts/verify_tl_files.py [--verbose] [--timeout SECONDS] [--filter PATTERN]
+                                      [--include-training] [--check-inference]
 
 ⚠️⚠️⚠️ 絶対禁止事項 ⚠️⚠️⚠️
   このスクリプトに並列実行（--parallel, ThreadPoolExecutor, multiprocessing 等）を
@@ -181,6 +182,23 @@ def has_skip_comment(filepath: Path) -> Tuple[bool, str]:
         return False, ""
 
 
+# ── 学習・推論ファイル（--include-training で有効化）────────
+# デフォルトではスキップされるが、--include-training で実行可能
+TRAINING_FILES = {
+    "train_heavy.tl",
+    "infer_heavy.tl",
+    "train_add.tl",
+    "infer_add.tl",
+    "train_paper.tl",
+    "train_recall.tl",
+    "reverse_train.tl",
+    "train.tl",         # MNIST
+    "infer.tl",         # MNIST
+    "infer_paper.tl",
+    "infer_recall.tl",
+    "reverse_infer.tl",
+}
+
 # 特定のファイルをスキップするかどうか
 SKIP_FILES = {
     # 対話的な入力が必要なファイル
@@ -188,43 +206,24 @@ SKIP_FILES = {
     "chatbot.tl",
     # 外部リソースが必要
     "download.tl",
-    "infer.tl",  # MNIST
-    "train.tl",  # MNIST
-    "infer_add.tl",  # 学習済みモデルが必要
     # 非常に長時間実行されるファイル
-    "train_heavy.tl",
-    "infer_heavy.tl",
-    "train_add.tl",
-    "train_paper.tl",
-    "train_recall.tl",
-    "reverse_train.tl",
     "readme_n_queens.tl",
-    # "n_queens.tl",
     # 既知の問題があるファイル
     "train_verify_2digit.tl",
-    # "reverse_infer.tl",
-    # 計算量が多くタイムアウトする
-    # "mln.tl",
-    # "tsp.tl",  # backward が重く 30秒タイムアウト超過
     # システムテスト (タイムアウト)
     "system_test.tl",
 
     # --- autograd 使用ファイル ---
-    # randn_debug の codegen/runtime 引数不一致修正 (2026-02-12) により大半が動作。
-    # sudoku.tl のみ型エラー (autograd 無関係) で残留。
-    # lenia, gnn は GPU 負荷が高く連続実行で Mac がフリーズするためスキップ。
     "sudoku.tl",  # 型エラー: expected Bool, found String
     "lenia.tl",   # GPU 負荷大 (64x64 grid × 100 steps)
     "gnn.tl",     # GPU 負荷大 (250 epochs)
     
-    # 計算量が多い/GPU負荷が高いテスト (システムクラッシュ回避のためスキップ)
+    # 計算量が多い/GPU負荷が高いテスト
     "kv_cache_test.tl",
     "recommendation.tl",
     "inverse_life.tl",
 
-    # --- Crash Reproduction Files (System Instability Risk) ---
-    # These files are designed to crash or leak resources (GPU/Memory).
-    # Running them might cause WindowServer watchdog timeouts (Mac freeze).
+    # --- Crash Reproduction Files ---
     "repro_reshape_segfault.tl",
     "repro_segfault_minimal.tl",
 }
@@ -265,11 +264,14 @@ EXPECTED_FAILURES = {
     "negation_unbound.tl",
 }
 
-def should_skip(filepath: Path) -> Tuple[bool, str]:
+def should_skip(filepath: Path, include_training: bool = False) -> Tuple[bool, str]:
     """ファイルをスキップすべきか判定"""
     name = filepath.name
     if name in SKIP_FILES:
         return True, f"スキップ対象: {name}"
+    # 学習・推論ファイルは --include-training がないとスキップ
+    if name in TRAINING_FILES and not include_training:
+        return True, f"学習/推論ファイル (--include-training で有効化)"
     path_posix = filepath.as_posix()
     for suffix in SKIP_PATH_SUFFIXES:
         if path_posix.endswith("/" + suffix) or path_posix == suffix:
@@ -279,30 +281,63 @@ def should_skip(filepath: Path) -> Tuple[bool, str]:
     if skip_in_file:
         return True, skip_reason
     if not has_main_function(filepath):
-        # EXPECTED_FAILURES に含まれている場合は、main関数がなくても実行を試みる（コンパイルエラー等を確認するため）
+        # EXPECTED_FAILURES に含まれている場合は、main関数がなくても実行を試みる
         if name in EXPECTED_FAILURES:
             return False, ""
         return True, "main 関数なし"
     return False, ""
 
 
-def run_tl_file(filepath: Path, tl_binary: Path, timeout: int, verbose: bool = False) -> TestResult:
+def check_inference_output(filepath: Path, stdout: str, stderr: str) -> Optional[str]:
+    """推論スクリプトの出力が成功を示しているかチェック。
+    成功なら None、失敗なら失敗理由の文字列を返す。"""
+    name = filepath.name
+    combined = stdout + stderr
+    
+    # 推論ファイル別の成功基準
+    if name == "infer.tl":  # MNIST inference
+        # 正解率が出力されているか
+        if "Accuracy" in combined or "accuracy" in combined or "correct" in combined:
+            # 正解率の数値を抽出してチェック
+            import re
+            acc_match = re.search(r'(?:accuracy|Accuracy)[:\s]+(\d+(?:\.\d+)?)', combined)
+            if acc_match:
+                acc = float(acc_match.group(1))
+                if acc < 10.0:  # 10%未満はランダム以下
+                    return f"精度が低すぎる: {acc}%"
+            return None  # 精度出力あり = 成功
+        if "correct" in combined.lower():
+            return None
+        return "推論出力に精度情報なし"
+    
+    if name in ("infer_heavy.tl", "infer_paper.tl", "infer_add.tl", 
+                "reverse_infer.tl", "infer_recall.tl", "infer_paper.tl"):
+        # 出力が空でなければ成功とみなす（少なくとも推論が実行された）
+        if len(stdout.strip()) > 0:
+            return None
+        return "推論出力が空"
+    
+    return None  # チェック対象外
+
+
+def run_tl_file(filepath: Path, tl_binary: Path, timeout: int, 
+                verbose: bool = False, include_training: bool = False,
+                check_inference: bool = False) -> TestResult:
     """TL ファイルを実行して結果を返す"""
     start_time = time.time()
     
     # 環境変数の準備 (ライブラリパス設定)
     env = os.environ.copy()
     runtime_dir = tl_binary.parent
-    # macOS/Linux対応: LIBRARY_PATHを設定してリンカが tl_runtime を見つけられるようにする
     extra_lib_path = str(runtime_dir)
     env["LIBRARY_PATH"] = f"{extra_lib_path}:{env.get('LIBRARY_PATH', '')}"
     env["LD_LIBRARY_PATH"] = f"{extra_lib_path}:{env.get('LD_LIBRARY_PATH', '')}"
     env["DYLD_LIBRARY_PATH"] = f"{extra_lib_path}:{env.get('DYLD_LIBRARY_PATH', '')}"
 
-    skip, reason = should_skip(filepath)
+    skip, reason = should_skip(filepath, include_training)
     if skip:
         # SKIPコメント付き / main関数なし / スキップ対象ファイル の場合はビルドチェックをスキップ
-        if "SKIP:" in reason or "main 関数なし" in reason or "スキップ対象" in reason:
+        if "SKIP:" in reason or "main 関数なし" in reason or "スキップ対象" in reason or "学習/推論" in reason:
 
             return TestResult(
                 file=str(filepath),
@@ -532,6 +567,19 @@ def run_tl_file(filepath: Path, tl_binary: Path, timeout: int, verbose: bool = F
                     reason="Unexpected Success: Expected failure but exited with 0"
                 )
 
+        # 推論出力チェック (--check-inference 有効時)
+        if check_inference:
+            infer_fail = check_inference_output(filepath, stdout, stderr)
+            if infer_fail:
+                return TestResult(
+                    file=str(filepath),
+                    status=Status.FAIL,
+                    output=stdout,
+                    error=stderr,
+                    duration=duration,
+                    reason=f"推論チェック失敗: {infer_fail}"
+                )
+
         return TestResult(
             file=str(filepath),
             status=Status.PASS,
@@ -663,6 +711,10 @@ def main():
     parser.add_argument("--static", action="store_true", help="静的コンパイルモードで実行 (JIT回避)")
     parser.add_argument("--clean", action="store_true", help="古いバイナリを削除して終了")
     parser.add_argument("--no-build", action="store_true", help="自動ビルドをスキップ (既存バイナリをそのまま使用)")
+    parser.add_argument("--include-training", action="store_true", 
+                        help="学習・推論スクリプトを含める (デフォルトではスキップ)")
+    parser.add_argument("--check-inference", action="store_true",
+                        help="推論スクリプトの出力が成功を示しているかチェック")
     parser.add_argument("--cooldown", type=float, default=1.5, help="テスト間のクールダウン秒数 (デフォルト: 1.5)")
     parser.add_argument("--crash-cooldown", type=float, default=5.0, help="クラッシュ後のクールダウン秒数 (デフォルト: 5.0)")
     parser.add_argument("--max-crashes", type=int, default=5, help="連続クラッシュでの緊急停止閾値 (デフォルト: 5)")
@@ -803,7 +855,8 @@ def main():
 
         print(f"[{i}/{len(tl_files)}] {rel_path} ... ", end="", flush=True)
         
-        result = run_tl_file(tl_file, tl_binary, args.timeout, args.verbose)
+        result = run_tl_file(tl_file, tl_binary, args.timeout, args.verbose,
+                            args.include_training, args.check_inference)
         
         # GPU リソース競合による間欠的失敗 (SIGTRAP=-5, SIGABRT=-6) のリトライ
         if result.status == Status.FAIL and result.reason and ("Exit code: -5" in result.reason or "Exit code: -6" in result.reason):
@@ -811,7 +864,8 @@ def main():
             for retry in range(max_retries):
                 print(f"🔄", end="", flush=True)
                 time.sleep(args.crash_cooldown)
-                result = run_tl_file(tl_file, tl_binary, args.timeout, args.verbose)
+                result = run_tl_file(tl_file, tl_binary, args.timeout, args.verbose,
+                                    args.include_training, args.check_inference)
                 if result.status == Status.PASS:
                     break
         

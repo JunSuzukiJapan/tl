@@ -1176,6 +1176,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         Type::F32 => self.context.f32_type().into(),
                         Type::I64 | Type::Entity | Type::Usize => self.context.i64_type().into(),
                         Type::Bool => self.context.bool_type().into(),
+                        Type::U8 => self.context.i8_type().into(),
                         Type::Tensor(_, _) => self
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
@@ -1207,6 +1208,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             self.context.i64_type().fn_type(&param_types, false)
                         }
                         Type::Bool => self.context.bool_type().fn_type(&param_types, false),
+                        Type::U8 => self.context.i8_type().fn_type(&param_types, false),
                         Type::Void => self.context.void_type().fn_type(&param_types, false),
                         Type::Tensor(_, _) => self
                             .context
