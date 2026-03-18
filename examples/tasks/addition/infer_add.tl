@@ -1,48 +1,19 @@
-// 2桁足し算タスク推論 - train_add.tl と同じモデル構造
-// 自己回帰生成による推論
-
-// ---------------
-// Helper Functions
-// ---------------
-
-fn my_argmax(t: Tensor<f32, 1>) -> i64 {
-    let mut max_val = -1000000.0;
-    let mut idx = 0;
-    for k in range(0, 13) {
-        let v = t[k];
-        if v > max_val {
-            max_val = v;
-            idx = k;
-        }
-    }
-    return idx;
-}
-
-// Causal Mask (tril()の代替)
-fn get_causal_mask(size: i64) -> Tensor<f32, 2> {
-    let mut mask: Tensor<f32, 2> = Tensor::randn([size, size], false) * 0.0;
-    for i in range(0, size) {
-        for j in range(0, size) {
-            if j <= i {
-                mask[i, j] = 1.0;
-            }
-        }
-    }
-    return mask.detach(false);
-}
-
-// ---------------
-// Model Components (train_add.tl と同一)
-// ---------------
+// 2桁足し算タスク - 推論 (train_add.tl と同一構造)
 
 struct Linear { W: Tensor<f32, 2>, b: Tensor<f32, 1> }
 impl Linear { 
     fn new(i: i64, o: i64) -> Linear { 
         Linear((Tensor::randn([i, o], true)*0.1).detach(true), (Tensor::randn([o], true)*0.0).detach(true))
     } 
-    fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
-        x.matmul(self.W) + self.b 
-    } 
+    fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { x.matmul(self.W) + self.b }
+}
+
+struct LayerNorm { w: Tensor<f32, 1>, b: Tensor<f32, 1> }
+impl LayerNorm {
+    fn new(d: i64) -> LayerNorm { 
+        LayerNorm((Tensor::randn([d], true)*0.0+1.0).detach(true), (Tensor::randn([d], true)*0.0).detach(true)) 
+    }
+    fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { x.layer_norm(self.w, self.b, 0.00001 as f64) }
 }
 
 struct CausalSelfAttention { q_proj: Linear, k_proj: Linear, v_proj: Linear, p_proj: Linear }
@@ -54,61 +25,38 @@ impl CausalSelfAttention {
         let q = self.q_proj.forward(x); 
         let k = self.k_proj.forward(x); 
         let v = self.v_proj.forward(x); 
-        
-        let kt = k.transpose(1, 2);
-        let scores = q.matmul(kt) * 0.08839;
-        
-        let mask = get_causal_mask(12);
-        let masked_scores = scores * mask;
-        
-        let attn_weights = masked_scores.softmax(2);
-        let y = attn_weights.matmul(v); 
-        self.p_proj.forward(y) 
+        let scores = q.matmul(k.transpose(1, 2)) * 0.125;
+        let attn_weights = scores.tril(0).softmax(2);
+        self.p_proj.forward(attn_weights.matmul(v)) 
     } 
 }
 
 struct MLP { f: Linear, p: Linear }
 impl MLP { 
-    fn new(d: i64) -> MLP { 
-        MLP(Linear::new(d, d*4), Linear::new(d*4, d)) 
-    } 
-    fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
-        self.p.forward(self.f.forward(x).relu()) 
-    } 
+    fn new(d: i64) -> MLP { MLP(Linear::new(d, d*4), Linear::new(d*4, d)) } 
+    fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { self.p.forward(self.f.forward(x).relu()) } 
 }
 
-struct Block { a: CausalSelfAttention, m: MLP }
+struct Block { l1: LayerNorm, a: CausalSelfAttention, l2: LayerNorm, m: MLP }
 impl Block { 
-    fn new(d: i64) -> Block { 
-        Block(CausalSelfAttention::new(d), MLP::new(d)) 
-    } 
+    fn new(d: i64) -> Block { Block(LayerNorm::new(d), CausalSelfAttention::new(d), LayerNorm::new(d), MLP::new(d)) } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
-        let x = x + self.a.forward(x); 
-        x + self.m.forward(x) 
+        let x = x + self.a.forward(self.l1.forward(x)); 
+        x + self.m.forward(self.l2.forward(x)) 
     } 
 }
 
-// Embedding
 struct Embedding { w: Tensor<f32, 2> }
 impl Embedding {
-    fn new(v: i64, d: i64) -> Embedding {
-        Embedding((Tensor::randn([v, d], true)*0.1).detach(true))
-    }
-    fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> {
-        i.embedding(self.w)
-    }
+    fn new(v: i64, d: i64) -> Embedding { Embedding((Tensor::randn([v, d], true)*0.1).detach(true)) }
+    fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> { i.embedding(self.w) }
 }
 
 // 1-Layer GPT (train_add.tl と同一構造)
-struct GPT { w: Embedding, wp: Embedding, b1: Block, h: Linear }
+struct GPT { w: Embedding, wp: Embedding, b1: Block, l: LayerNorm, h: Linear }
 impl GPT { 
     fn new(v: i64, d: i64) -> GPT { 
-        GPT(
-            Embedding::new(v, d),
-            Embedding::new(12, d),
-            Block::new(d), 
-            Linear::new(d, v)
-        ) 
+        GPT(Embedding::new(v, d), Embedding::new(12, d), Block::new(d), LayerNorm::new(d), Linear::new(d, v)) 
     } 
     fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> { 
         let pos_data = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0];
@@ -117,13 +65,9 @@ impl GPT {
         let pos_emb = self.wp.forward(pos);
         let x = tok_emb + pos_emb;
         let x = self.b1.forward(x);
-        self.h.forward(x)
+        self.h.forward(self.l.forward(x)) 
     } 
 }
-
-// ---------------
-// Inference
-// ---------------
 
 fn main() {
     let model_path = "model_add.safetensors";
@@ -134,37 +78,43 @@ fn main() {
     print("Model Inference - Addition (train_add.tl structure)");
     let model = GPT::new(vocab_size, d_model);
     
-    Param::load(model, model_path);
-    print("Parameters Loaded.");
+    if File::exists(model_path) {
+        Param::load(model, model_path);
+        print("Parameters Loaded.");
+    } else {
+        print("ERROR: model_add.safetensors not found. Run train_add.tl first.");
+        return;
+    }
     
-    // Test 12 + 34 = 46
+    // Test: 12 + 34 = 46
     print("Test: 12 + 34 = 46");
     print("Expected (Reverse): 6, 4, 0");
     
-    let data1 = [2.0, 1.0, 10.0, 4.0, 3.0, 11.0, 6.0, 4.0, 0.0, 12.0, 12.0, 12.0];
+    let data1 = [2.0, 1.0, 10.0, 4.0, 3.0, 11.0, 12.0, 12.0, 12.0, 12.0, 12.0, 12.0];
     let input1 = data1.reshape([1, 12]);
     let logits1 = model.forward(input1);
-    let logits1_flat = logits1.reshape([12, 13]);
-    let p1 = my_argmax(logits1_flat.slice(0, 5, 6, 1).reshape([13]));
-    let p2 = my_argmax(logits1_flat.slice(0, 6, 7, 1).reshape([13]));
-    let p3 = my_argmax(logits1_flat.slice(0, 7, 8, 1).reshape([13]));
+    let flat1 = logits1.reshape([12, 13]);
     
-    print("Predicted:"); print(p1); print(p2); print(p3);
+    print("Predicted:");
+    let p6 = flat1.argmax(1);
+    print(p6[6]);
+    print(p6[7]);
+    print(p6[8]);
     
-    // Test 99 + 1 = 100
+    // Test: 99 + 1 = 100
     print("Test: 99 + 1 = 100");
     print("Expected (Reverse): 0, 0, 1");
     
-    let q_data1 = [9.0, 9.0, 10.0, 1.0, 0.0, 11.0, 0.0, 0.0, 1.0, 12.0, 12.0, 12.0];
-    let q_input1 = q_data1.reshape([1, 12]);
-    let q_logits1 = model.forward(q_input1);
-    let q_logits1_flat = q_logits1.reshape([12, 13]);
+    let data2 = [9.0, 9.0, 10.0, 1.0, 0.0, 11.0, 12.0, 12.0, 12.0, 12.0, 12.0, 12.0];
+    let input2 = data2.reshape([1, 12]);
+    let logits2 = model.forward(input2);
+    let flat2 = logits2.reshape([12, 13]);
     
-    let q1 = my_argmax(q_logits1_flat.slice(0, 5, 6, 1).reshape([13]));
-    let q2 = my_argmax(q_logits1_flat.slice(0, 6, 7, 1).reshape([13]));
-    let q3 = my_argmax(q_logits1_flat.slice(0, 7, 8, 1).reshape([13]));
-    
-    print("Predicted:"); print(q1); print(q2); print(q3);
+    print("Predicted:");
+    let p7 = flat2.argmax(1);
+    print(p7[6]);
+    print(p7[7]);
+    print(p7[8]);
     
     print("Done.");
 }

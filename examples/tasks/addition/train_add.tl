@@ -1,41 +1,10 @@
-// 2桁足し算タスク - 組み込み関数を最小限に抑えた実装
-// 置換した組み込み関数: embedding(), tril(), cross_entropy(), pow()
-// 維持した組み込み関数: relu(), softmax() (数値安定性のため)
+// 2桁足し算タスク - paper/heavy と統一されたアーキテクチャ
 
 // ---------------
-// Helper Functions
-// ---------------
-
-// One-Hot Embedding (embedding()の代替)
- 
-// ...
-// ...
-
-
-// Causal Mask (tril()の代替)
-fn get_causal_mask(size: i64) -> Tensor<f32, 2> {
-    let mut mask: Tensor<f32, 2> = Tensor::randn([size, size], false) * 0.0;
-    for i in range(0, size) {
-        for j in range(0, size) {
-            if j <= i {
-                mask[i, j] = 1.0;
-            }
-        }
-    }
-    return mask.detach(false);
-}
-
-// Cross Entropy: ビルトインの cross_entropy() を使用
-
-// ---------------
-// Model Components
+// Model Components (paper/heavy と同一)
 // ---------------
 
 struct Linear { W: Tensor<f32, 2>, b: Tensor<f32, 1> }
-
-// ... (skip)
-
-struct LinearPair { a: Linear, b: Linear }
 impl Linear { 
     fn new(i: i64, o: i64) -> Linear { 
         Linear((Tensor::randn([i, o], true)*0.1).detach(true), (Tensor::randn([o], true)*0.0).detach(true))
@@ -43,38 +12,31 @@ impl Linear {
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
         x.matmul(self.W) + self.b 
     } 
-    fn update(self, lr: f32) -> Linear { 
+    fn step(self, lr: f32) -> Linear { 
         let mut s = self; 
-        let w_grad = s.W.grad();
-        let w_diff = w_grad * lr;
-        s.W = (s.W - w_diff).detach(true);
-        
-        let b_grad = s.b.grad();
-        let b_diff = b_grad * lr;
-        s.b = (s.b - b_diff).detach(true);
-        
+        s.W = (s.W - s.W.grad() * lr).detach(true); 
+        s.b = (s.b - s.b.grad() * lr).detach(true); 
         s
-    }
-    fn dup(self) -> LinearPair {
-        LinearPair(
-            Linear(self.W.clone(), self.b.clone()),
-            Linear(self.W.clone(), self.b.clone())
-        )
-    }
-    fn clone(self) -> Linear {
-        Linear(self.W.clone(), self.b.clone())
-    }
-    fn shallow_clone(self) -> Linear {
-        Linear(self.W.shallow_clone(), self.b.shallow_clone())
     }
 }
 
-
-
-
+struct LayerNorm { w: Tensor<f32, 1>, b: Tensor<f32, 1> }
+impl LayerNorm {
+    fn new(d: i64) -> LayerNorm { 
+        LayerNorm((Tensor::randn([d], true)*0.0+1.0).detach(true), (Tensor::randn([d], true)*0.0).detach(true)) 
+    }
+    fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
+        x.layer_norm(self.w, self.b, 0.00001 as f64) 
+    }
+    fn step(self, lr: f32) -> LayerNorm {
+        let mut s = self; 
+        s.w = (s.w - s.w.grad() * lr).detach(true); 
+        s.b = (s.b - s.b.grad() * lr).detach(true); 
+        s
+    }
+}
 
 struct CausalSelfAttention { q_proj: Linear, k_proj: Linear, v_proj: Linear, p_proj: Linear }
-struct CausalSelfAttentionPair { a: CausalSelfAttention, b: CausalSelfAttention }
 impl CausalSelfAttention { 
     fn new(d: i64) -> CausalSelfAttention { 
         CausalSelfAttention(Linear::new(d, d), Linear::new(d, d), Linear::new(d, d), Linear::new(d, d)) 
@@ -83,120 +45,51 @@ impl CausalSelfAttention {
         let q = self.q_proj.forward(x); 
         let k = self.k_proj.forward(x); 
         let v = self.v_proj.forward(x); 
-        
         let kt = k.transpose(1, 2);
-        let scores = q.matmul(kt) * 0.08839;
-        
-        // 手動因果マスク (tril()の代替)
-        let mask = get_causal_mask(12);
-        let masked_scores = scores * mask;
-        
-        let attn_weights = masked_scores.softmax(2);
-        let y = attn_weights.matmul(v); 
-        self.p_proj.forward(y) 
+        let scores = q.matmul(kt) * 0.125;
+        let attn_weights = scores.tril(0).softmax(2);
+        self.p_proj.forward(attn_weights.matmul(v)) 
     } 
-    fn update(self, lr: f32) -> CausalSelfAttention { 
-        print("DEBUG: CausalSelfAttention::update start");
+    fn step(self, lr: f32) -> CausalSelfAttention { 
         let mut s = self; 
-        s.q_proj = s.q_proj.update(lr); 
-        print("DEBUG: q_proj updated");
-        s.k_proj = s.k_proj.update(lr); 
-        s.v_proj = s.v_proj.update(lr); 
-        s.p_proj = s.p_proj.update(lr); 
+        s.q_proj = s.q_proj.step(lr); 
+        s.k_proj = s.k_proj.step(lr); 
+        s.v_proj = s.v_proj.step(lr); 
+        s.p_proj = s.p_proj.step(lr); 
         s 
     } 
-    fn dup(self) -> CausalSelfAttentionPair {
-        let q = self.q_proj.dup();
-        let k = self.k_proj.dup();
-        let v = self.v_proj.dup();
-        let p = self.p_proj.dup();
-        CausalSelfAttentionPair(
-            CausalSelfAttention(q.a, k.a, v.a, p.a),
-            CausalSelfAttention(q.b, k.b, v.b, p.b)
-        )
-    }
-    fn clone(self) -> CausalSelfAttention {
-        CausalSelfAttention(
-            self.q_proj.clone(), 
-            self.k_proj.clone(), 
-            self.v_proj.clone(), 
-            self.p_proj.clone()
-        )
-    }
-    fn shallow_clone(self) -> CausalSelfAttention {
-        CausalSelfAttention(
-            self.q_proj.shallow_clone(),
-            self.k_proj.shallow_clone(),
-            self.v_proj.shallow_clone(),
-            self.p_proj.shallow_clone()
-        )
-    }
 }
 
 struct MLP { f: Linear, p: Linear }
-struct MLPPair { a: MLP, b: MLP }
 impl MLP { 
-    fn new(d: i64) -> MLP { 
-        MLP(Linear::new(d, d*4), Linear::new(d*4, d)) 
-    } 
+    fn new(d: i64) -> MLP { MLP(Linear::new(d, d*4), Linear::new(d*4, d)) } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
         self.p.forward(self.f.forward(x).relu()) 
     } 
-    fn update(self, lr: f32) -> MLP { 
-        print("DEBUG: MLP::update start");
-        let mut s = self; 
-        s.f = s.f.update(lr); 
-        s.p = s.p.update(lr); 
-        s 
+    fn step(self, lr: f32) -> MLP { 
+        let mut s = self; s.f = s.f.step(lr); s.p = s.p.step(lr); s 
     } 
-    fn dup(self) -> MLPPair {
-        let f = self.f.dup();
-        let p = self.p.dup();
-        MLPPair(MLP(f.a, p.a), MLP(f.b, p.b))
-    }
-    fn clone(self) -> MLP {
-        MLP(self.f.clone(), self.p.clone())
-    }
-    fn shallow_clone(self) -> MLP {
-        MLP(self.f.shallow_clone(), self.p.shallow_clone())
-    }
 }
 
-struct Block { a: CausalSelfAttention, m: MLP }
-struct BlockPair { a: Block, b: Block }
+struct Block { l1: LayerNorm, a: CausalSelfAttention, l2: LayerNorm, m: MLP }
 impl Block { 
     fn new(d: i64) -> Block { 
-        Block(CausalSelfAttention::new(d), MLP::new(d)) 
+        Block(LayerNorm::new(d), CausalSelfAttention::new(d), LayerNorm::new(d), MLP::new(d)) 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
-        let x = x + self.a.forward(x); 
-        x + self.m.forward(x) 
+        let x = x + self.a.forward(self.l1.forward(x)); 
+        x + self.m.forward(self.l2.forward(x)) 
     } 
-    fn update(self, lr: f32) -> Block { 
-        print("DEBUG: Block::update start");
+    fn step(self, lr: f32) -> Block { 
         let mut s = self; 
-        s.a = s.a.update(lr); 
-        print("DEBUG: Block::update attention done");
-        s.m = s.m.update(lr); 
+        s.l1 = s.l1.step(lr); 
+        s.a = s.a.step(lr); 
+        s.l2 = s.l2.step(lr); 
+        s.m = s.m.step(lr); 
         s 
     } 
-    fn dup(self) -> BlockPair {
-        let a = self.a.dup();
-        let m = self.m.dup();
-        BlockPair(Block(a.a, m.a), Block(a.b, m.b))
-    }
-    fn clone(self) -> Block {
-        Block(self.a.clone(), self.m.clone())
-    }
-    fn shallow_clone(self) -> Block {
-        Block(
-            self.a.shallow_clone(),
-            self.m.shallow_clone()
-        )
-    }
 }
 
-// 3-Layer GPT with Embedding
 struct Embedding { w: Tensor<f32, 2> }
 impl Embedding {
     fn new(v: i64, d: i64) -> Embedding {
@@ -205,7 +98,7 @@ impl Embedding {
     fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> {
         i.embedding(self.w)
     }
-    fn update(self, lr: f32) -> Embedding {
+    fn step(self, lr: f32) -> Embedding {
         let mut s = self;
         let g = s.w.grad();
         s.w = (s.w - g * lr).detach(true);
@@ -213,13 +106,15 @@ impl Embedding {
     }
 }
 
-struct GPT { w: Embedding, wp: Embedding, b1: Block, h: Linear }
+// 1-Layer GPT
+struct GPT { w: Embedding, wp: Embedding, b1: Block, l: LayerNorm, h: Linear }
 impl GPT { 
     fn new(v: i64, d: i64) -> GPT { 
         GPT(
             Embedding::new(v, d), 
             Embedding::new(12, d), 
             Block::new(d), 
+            LayerNorm::new(d), 
             Linear::new(d, v)
         ) 
     } 
@@ -230,14 +125,15 @@ impl GPT {
         let pos_emb = self.wp.forward(pos);
         let x = tok_emb + pos_emb;
         let x = self.b1.forward(x);
-        self.h.forward(x)
+        self.h.forward(self.l.forward(x)) 
     } 
-    fn update(self, lr: f32) -> GPT { 
+    fn step(self, lr: f32) -> GPT { 
         let mut s = self; 
-        s.w = s.w.update(lr); 
-        s.wp = s.wp.update(lr); 
-        s.b1 = s.b1.update(lr); 
-        s.h = s.h.update(lr); 
+        s.w = s.w.step(lr); 
+        s.wp = s.wp.step(lr); 
+        s.b1 = s.b1.step(lr); 
+        s.l = s.l.step(lr); 
+        s.h = s.h.step(lr); 
         s 
     } 
 }
@@ -258,7 +154,6 @@ fn train_step(model: GPT, lr: f32, i: i64, j: i64) -> GPT {
     let s_d10 = rem / 10;
     let s_d1 = rem - (s_d10 * 10);
 
-    // int→f32変換 (pow()の代替)
     let v_i_d1 = i_d1 as f32;
     let v_i_d10 = i_d10 as f32;
     let v_j_d1 = j_d1 as f32;
@@ -290,9 +185,7 @@ fn train_step(model: GPT, lr: f32, i: i64, j: i64) -> GPT {
     let loss = logits_flat.cross_entropy(Y_flat);
 
     loss.backward();
-
-    let model = model.update(lr);
-    model
+    model.step(lr)
 }
 
 fn train_epoch(model: GPT, lr: f32, epoch: i64) -> GPT {
@@ -312,10 +205,6 @@ fn train_epoch(model: GPT, lr: f32, epoch: i64) -> GPT {
     model
 }
 
-fn get_memory() -> f64 {
-    System::memory_mb()
-}
-
 fn main() {
     let vocab_size = 13;
     let d_model = 64; 
@@ -328,11 +217,9 @@ fn main() {
 
     for epoch in range(0, epochs) {
         model = train_epoch(model, lr, epoch);
-        
         if epoch - ((epoch / 5) * 5) == 0 {
-             let mem = get_memory();
              print("Epoch:"); print(epoch);
-             print("Mem(MB):"); print(mem);
+             print("MB:"); print(System::memory_mb());
         }
     }
     
