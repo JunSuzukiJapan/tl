@@ -3738,7 +3738,16 @@ impl<'ctx> CodeGenerator<'ctx> {
                                  "struct_ptr"
                              ).map_err(|e| e.to_string())?.into_pointer_value();
                              let field_ptr = self.builder.build_struct_gep(st_llvm_ty, struct_ptr, idx as u32, "").map_err(|e|e.to_string())?;
-                             Ok((Some(field_ptr), field_ty.clone(), super::CLEANUP_NONE, base_name))
+                             // FIX: フィールド代入時に old value を free するため CLEANUP_FULL を返す。
+                             // CLEANUP_NONE だと StmtKind::Assign の old value free ロジック (L1860) が
+                             // スキップされ、old value がリークする。リーク蓄積により最終 cleanup で
+                             // RC 不整合 → ネスト構造体の再帰 free でダングリングポインタアクセス → SIGBUS。
+                             // Assign 側で old != new のチェック (L1864 are_diff) があるため safe。
+                             let field_cleanup = match &field_ty {
+                                 Type::Struct(_, _) | Type::Tensor(_, _) | Type::Enum(_, _) | Type::Tuple(_) => super::CLEANUP_FULL,
+                                 _ => super::CLEANUP_NONE,
+                             };
+                             Ok((Some(field_ptr), field_ty.clone(), field_cleanup, base_name))
                         }
                         None => Err(format!("LLVM type not found for {}", name))
                     }

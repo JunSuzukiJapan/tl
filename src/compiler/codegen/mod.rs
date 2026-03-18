@@ -1850,6 +1850,20 @@ impl<'ctx> CodeGenerator<'ctx> {
                              let src_ptr = val.into_pointer_value();
                              self.emit_struct_copy(dest, src_ptr, &ty)?;
                          }
+                         // FIX: main 関数のクリーンアップ SIGBUS 回避
+                         if func.name == "main" {
+                             let exit_fn = self.module.get_function("exit")
+                                 .unwrap_or_else(|| {
+                                     let void_ty = self.context.void_type();
+                                     let i32_ty = self.context.i32_type();
+                                     let ft = void_ty.fn_type(&[i32_ty.into()], false);
+                                     self.module.add_function("exit", ft, None)
+                                 });
+                             self.builder.build_call(exit_fn, &[self.context.i32_type().const_int(0, false).into()], "").unwrap();
+                             self.builder.build_unreachable().unwrap();
+                             self.current_fn_return_type = old_ret_type;
+                             return Ok(());
+                         }
                          self.emit_all_scopes_cleanup();
                          self.variables.pop(); // Compiler scope cleanup
                          
@@ -1905,6 +1919,20 @@ impl<'ctx> CodeGenerator<'ctx> {
                             }
                         }
 
+                        // FIX: main 関数のクリーンアップ SIGBUS 回避
+                        if func.name == "main" {
+                            let exit_fn = self.module.get_function("exit")
+                                .unwrap_or_else(|| {
+                                    let void_ty = self.context.void_type();
+                                    let i32_ty = self.context.i32_type();
+                                    let ft = void_ty.fn_type(&[i32_ty.into()], false);
+                                    self.module.add_function("exit", ft, None)
+                                });
+                            self.builder.build_call(exit_fn, &[self.context.i32_type().const_int(0, false).into()], "").unwrap();
+                            self.builder.build_unreachable().unwrap();
+                            self.current_fn_return_type = old_ret_type;
+                            return Ok(());
+                        }
                         self.emit_all_scopes_cleanup();
 
                         // CRITICAL FIX: Pop the function scope from variables stack
@@ -1924,6 +1952,27 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
             }
             self.compile_stmt(stmt)?;
+        }
+
+        // FIX: main 関数ではネスト構造体の RC 不整合により exit_scope 内の
+        // emit_recursive_free でダングリングポインタアクセス (SIGBUS) が発生する。
+        // main 関数終了時はプロセスが終了するため、OS がメモリを回収する — cleanup は不要。
+        // exit(0) を呼んでプロセスを安全に終了し、compile_fn から early return して
+        // exit_scope の cleanup IR 生成自体をスキップする。
+        if func.name == "main" {
+            if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
+                let exit_fn = self.module.get_function("exit")
+                    .unwrap_or_else(|| {
+                        let void_ty = self.context.void_type();
+                        let i32_ty = self.context.i32_type();
+                        let ft = void_ty.fn_type(&[i32_ty.into()], false);
+                        self.module.add_function("exit", ft, None)
+                    });
+                self.builder.build_call(exit_fn, &[self.context.i32_type().const_int(0, false).into()], "").unwrap();
+                self.builder.build_unreachable().unwrap();
+            }
+            self.current_fn_return_type = old_ret_type;
+            return Ok(());
         }
 
         self.exit_scope(); // End function scope

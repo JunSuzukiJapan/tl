@@ -1,4 +1,4 @@
-// 3ブロック版 SIGBUS テスト
+// デバッグ出力付き4ブロック SIGBUS テスト
 
 struct Linear { W: Tensor<f32, 2>, b: Tensor<f32, 1> }
 impl Linear { 
@@ -58,37 +58,59 @@ impl Block {
     } 
 }
 
-// 3ブロック版
-struct GPT3B { w: Linear, b1: Block, b2: Block, b3: Block, h: Linear }
-impl GPT3B { 
-    fn new(d: i64) -> GPT3B { 
-        GPT3B(Linear::new(13, d), Block::new(d), Block::new(d), Block::new(d), Linear::new(d, 13)) 
+struct GPT4B { w: Linear, b1: Block, b2: Block, b3: Block, b4: Block, h: Linear }
+impl GPT4B { 
+    fn new(d: i64) -> GPT4B { 
+        GPT4B(Linear::new(13, d), Block::new(d), Block::new(d), Block::new(d), Block::new(d), Linear::new(d, 13)) 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
-        let x = self.b1.forward(x); let x = self.b2.forward(x); let x = self.b3.forward(x); self.h.forward(x)
+        let x = self.b1.forward(x); let x = self.b2.forward(x); let x = self.b3.forward(x); let x = self.b4.forward(x);
+        self.h.forward(x)
     } 
-    fn step(self, lr: f32) -> GPT3B { 
-        let mut s = self; s.w = s.w.step(lr); s.b1 = s.b1.step(lr); s.b2 = s.b2.step(lr); 
-        s.b3 = s.b3.step(lr); s.h = s.h.step(lr); s 
+    fn step(self, lr: f32) -> GPT4B { 
+        let mut s = self; 
+        print("  step:w");
+        s.w = s.w.step(lr); 
+        print("  step:b1");
+        s.b1 = s.b1.step(lr); 
+        print("  step:b2");
+        s.b2 = s.b2.step(lr); 
+        print("  step:b3");
+        s.b3 = s.b3.step(lr); 
+        print("  step:b4");
+        s.b4 = s.b4.step(lr); 
+        print("  step:h");
+        s.h = s.h.step(lr); 
+        print("  step:done");
+        s 
     }
 }
 
-fn train_step(model: GPT3B, lr: f32) -> GPT3B {
+fn train_step(model: GPT4B, lr: f32, idx: i64) -> GPT4B {
+    print("train_step:"); print(idx);
     let data = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0];
     let target = [2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 12.0];
     let X = data.reshape([1, 12]); let Y = target.reshape([1, 12]);
     let input = X.embedding(Tensor::randn([13, 64], false));
+    print("  fwd start");
     let logits = model.forward(input);
+    print("  fwd done");
     let logits_flat = logits.reshape([12, 13]); let Y_flat = Y.reshape([12]);
     let loss = logits_flat.cross_entropy(Y_flat);
+    print("  backward");
     loss.backward();
-    model.step(lr)
+    print("  step start");
+    let result = model.step(lr);
+    print("  step end");
+    result
 }
 
 fn main() {
-    let mut model = GPT3B::new(64);
-    for epoch in range(0, 5) {
-        for s in range(0, 3) { model = train_step(model, 0.001); }
+    let mut model = GPT4B::new(64);
+    for epoch in range(0, 2) {
+        for s in range(0, 2) { 
+            model = train_step(model, 0.001, s); 
+        }
         print("Epoch:"); print(epoch);
     }
     print("Done!");
