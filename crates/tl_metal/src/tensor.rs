@@ -397,10 +397,19 @@ impl MetalTensor {
         }));
     }
 
-    /// 勾配を取得（shallow clone）
+    /// 勾配を取得（detach — autograd なし）
+    /// パラメータ更新 (step) で grad of grad は不要なため、
+    /// requires_grad = false のテンソルを返す。
     pub fn get_grad(&self) -> Option<MetalTensor> {
         self.autograd.as_ref().and_then(|a| {
-            a.grad.as_ref().map(|g| g.shallow_clone())
+            a.grad.as_ref().map(|g| {
+                // detach: バッファ共有だが autograd メタデータなし
+                MetalTensor::from_buffer_shared(
+                    std::sync::Arc::clone(g.buffer_arc()),
+                    g.shape().to_vec(),
+                    g.dtype(),
+                )
+            })
         })
     }
 
@@ -481,14 +490,18 @@ impl MetalTensor {
         }
 
         // === 計算グラフ解放（V5.0 メモリ管理） ===
-        // 全訪問ノードの grad_fn = None により、GradFn 内の TensorRef (Arc) が drop。
-        // 中間テンソルの Arc RC が下がり、GPU バッファがプールに返される。
+        // ドキュメントの方針「テンソルは最後まで解放しない（Persistent Pool or Rustの自然なDropに任せる）」に従う。
+        // ここで手動で grad_fn = None にして参照を絶つと、
+        // ダブルフリーなどの UAF(Use-After-Free) を引き起こし、MetalのSegfaultのトリガーとなるため削除。
+        /*
         for &ptr in &visited {
             let tensor = unsafe { &mut *ptr };
             if let Some(ref mut meta) = tensor.autograd {
                 meta.grad_fn = None;
             }
         }
+        */
+
         Ok(())
     }
 
@@ -500,8 +513,7 @@ impl MetalTensor {
 
 impl Drop for MetalTensor {
     fn drop(&mut self) {
-        // バッファの唯一の所有者なら、プールに返却して再利用
-        if Arc::strong_count(&self.buffer) == 1 {
+        if std::sync::Arc::strong_count(&self.buffer) == 1 {
             pool_release(self.buffer.clone());
         }
     }

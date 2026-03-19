@@ -23,6 +23,32 @@ pub fn compile_print<'ctx>(
     ))
 }
 
+/// debug_ptr() -> Void
+pub fn compile_debug_ptr<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj: BasicValueEnum<'ctx>,
+    _obj_ty: Type,
+    _args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let fn_val = codegen
+        .module
+        .get_function("tl_metal_debug_tensor")
+        .or_else(|| {
+            let ptr_ty = codegen.context.ptr_type(inkwell::AddressSpace::default());
+            let fn_type = codegen.context.void_type().fn_type(&[ptr_ty.into()], false);
+            Some(codegen.module.add_function("tl_metal_debug_tensor", fn_type, None))
+        })
+        .unwrap();
+    codegen
+        .builder
+        .build_call(fn_val, &[obj.into()], "debug_ptr_call")
+        .map_err(|e| e.to_string())?;
+    Ok((
+        codegen.context.i64_type().const_int(0, false).into(),
+        Type::Void,
+    ))
+}
+
 /// display() -> Void
 pub fn compile_display<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,

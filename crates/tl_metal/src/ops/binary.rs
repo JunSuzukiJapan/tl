@@ -116,6 +116,7 @@ impl MetalTensor {
         let result_buf = result.buffer() as *const metal::Buffer;
         let elem_count = self.elem_count();
 
+        // エンコード
         crate::command_stream::stream_encode(|encoder| {
             encoder.set_compute_pipeline_state(pipeline);
             unsafe {
@@ -123,11 +124,11 @@ impl MetalTensor {
                 encoder.set_buffer(1, Some(&*other_buf), 0);
                 encoder.set_buffer(2, Some(&*result_buf), 0);
             }
-
-            let (grid_size, threads_per_group) = shaders::compute_thread_groups(elem_count, pipeline);
+            
+            let (grid_size, threads_per_group) = crate::shaders::compute_thread_groups(elem_count, pipeline);
             encoder.dispatch_thread_groups(grid_size, threads_per_group);
         });
-
+        
         Ok(result)
     }
 

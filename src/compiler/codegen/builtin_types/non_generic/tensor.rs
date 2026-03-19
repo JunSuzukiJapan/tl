@@ -354,6 +354,7 @@ pub fn register_tensor_types(manager: &mut TypeManager) {
     // Misc (implemented in tensor_misc.rs)
     use super::tensor_misc;
     tensor.register_evaluated_instance_method("print", tensor_misc::compile_print, vec![], Type::Void);
+    tensor.register_evaluated_instance_method("debug_ptr", tensor_misc::compile_debug_ptr, vec![], Type::Void);
     tensor.register_evaluated_instance_method("display", tensor_misc::compile_display, vec![], Type::Void);
     
     // Slice (implemented in tensor_misc.rs)

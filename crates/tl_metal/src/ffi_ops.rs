@@ -60,7 +60,9 @@ pub fn make_tensor(t: MetalTensor) -> *mut OpaqueTensor {
 pub fn release_if_live(t: *mut OpaqueTensor) {
     if t.is_null() { return; }
     RELEASE_COUNT.fetch_add(1, Ordering::Relaxed);
-    unsafe { let _ = Arc::from_raw(t as *const UnsafeCell<MetalTensor>); }
+    unsafe { 
+        let _ = Arc::from_raw(t as *const UnsafeCell<MetalTensor>); 
+    }
 }
 
 /// Arc RC+1: raw pointer の参照カウントを 1 増やす (同一ポインタ、新規ポインタなし)。
@@ -79,12 +81,29 @@ pub fn acquire_tensor(t: *mut OpaqueTensor) {
 /// Helper to handle BackendResult and return safe pointer or null on error
 fn make_tensor_safe(result: BackendResult<MetalTensor>) -> *mut OpaqueTensor {
     match result {
-        Ok(t) => make_tensor(t),
+        Ok(t) => {
+            let ptr = make_tensor(t);
+            eprintln!("[ARC] make_tensor {:p}", ptr);
+            ptr
+        },
         Err(e) => {
             eprintln!("Metal Backend FFI Error: {}", e);
             std::ptr::null_mut()
         }
     }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn tl_metal_debug_tensor(a: *mut OpaqueTensor) {
+    if a.is_null() { eprintln!("tl_metal_debug_tensor: null"); return; }
+    let ta = &*a;
+    eprintln!("DEBUG_TENSOR: ptr={:p} shape={:?}", a, ta.shape());
+    let buf_ptr = ta.buffer() as *const metal::Buffer;
+    eprintln!("DEBUG_TENSOR: buf_ptr={:p}", buf_ptr);
+    let id_val = *(buf_ptr as *const usize);
+    eprintln!("DEBUG_TENSOR: ObjC id={:x}", id_val);
+    let len = (*buf_ptr).length();
+    eprintln!("DEBUG_TENSOR: length={}", len);
 }
 
 // ========== 型変換 ==========
@@ -1134,7 +1153,9 @@ pub fn tl_metal_grad(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
     let tensor = unsafe { &*t };
     if let Some(grad) = tensor.get_grad() {
-        make_tensor(grad)
+        let ptr = make_tensor(grad);
+        let result = unsafe { &*ptr };
+        ptr
     } else {
         std::ptr::null_mut()
     }
@@ -1756,6 +1777,7 @@ pub fn tl_metal_mul_scalar(t: *mut OpaqueTensor, s: f64) -> *mut OpaqueTensor {
                 use crate::autograd::ops::MulScalarBackward;
                 unsafe { (&mut *ptr).set_grad_fn(Box::new(MulScalarBackward { a: tensor_ref_from_ptr(t), s: s as f32 })); }
             }
+            let result = unsafe { &*ptr };
             ptr
         },
         Err(e) => {
