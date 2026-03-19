@@ -254,42 +254,51 @@ impl MetalTensor {
         Ok(result)
     }
 
-    /// cross_entropy — GPU element-wise + GPU sumall
+    /// cross_entropy — integer labels + softmax + NLL loss (CPU fallback)
     pub fn cross_entropy_impl(&self, target: &MetalTensor) -> BackendResult<MetalTensor> {
-        if MetalTensor::shape(self) != MetalTensor::shape(target) {
-            return Err(BackendError::ShapeMismatch(format!(
-                "cross_entropy: shape mismatch {:?} vs {:?}",
-                MetalTensor::shape(self), MetalTensor::shape(target)
-            )));
+        // logits: [N, C], target: [N] (integer class indices)
+        let logits_shape = MetalTensor::shape(self);
+        let target_shape = MetalTensor::shape(target);
+
+        let logits_data: Vec<f32> = self.to_vec();
+        let target_data: Vec<f32> = target.to_vec();
+
+        let num_classes = if logits_shape.len() >= 2 {
+            *logits_shape.last().unwrap()
+        } else {
+            logits_data.len()
+        };
+        let batch_size = target_data.len();
+
+        // 1. Softmax (numerically stable)
+        let mut softmax_data = vec![0.0f32; logits_data.len()];
+        for i in 0..batch_size {
+            let start = i * num_classes;
+            let end = (start + num_classes).min(logits_data.len());
+            let row = &logits_data[start..end];
+            let max_val = row.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+            let mut sum_exp = 0.0f32;
+            for j in 0..row.len() {
+                softmax_data[start + j] = (row[j] - max_val).exp();
+                sum_exp += softmax_data[start + j];
+            }
+            for j in 0..row.len() {
+                softmax_data[start + j] /= sum_exp;
+            }
         }
 
-        let count = self.elem_count();
-        let temp = MetalTensor::uninit(MetalTensor::shape(self), DType::F32);
-        let pipeline = get_ce_pipeline()?;
-
-        // Step 1: element-wise -t * log(p + eps)
-        let self_buf = self.buffer() as *const metal::Buffer;
-        let target_buf = target.buffer() as *const metal::Buffer;
-        let temp_buf = temp.buffer() as *const metal::Buffer;
-
-        crate::command_stream::stream_encode(|encoder| {
-            encoder.set_compute_pipeline_state(pipeline);
-            unsafe {
-                encoder.set_buffer(0, Some(&*self_buf), 0);
-                encoder.set_buffer(1, Some(&*target_buf), 0);
-                encoder.set_buffer(2, Some(&*temp_buf), 0);
+        // 2. NLL loss: -mean(log(softmax[target]))
+        let mut loss = 0.0f32;
+        for i in 0..batch_size {
+            let idx = target_data[i] as usize;
+            if idx < num_classes {
+                let p = softmax_data[i * num_classes + idx].max(1e-7);
+                loss -= p.ln();
             }
+        }
+        loss /= batch_size as f32;
 
-            let max_threads = pipeline.max_total_threads_per_threadgroup() as usize;
-            let threads = count.min(max_threads);
-            let tpg = MTLSize::new(threads as u64, 1, 1);
-            let grid = MTLSize::new(((count + threads - 1) / threads) as u64, 1, 1);
-            encoder.dispatch_thread_groups(grid, tpg);
-        });
-
-        // Step 2: GPU sumall で合計 → スカラーテンソル
-        let sum_val = temp.sumall_impl()?;
-        Ok(MetalTensor::from_slice(&[sum_val], &[1], DType::F32))
+        Ok(MetalTensor::from_slice(&[loss], &[1], DType::F32))
     }
 
     /// repeat_interleave — Metal GPU シェーダー実装
