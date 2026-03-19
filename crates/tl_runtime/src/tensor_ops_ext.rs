@@ -171,12 +171,42 @@ pub extern "C" fn tl_get_memory_mb() -> f64 {
         let true_drop = tl_cpu::tensor::get_true_drop_count();
         let live = alloc.saturating_sub(release);
         let true_live = alloc.saturating_sub(true_drop);
-        eprintln!("[MEM_DBG] alloc={} release={} live={} true_drop={} true_live={}", alloc, release, live, true_drop, true_live);
+        let alloc_bytes = tl_cpu::memory::get_total_allocated() as f64 / (1024.0 * 1024.0);
+        let free_bytes = tl_cpu::memory::get_total_released() as f64 / (1024.0 * 1024.0);
+        eprintln!("[MEM_DBG] alloc={} true_drop={} true_live={} data_alloc={:.1}MB data_free={:.1}MB data_diff={:.1}MB", alloc, true_drop, true_live, alloc_bytes, free_bytes, alloc_bytes - free_bytes);
         crate::memory_ffi::dump_acquire_release_counts();
         tl_cpu::ffi::dump_ffi_acquire_release();
         crate::memory_ffi::dump_dec_ref_counts();
     }
     tl_get_memory_bytes() as f64 / 1024.0 / 1024.0
+}
+
+#[unsafe(no_mangle)]
+/// @ffi_sig () -> void
+/// アロケータに未使用メモリの OS への返却を促す。
+/// macOS: malloc_zone_pressure_relief で全 zone のメモリ圧縮。
+/// Linux: malloc_trim(0) で未使用ヒープを sbrk で返却。
+pub extern "C" fn tl_mem_purge() {
+    #[cfg(target_os = "macos")]
+    {
+        unsafe extern "C" {
+            fn malloc_zone_pressure_relief(zone: *mut std::ffi::c_void, goal: usize) -> usize;
+            fn malloc_default_zone() -> *mut std::ffi::c_void;
+        }
+        unsafe {
+            // goal=0 で可能な限りメモリを返却
+            malloc_zone_pressure_relief(std::ptr::null_mut(), 0);
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        unsafe extern "C" {
+            fn malloc_trim(pad: usize) -> i32;
+        }
+        unsafe {
+            malloc_trim(0);
+        }
+    }
 }
 
 // ========== Image Stubs ==========

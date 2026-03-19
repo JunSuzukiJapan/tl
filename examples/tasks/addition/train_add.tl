@@ -232,6 +232,7 @@ fn main() {
 
     for epoch in range(0, epochs) {
         model = train_epoch(model, lr, epoch);
+        Tensor::mem_purge();  // アロケータの未使用メモリを OS に返却
         if epoch - ((epoch / 10) * 10) == 0 {
              print("Epoch:"); print(epoch);
              print("MB:"); print(System::memory_mb());

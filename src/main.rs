@@ -1,5 +1,13 @@
-// mod compiler;
-// mod runtime;
+// jemalloc をグローバルアロケータとして設定
+// macOS/Linux のシステムアロケータはテンソルの大量 alloc/dealloc で
+// メモリフラグメンテーションが激しく、RSS が線形成長する。
+// jemalloc は未使用ページを定期的に OS に返却するため、RSS を安定化する。
+#[cfg(not(target_env = "msvc"))]
+use tikv_jemallocator::Jemalloc;
+
+#[cfg(not(target_env = "msvc"))]
+#[global_allocator]
+static GLOBAL: Jemalloc = Jemalloc;
 
 use anyhow::{Context, Result};
 use clap::Parser;

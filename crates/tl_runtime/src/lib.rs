@@ -97,6 +97,7 @@ pub use string_ffi::{
 pub use tensor_ops_ext::{
     tl_tensor_save, tl_tensor_load, tl_get_memory_bytes, tl_get_memory_mb,
     tl_image_load_grayscale, tl_image_width, tl_image_height,
+    tl_mem_purge,
 };
 
 // ========== Print Ext Exports ==========

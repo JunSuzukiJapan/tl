@@ -1222,6 +1222,9 @@ pub fn declare_runtime_functions<'ctx>(
     add_fn("tl_get_memory_mb", mem_mb_type);
     add_fn("tl_get_metal_pool_mb", mem_mb_type);
 
+    let purge_type = void_type.fn_type(&[], false);
+    add_fn("tl_mem_purge", purge_type);
+
     let mem_count_type = i64_type.fn_type(&[], false);
     add_fn("tl_get_memory_bytes", mem_count_type);
     add_fn("tl_get_metal_pool_bytes", mem_count_type);
@@ -2171,6 +2174,9 @@ pub fn declare_runtime_functions<'ctx>(
 
     if let Some(f) = module.get_function("tl_get_memory_mb") {
         execution_engine.add_global_mapping(&f, runtime::tl_get_memory_mb as *const () as usize);
+    }
+    if let Some(f) = module.get_function("tl_mem_purge") {
+        execution_engine.add_global_mapping(&f, runtime::tl_mem_purge as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_get_memory_bytes") {
         execution_engine.add_global_mapping(&f, runtime::tl_get_memory_bytes as *const () as usize);

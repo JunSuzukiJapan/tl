@@ -72,6 +72,8 @@ pub fn register_tensor_types(manager: &mut TypeManager) {
     tensor.register_evaluated_static_method("load", compile_load_tensor, vec![Type::String("String".to_string())], Type::Tensor(Box::new(Type::F32), 1));
     // clear_grads() -> Void
     tensor.register_evaluated_static_method("clear_grads", compile_clear_grads, vec![], Type::Void);
+    // mem_purge() -> Void (アロケータの未使用メモリを OS に返却)
+    tensor.register_evaluated_static_method("mem_purge", compile_mem_purge, vec![], Type::Void);
     // from_vec_u8(u8s: Vec<u8>, shape: Vec<i64>) -> Tensor
     tensor.register_evaluated_static_method("from_vec_u8", compile_from_vec_u8, vec![Type::Struct("Vec".into(), vec![Type::U8]), Type::Struct("Vec".into(), vec![Type::I64])], Type::Tensor(Box::new(Type::F32), 0));
 
@@ -1260,6 +1262,17 @@ fn compile_clear_grads<'ctx>(
     if !args.is_empty() { return Err("Tensor::clear_grads takes no arguments".into()); }
     let fn_val = codegen.module.get_function("tl_clear_grads").ok_or("tl_clear_grads not found")?;
     codegen.builder.build_call(fn_val, &[], "clear_grads").map_err(|e| e.to_string())?;
+    Ok((codegen.context.i64_type().const_int(0, false).into(), Type::Void))
+}
+
+fn compile_mem_purge<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if !args.is_empty() { return Err("Tensor::mem_purge takes no arguments".into()); }
+    let fn_val = codegen.module.get_function("tl_mem_purge").ok_or("tl_mem_purge not found")?;
+    codegen.builder.build_call(fn_val, &[], "mem_purge").map_err(|e| e.to_string())?;
     Ok((codegen.context.i64_type().const_int(0, false).into(), Type::Void))
 }
 
