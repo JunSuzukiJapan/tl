@@ -589,9 +589,11 @@ pub fn tl_metal_layer_norm(
             if x.requires_grad() {
                 use crate::autograd::ops::LayerNormBackward;
                 let weight_ref = if !weight.is_null() { Some(unsafe { tensor_ref_from_ptr(weight) }) } else { None };
+                let bias_ref = if !bias.is_null() { Some(unsafe { tensor_ref_from_ptr(bias) }) } else { None };
                 unsafe { (&mut *ptr).set_grad_fn(Box::new(LayerNormBackward {
                     input: tensor_ref_from_ptr(input),
                     weight: weight_ref,
+                    bias: bias_ref,
                     eps: eps as f32,
                 })); }
             }
@@ -813,7 +815,24 @@ pub fn tl_metal_sub_scalar(t: *mut OpaqueTensor, s: f64) -> *mut OpaqueTensor {
 #[no_mangle]
 pub fn tl_metal_tril(t: *mut OpaqueTensor, diagonal: i64) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
-    make_tensor_safe(unsafe { (&*t).tril_impl(diagonal as i32) })
+    let tensor = unsafe { &*t };
+    match tensor.tril_impl(diagonal as i32) {
+        Ok(res) => {
+            let ptr = make_tensor(res);
+            if tensor.requires_grad() {
+                use crate::autograd::ops::TrilBackward;
+                unsafe { (&mut *ptr).set_grad_fn(Box::new(TrilBackward {
+                    a: tensor_ref_from_ptr(t),
+                    diagonal: diagonal as i32,
+                })); }
+            }
+            ptr
+        },
+        Err(e) => {
+            eprintln!("tril failed: {}", e);
+            std::ptr::null_mut()
+        }
+    }
 }
 
 #[no_mangle]

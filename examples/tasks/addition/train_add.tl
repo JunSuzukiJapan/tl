@@ -216,7 +216,7 @@ fn main() {
     let mut model = GPT::new(vocab_size, d_model);
     
     let lr = 0.001;
-    let epochs = 200;
+    let epochs = 1000;
 
     print("Training 2-digit addition (1-layer GPT, d_model=64)");
 

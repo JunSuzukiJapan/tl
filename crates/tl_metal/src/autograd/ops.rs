@@ -501,10 +501,34 @@ impl GradFn for CrossEntropyBackward {
     fn backward(&self, _grad_output: &MetalTensor) -> BackendResult<Vec<MetalTensor>> {
         let logits = unsafe { &*self.logits.get() };
         let labels = unsafe { &*self.labels.get() };
+        let logits_shape = logits.shape();
+        let num_classes = if logits_shape.len() >= 2 { *logits_shape.last().unwrap() } else { logits.elem_count() };
+        let batch_size = labels.elem_count();
+
+        // softmax(logits) を計算
         let sm = logits.softmax_impl(-1)?;
-        let diff = sm.sub_impl(labels)?;
-        let batch = logits.shape()[0] as f32;
-        Ok(vec![diff.div_scalar_impl(batch)?])
+
+        // integer labels → one_hot → softmax - one_hot
+        // GPU sync してバッファ直接操作
+        crate::command_stream::sync_stream();
+        let label_data: Vec<f32> = labels.to_vec();
+        let mut grad_data: Vec<f32> = sm.to_vec();
+
+        for i in 0..batch_size {
+            let idx = label_data[i] as usize;
+            if idx < num_classes {
+                grad_data[i * num_classes + idx] -= 1.0;
+            }
+        }
+
+        // grad / batch_size
+        let scale = 1.0 / batch_size as f32;
+        for v in grad_data.iter_mut() {
+            *v *= scale;
+        }
+
+        let grad = MetalTensor::from_slice(&grad_data, logits_shape, DType::F32);
+        Ok(vec![grad])
     }
     fn inputs(&self) -> Vec<TensorRef> {
         vec![self.logits.clone()]
@@ -622,20 +646,56 @@ impl GradFn for MeanDimBackward {
     }
 }
 
-/// layer_norm の勾配 (簡易近似)
+/// layer_norm の勾配
 pub struct LayerNormBackward {
     pub input: TensorRef,
     pub weight: Option<TensorRef>,
+    pub bias: Option<TensorRef>,
     pub eps: f32,
 }
 
 impl GradFn for LayerNormBackward {
     fn backward(&self, grad_output: &MetalTensor) -> BackendResult<Vec<MetalTensor>> {
-        // 簡易: grad をそのまま通す（CUDA 版と同一パターン）
-        Ok(vec![grad_output.shallow_clone()])
+        let x = unsafe { &*self.input.get() };
+        let shape = x.shape();
+        let ndim = shape.len();
+        let last_dim = *shape.last().unwrap_or(&1);
+        
+        // normalized = (x - mean) / sqrt(var + eps)
+        // 簡易実装: grad_input ≈ grad_output (layer_norm は近似的に identity に近い)
+        let grad_input = grad_output.shallow_clone();
+        
+        let mut grads = vec![grad_input];
+        
+        if let Some(ref _w_ref) = self.weight {
+            // grad_weight: sum over batch dims of (grad_output * normalized_x)
+            // 簡易近似: sum(grad_output, batch_dims)
+            let go_shape = grad_output.shape();
+            if go_shape.len() >= 2 {
+                // [batch, seq, dim] → sum over [batch, seq] → [dim]
+                let mut g = grad_output.shallow_clone();
+                for _ in 0..(go_shape.len() - 1) {
+                    g = g.sum_impl(0)?;
+                }
+                grads.push(g.clone());  // grad_weight
+                grads.push(g);          // grad_bias (same shape)
+            } else {
+                grads.push(grad_output.shallow_clone());
+                grads.push(grad_output.shallow_clone());
+            }
+        }
+        
+        Ok(grads)
     }
     fn inputs(&self) -> Vec<TensorRef> {
-        vec![self.input.clone()]
+        let mut inputs = vec![self.input.clone()];
+        if let Some(ref w) = self.weight {
+            inputs.push(w.clone());
+        }
+        if let Some(ref b) = self.bias {
+            inputs.push(b.clone());
+        }
+        inputs
     }
 }
 
@@ -714,6 +774,21 @@ impl GradFn for DropoutBackward {
     }
 }
 
+/// tril の勾配: 下三角マスクを勾配にも適用
+pub struct TrilBackward {
+    pub a: TensorRef,
+    pub diagonal: i32,
+}
+
+impl GradFn for TrilBackward {
+    fn backward(&self, grad_output: &MetalTensor) -> BackendResult<Vec<MetalTensor>> {
+        Ok(vec![grad_output.tril_impl(self.diagonal)?])
+    }
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.a.clone()]
+    }
+}
+
 unsafe impl Send for AddBackward {}
 unsafe impl Sync for AddBackward {}
 unsafe impl Send for SubBackward {}
@@ -782,3 +857,6 @@ unsafe impl Send for BatchNormBackward {}
 unsafe impl Sync for BatchNormBackward {}
 unsafe impl Send for DropoutBackward {}
 unsafe impl Sync for DropoutBackward {}
+unsafe impl Send for TrilBackward {}
+unsafe impl Sync for TrilBackward {}
+
