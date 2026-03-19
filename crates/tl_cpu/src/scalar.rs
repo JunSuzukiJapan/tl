@@ -52,6 +52,8 @@ pub trait TensorScalar:
     fn size_in_bytes() -> usize;
     /// 乱数生成用: [0, 1) の一様乱数を返す
     fn gen_uniform(rng: &mut impl rand::Rng) -> Self;
+    /// usize への変換 (インデックス用)
+    fn to_usize(self) -> usize;
 }
 
 impl TensorScalar for f32 {
@@ -78,6 +80,7 @@ impl TensorScalar for f32 {
     #[inline] fn frac_2_sqrt_pi() -> Self { std::f32::consts::FRAC_2_SQRT_PI }
     #[inline] fn size_in_bytes() -> usize { 4 }
     #[inline] fn gen_uniform(rng: &mut impl rand::Rng) -> Self { rng.gen() }
+    #[inline] fn to_usize(self) -> usize { self as usize }
 }
 
 impl TensorScalar for f64 {
@@ -104,4 +107,5 @@ impl TensorScalar for f64 {
     #[inline] fn frac_2_sqrt_pi() -> Self { std::f64::consts::FRAC_2_SQRT_PI }
     #[inline] fn size_in_bytes() -> usize { 8 }
     #[inline] fn gen_uniform(rng: &mut impl rand::Rng) -> Self { rng.gen() }
+    #[inline] fn to_usize(self) -> usize { self as usize }
 }

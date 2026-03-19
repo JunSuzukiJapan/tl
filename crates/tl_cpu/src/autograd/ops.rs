@@ -428,6 +428,219 @@ impl<T: TensorScalar> GradFn<T> for NegBackward<T> {
     }
 }
 
+/// cross_entropy の勾配
+/// CrossEntropy(logits, targets) = -sum(one_hot(targets) * log_softmax(logits))
+/// grad_logits = softmax(logits) - one_hot(targets)
+pub struct CrossEntropyBackward<T: TensorScalar> {
+    pub input: TensorRef<T>,
+    pub softmax_output: CpuTensor<T>,
+    pub targets: CpuTensor<T>,
+    pub num_classes: usize,
+}
+
+impl<T: TensorScalar> GradFn<T> for CrossEntropyBackward<T> {
+    fn backward(&self, grad_output: &CpuTensor<T>) -> BackendResult<Vec<CpuTensor<T>>> {
+        let softmax_data = self.softmax_output.to_vec_t();
+        let target_data = self.targets.to_vec_t();
+        let batch_size = target_data.len();
+        let num_classes = self.num_classes;
+        let mut grad = softmax_data.clone();
+        // grad = softmax - one_hot(targets)
+        for i in 0..batch_size {
+            let target_idx = T::to_usize(target_data[i]);
+            if target_idx < num_classes {
+                grad[i * num_classes + target_idx] = grad[i * num_classes + target_idx] - T::one();
+            }
+        }
+        // scale by grad_output and batch_size
+        let scale = grad_output.to_vec_t()[0];
+        let inv_batch = T::from_f64(1.0 / batch_size as f64);
+        let grad: Vec<T> = grad.iter().map(|g| *g * scale * inv_batch).collect();
+        let shape = self.softmax_output.shape().to_vec();
+        Ok(vec![CpuTensor::from_slice(&grad, &shape, self.softmax_output.dtype())])
+    }
+    fn inputs(&self) -> Vec<TensorRef<T>> {
+        vec![self.input.clone()]
+    }
+}
+
+/// transpose の勾配: 逆転置
+pub struct TransposeBackward<T: TensorScalar> {
+    pub input: TensorRef<T>,
+    pub dim0: usize,
+    pub dim1: usize,
+}
+
+impl<T: TensorScalar> GradFn<T> for TransposeBackward<T> {
+    fn backward(&self, grad_output: &CpuTensor<T>) -> BackendResult<Vec<CpuTensor<T>>> {
+        // 逆転置 = 同じ次元を再度転置
+        Ok(vec![grad_output.transpose_impl(self.dim0, self.dim1)?])
+    }
+    fn inputs(&self) -> Vec<TensorRef<T>> {
+        vec![self.input.clone()]
+    }
+}
+
+/// embedding の勾配
+pub struct EmbeddingBackward<T: TensorScalar> {
+    pub weight: TensorRef<T>,
+    pub indices: Vec<i64>,
+    pub vocab_size: usize,
+    pub embed_dim: usize,
+}
+
+impl<T: TensorScalar> GradFn<T> for EmbeddingBackward<T> {
+    fn backward(&self, grad_output: &CpuTensor<T>) -> BackendResult<Vec<CpuTensor<T>>> {
+        let grad_data = grad_output.to_vec_t();
+        let mut weight_grad = vec![T::zero(); self.vocab_size * self.embed_dim];
+        for (i, &idx) in self.indices.iter().enumerate() {
+            if (idx as usize) < self.vocab_size {
+                let src_start = i * self.embed_dim;
+                let dst_start = (idx as usize) * self.embed_dim;
+                for d in 0..self.embed_dim {
+                    if src_start + d < grad_data.len() {
+                        weight_grad[dst_start + d] = weight_grad[dst_start + d] + grad_data[src_start + d];
+                    }
+                }
+            }
+        }
+        Ok(vec![CpuTensor::from_slice(&weight_grad, &[self.vocab_size, self.embed_dim], grad_output.dtype())])
+    }
+    fn inputs(&self) -> Vec<TensorRef<T>> {
+        vec![self.weight.clone()]
+    }
+}
+
+/// layer_norm の勾配
+pub struct LayerNormBackward<T: TensorScalar> {
+    pub input: TensorRef<T>,
+    pub input_data: CpuTensor<T>,
+    pub weight: TensorRef<T>,
+    pub weight_data: CpuTensor<T>,
+    pub eps: f64,
+}
+
+impl<T: TensorScalar> GradFn<T> for LayerNormBackward<T> {
+    fn backward(&self, grad_output: &CpuTensor<T>) -> BackendResult<Vec<CpuTensor<T>>> {
+        let x = self.input_data.to_vec_t();
+        let w = self.weight_data.to_vec_t();
+        let dy = grad_output.to_vec_t();
+        let shape = self.input_data.shape();
+        let ndim = shape.len();
+        let d = shape[ndim - 1]; // normalized dimension
+        let n = x.len() / d; // batch size (all dims except last)
+        let eps_t = T::from_f64(self.eps);
+
+        let mut dx = vec![T::zero(); x.len()];
+
+        for i in 0..n {
+            let start = i * d;
+            let end = start + d;
+            let row = &x[start..end];
+            let dy_row = &dy[start..end];
+
+            // mean
+            let mut sum = T::zero();
+            for &v in row { sum = sum + v; }
+            let mean = sum * T::from_f64(1.0 / d as f64);
+
+            // variance
+            let mut var_sum = T::zero();
+            for &v in row {
+                let diff = v - mean;
+                var_sum = var_sum + diff * diff;
+            }
+            let var = var_sum * T::from_f64(1.0 / d as f64);
+            let std_inv = T::from_f64(1.0 / (T::to_f64(var) + self.eps).sqrt());
+
+            // x_hat = (x - mean) / std
+            let mut x_hat = vec![T::zero(); d];
+            for j in 0..d {
+                x_hat[j] = (row[j] - mean) * std_inv;
+            }
+
+            // grad through layer_norm
+            let mut dy_sum = T::zero();
+            let mut dy_xhat_sum = T::zero();
+            for j in 0..d {
+                let wdy = w[j] * dy_row[j];
+                dy_sum = dy_sum + wdy;
+                dy_xhat_sum = dy_xhat_sum + wdy * x_hat[j];
+            }
+
+            let inv_d = T::from_f64(1.0 / d as f64);
+            for j in 0..d {
+                let wdy = w[j] * dy_row[j];
+                dx[start + j] = std_inv * (wdy - inv_d * (dy_sum + x_hat[j] * dy_xhat_sum));
+            }
+        }
+
+        Ok(vec![CpuTensor::from_slice(&dx, shape, self.input_data.dtype())])
+    }
+    fn inputs(&self) -> Vec<TensorRef<T>> {
+        // weight と bias への勾配は省略 (leaf tensor として直接 grad 蓄積)
+        // ここでは input への勾配のみ返す
+        vec![self.input.clone()]
+    }
+}
+
+/// tril の勾配: 下三角マスクをそのまま適用
+pub struct TrilBackward<T: TensorScalar> {
+    pub input: TensorRef<T>,
+    pub diagonal: i32,
+}
+
+impl<T: TensorScalar> GradFn<T> for TrilBackward<T> {
+    fn backward(&self, grad_output: &CpuTensor<T>) -> BackendResult<Vec<CpuTensor<T>>> {
+        Ok(vec![grad_output.tril_impl(self.diagonal)?])
+    }
+    fn inputs(&self) -> Vec<TensorRef<T>> {
+        vec![self.input.clone()]
+    }
+}
+
+/// slice の勾配: ゼロパディングで元 shape に scatter
+pub struct SliceBackward<T: TensorScalar> {
+    pub input: TensorRef<T>,
+    pub input_shape: Vec<usize>,
+    pub dim: usize,
+    pub start: usize,
+    pub end: usize,
+    pub step: usize,
+}
+
+impl<T: TensorScalar> GradFn<T> for SliceBackward<T> {
+    fn backward(&self, grad_output: &CpuTensor<T>) -> BackendResult<Vec<CpuTensor<T>>> {
+        let total: usize = self.input_shape.iter().product();
+        let mut result = vec![T::zero(); total];
+        let grad_data = grad_output.to_vec_t();
+
+        let outer: usize = self.input_shape[..self.dim].iter().product();
+        let inner: usize = self.input_shape[self.dim + 1..].iter().product();
+        let dim_size = self.input_shape[self.dim];
+
+        let mut gi = 0;
+        for o in 0..outer.max(1) {
+            let mut idx = self.start;
+            while idx < self.end && idx < dim_size {
+                for k in 0..inner {
+                    let src = gi * inner + k;
+                    let dst = o * dim_size * inner + idx * inner + k;
+                    if src < grad_data.len() && dst < result.len() {
+                        result[dst] = grad_data[src];
+                    }
+                }
+                gi += 1;
+                idx += self.step;
+            }
+        }
+        Ok(vec![CpuTensor::from_slice(&result, &self.input_shape, grad_output.dtype())])
+    }
+    fn inputs(&self) -> Vec<TensorRef<T>> {
+        vec![self.input.clone()]
+    }
+}
+
 // UnsafeCell<CpuTensor<T>> を含む TensorRef<T> を保持する構造体に対して
 // Send + Sync を手動実装。CpuTensor<T> 自体が unsafe impl Send + Sync を持つため安全。
 unsafe impl<T: TensorScalar> Send for AddBackward<T> {}
@@ -468,3 +681,16 @@ unsafe impl<T: TensorScalar> Send for DivScalarBackward<T> {}
 unsafe impl<T: TensorScalar> Sync for DivScalarBackward<T> {}
 unsafe impl<T: TensorScalar> Send for NegBackward<T> {}
 unsafe impl<T: TensorScalar> Sync for NegBackward<T> {}
+unsafe impl<T: TensorScalar> Send for CrossEntropyBackward<T> {}
+unsafe impl<T: TensorScalar> Sync for CrossEntropyBackward<T> {}
+unsafe impl<T: TensorScalar> Send for TransposeBackward<T> {}
+unsafe impl<T: TensorScalar> Sync for TransposeBackward<T> {}
+unsafe impl<T: TensorScalar> Send for EmbeddingBackward<T> {}
+unsafe impl<T: TensorScalar> Sync for EmbeddingBackward<T> {}
+unsafe impl<T: TensorScalar> Send for LayerNormBackward<T> {}
+unsafe impl<T: TensorScalar> Sync for LayerNormBackward<T> {}
+unsafe impl<T: TensorScalar> Send for TrilBackward<T> {}
+unsafe impl<T: TensorScalar> Sync for TrilBackward<T> {}
+unsafe impl<T: TensorScalar> Send for SliceBackward<T> {}
+unsafe impl<T: TensorScalar> Sync for SliceBackward<T> {}
+

@@ -1382,8 +1382,21 @@ pub extern "C" fn tl_cpu_tensor_reshape_dims(
     let tensor = unsafe { &*t };
     let dims_slice = unsafe { std::slice::from_raw_parts(dims_ptr, rank) };
     let new_shape: Vec<usize> = dims_slice.iter().map(|&d| d as usize).collect();
+    let input_shape = tensor.shape.clone();
     match tensor.reshape_impl(&new_shape) {
-        Ok(res) => make_tensor(res),
+        Ok(res) => {
+            let ptr = make_tensor(res);
+            if tensor.requires_grad() {
+                use crate::autograd::ops::ReshapeBackward;
+                unsafe {
+                    (&mut *ptr).set_grad_fn(Box::new(ReshapeBackward {
+                        input: tensor_ref_from_ptr(t),
+                        input_shape,
+                    }));
+                }
+            }
+            ptr
+        }
         Err(e) => {
             eprintln!("Runtime Error in reshape_dims: {}", e);
             std::ptr::null_mut()
@@ -1399,8 +1412,22 @@ pub extern "C" fn tl_cpu_tensor_transpose(
     if t.is_null() {
         return std::ptr::null_mut();
     }
-    match unsafe { (&*t).transpose_impl(dim0, dim1) } {
-        Ok(res) => make_tensor(res),
+    let tensor = unsafe { &*t };
+    match tensor.transpose_impl(dim0, dim1) {
+        Ok(res) => {
+            let ptr = make_tensor(res);
+            if tensor.requires_grad() {
+                use crate::autograd::ops::TransposeBackward;
+                unsafe {
+                    (&mut *ptr).set_grad_fn(Box::new(TransposeBackward {
+                        input: tensor_ref_from_ptr(t),
+                        dim0,
+                        dim1,
+                    }));
+                }
+            }
+            ptr
+        }
         Err(e) => {
             eprintln!("Runtime Error in transpose: {}", e);
             std::ptr::null_mut()
@@ -1610,7 +1637,19 @@ pub extern "C" fn tl_cpu_tensor_tril(t: *mut OpaqueTensor, diagonal: i64) -> *mu
         return make_tensor(tensor.clone());
     }
     match tensor.tril_impl(diagonal as i32) {
-        Ok(res) => make_tensor(res),
+        Ok(res) => {
+            let ptr = make_tensor(res);
+            if tensor.requires_grad() {
+                use crate::autograd::ops::TrilBackward;
+                unsafe {
+                    (&mut *ptr).set_grad_fn(Box::new(TrilBackward {
+                        input: tensor_ref_from_ptr(t),
+                        diagonal: diagonal as i32,
+                    }));
+                }
+            }
+            ptr
+        }
         Err(e) => {
             eprintln!("Runtime Error in tril: {}", e);
             std::ptr::null_mut()
@@ -1673,7 +1712,24 @@ pub extern "C" fn tl_cpu_tensor_embedding(
     let weights_tensor = unsafe { &*weight };
     let indices_tensor = unsafe { &*indices };
     match weights_tensor.embedding_impl(indices_tensor) {
-        Ok(res) => make_tensor(res),
+        Ok(res) => {
+            let ptr = make_tensor(res);
+            if weights_tensor.requires_grad() {
+                use crate::autograd::ops::EmbeddingBackward;
+                let idx_data: Vec<i64> = indices_tensor.data.iter().map(|x| *x as i64).collect();
+                let vocab_size = weights_tensor.shape[0];
+                let embed_dim = if weights_tensor.shape.len() > 1 { weights_tensor.shape[1] } else { 1 };
+                unsafe {
+                    (&mut *ptr).set_grad_fn(Box::new(EmbeddingBackward {
+                        weight: tensor_ref_from_ptr(weight),
+                        indices: idx_data,
+                        vocab_size,
+                        embed_dim,
+                    }));
+                }
+            }
+            ptr
+        }
         Err(e) => {
             eprintln!("Runtime Error in embedding: {}", e);
             std::ptr::null_mut()
@@ -1874,24 +1930,73 @@ pub extern "C" fn tl_cpu_tensor_cross_entropy(
         return std::ptr::null_mut();
     }
     let l = unsafe { &*logits };
-    let t = unsafe { &*labels };
-    // Cross entropy: -sum(target * log(softmax(logits)))
-    // Simple implementation: sum of element-wise -target * log(logit)
+    let target = unsafe { &*labels };
+
+    // Cross entropy with integer labels:
+    // logits: [N, C], labels: [N] (integer class indices)
     let l_data = &l.data;
-    let t_data = &t.data;
-    let len = l_data.len().min(t_data.len());
-    let mut loss = 0.0f32;
-    for i in 0..len {
-        let p = l_data[i].max(1e-7); // avoid log(0)
-        loss -= t_data[i] * p.ln();
+    let t_data: Vec<i64> = target.data.iter().map(|x| *x as i64).collect();
+    let num_classes = if l.shape.len() >= 2 { *l.shape.last().unwrap() } else { l_data.len() };
+    let batch_size = t_data.len();
+
+    // 1. Softmax (numerically stable)
+    let mut softmax_data = vec![0.0f32; l_data.len()];
+    for i in 0..batch_size {
+        let start = i * num_classes;
+        let end = (start + num_classes).min(l_data.len());
+        let row = &l_data[start..end];
+        let max_val = row.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        let mut sum_exp = 0.0f32;
+        for j in 0..row.len() {
+            softmax_data[start + j] = (row[j] - max_val).exp();
+            sum_exp += softmax_data[start + j];
+        }
+        for j in 0..row.len() {
+            softmax_data[start + j] /= sum_exp;
+        }
     }
-    make_tensor(CpuTensor::<f32> {
+
+    // 2. NLL loss: -mean(log(softmax[target]))
+    let mut loss = 0.0f32;
+    for i in 0..batch_size {
+        let idx = t_data[i] as usize;
+        if idx < num_classes {
+            let p = softmax_data[i * num_classes + idx].max(1e-7);
+            loss -= p.ln();
+        }
+    }
+    loss /= batch_size as f32;
+
+    // 3. Save softmax for backward
+    let softmax_tensor = CpuTensor::<f32> {
+        data: softmax_data,
+        data_i64: None,
+        shape: l.shape.clone(),
+        dtype: DType::F32,
+        autograd: None,
+    };
+
+    let ptr = make_tensor(CpuTensor::<f32> {
         data: vec![loss],
         data_i64: None,
         shape: vec![1],
         dtype: DType::F32,
         autograd: None,
-    })
+    });
+
+    // 4. Autograd
+    if l.requires_grad() {
+        use crate::autograd::ops::CrossEntropyBackward;
+        unsafe {
+            (&mut *ptr).set_grad_fn(Box::new(CrossEntropyBackward {
+                input: tensor_ref_from_ptr(logits),
+                softmax_output: softmax_tensor,
+                targets: target.shallow_clone(),
+                num_classes,
+            }));
+        }
+    }
+    ptr
 }
 
 pub extern "C" fn tl_cpu_tensor_numel(t: *mut OpaqueTensor) -> i64 {
@@ -2765,7 +2870,22 @@ pub extern "C" fn tl_cpu_tensor_layer_norm(
     };
 
     match inp.layer_norm_impl(w, b, eps as f32) {
-        Ok(res) => make_tensor(res),
+        Ok(res) => {
+            let ptr = make_tensor(res);
+            if inp.requires_grad() {
+                use crate::autograd::ops::LayerNormBackward;
+                unsafe {
+                    (&mut *ptr).set_grad_fn(Box::new(LayerNormBackward {
+                        input: tensor_ref_from_ptr(input),
+                        input_data: inp.shallow_clone(),
+                        weight: if !weight.is_null() { tensor_ref_from_ptr(weight) } else { tensor_ref_from_ptr(input) },
+                        weight_data: w.shallow_clone(),
+                        eps,
+                    }));
+                }
+            }
+            ptr
+        }
         Err(e) => {
             eprintln!("Runtime Error in layer_norm: {}", e);
             std::ptr::null_mut()

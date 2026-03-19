@@ -200,6 +200,7 @@ fn train_step(model: GPT, lr: f32, i: i64, j: i64) -> GPT {
     loss.backward();
     let m = model.step(lr);
     Tensor::clear_grads();
+    loss.print();
     m
 }
 
@@ -226,17 +227,13 @@ fn main() {
     let mut model = GPT::new(vocab_size, d_model);
     
     let lr = 0.01;
-    let epochs = 1000;
+    let epochs = 200;
 
     print("Training 2-digit addition (1-layer GPT, d_model=64)");
 
     for epoch in range(0, epochs) {
         model = train_epoch(model, lr, epoch);
-        Tensor::mem_purge();  // アロケータの未使用メモリを OS に返却
-        if epoch - ((epoch / 10) * 10) == 0 {
-             print("Epoch:"); print(epoch);
-             print("MB:"); print(System::memory_mb());
-        }
+        Tensor::mem_purge();
     }
     
     print("Training Complete!");
