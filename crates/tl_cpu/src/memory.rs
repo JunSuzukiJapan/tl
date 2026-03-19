@@ -191,12 +191,7 @@ pub fn release_tensor(t: *mut CpuTensor<f32>) {
         }
         if Arc::strong_count(&arc_ref) == 1 {
             count_tensor_release();
-            let tensor_ptr = arc_ref.get();
-            let data_len = (*tensor_ptr).data.capacity();
-            let bytes = data_len * std::mem::size_of::<f32>();
-            if bytes > 0 {
-                track_free(bytes);
-            }
+            // track_free は CpuTensor::Drop で呼ばれるため、ここでは呼ばない。
         }
         drop(arc_ref);
     }

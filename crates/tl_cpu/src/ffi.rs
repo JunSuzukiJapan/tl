@@ -237,6 +237,16 @@ pub extern "C" fn tl_cpu_tensor_free(t: *mut OpaqueTensor) {
     crate::memory::release_tensor(t);
 }
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+static FFI_ACQUIRE_COUNT: AtomicUsize = AtomicUsize::new(0);
+static FFI_RELEASE_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+pub fn dump_ffi_acquire_release() {
+    let acq = FFI_ACQUIRE_COUNT.load(Ordering::Relaxed);
+    let rel = FFI_RELEASE_COUNT.load(Ordering::Relaxed);
+    eprintln!("[FFI_ACQ_REL] acquire={} release={} delta={}", acq, rel, acq as i64 - rel as i64);
+}
+
 #[no_mangle]
 pub extern "C" fn tl_cpu_tensor_acquire(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     // Arc の参照カウントを +1 して同じポインタを返す
@@ -246,6 +256,7 @@ pub extern "C" fn tl_cpu_tensor_acquire(t: *mut OpaqueTensor) -> *mut OpaqueTens
     if crate::memory::is_mem_log_enabled() {
         eprintln!("[ACQUIRE] Ptr: {:p} (Arc RC+1)", t);
     }
+    FFI_ACQUIRE_COUNT.fetch_add(1, Ordering::Relaxed);
     unsafe {
         let arc = Arc::from_raw(t as *const UnsafeCell<CpuTensor<f32>>);
         let _clone = arc.clone(); // RC+1
@@ -258,6 +269,7 @@ pub extern "C" fn tl_cpu_tensor_release(t: *mut OpaqueTensor) {
     if t.is_null() {
         return;
     }
+    FFI_RELEASE_COUNT.fetch_add(1, Ordering::Relaxed);
     crate::memory::promote_tensor(t);
     crate::memory::release_tensor(t);
 }

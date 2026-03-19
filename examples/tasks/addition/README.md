@@ -4,28 +4,30 @@ This task trains a Transformer model to perform 2-digit addition (e.g., `12 + 34
 
 ## Overview
 
-The primary goal of this example is to demonstrate how to implement complex neural network modules directly in TensorLogic (TL) without relying on high-level built-in functions. 
-
-The implementation features custom-coded versions of:
-- **One-Hot Embedding**: Manually iterating over indices to create embedding representations.
-- **Causal Masking**: Generating a lower-triangular matrix using nested `for` loops.
-- **Cross Entropy Loss**: Manually computing log-probabilities and the mean loss value.
+A 1-layer GPT-style Transformer を使用して、2桁の足し算を学習・推論するデモ。
 
 ## Implementation Details
 
 - **Scripts**:
-    - `train_add.tl`: Training loop for the 100-epoch addition task.
-    - `infer_add.tl`: Script to load weights and perform inference.
-    - `train_verify_2digit.tl`: Stability test script.
-- **Model**: 3-Layer GPT-style Transformer.
-- **Vocabulary Size**: 13 (Digits 0-9, `+`, `=`, and `PAD`).
-- **Embedding Size**: 128.
+    - `train_add.tl`: 学習ループ（20エポック、各10ステップ）
+    - `infer_add.tl`: 重みをロードして autoregressive 推論
+    - `train_verify_2digit.tl`: 安定性テスト用スクリプト
+- **Model**: 1-Layer GPT (CausalSelfAttention + MLP + LayerNorm)
+- **Vocabulary Size**: 13 (数字 0-9, `+`=10, `=`=11, `PAD`=12)
+- **Embedding Size**: 64
+- **Token Format**: `[i_d1, i_d10, +, j_d1, j_d10, =, s_d1, s_d10, s_d100, PAD, PAD, PAD]`
+    - 各数字を逆順の桁（1の位, 10の位）で表現
 
 ## Usage
 
-To train the model:
+学習:
 ```bash
 cargo run --release --bin tl -- examples/tasks/addition/train_add.tl
 ```
 
-The model weights will be saved as `model_add.safetensors`.
+推論:
+```bash
+cargo run --release --bin tl -- examples/tasks/addition/infer_add.tl
+```
+
+モデルの重みは `model_add.safetensors` として保存される。

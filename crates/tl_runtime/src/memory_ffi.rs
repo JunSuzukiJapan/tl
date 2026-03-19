@@ -141,9 +141,14 @@ pub extern "C" fn tl_mem_unregister(_ptr: *mut c_void) {
 /// FieldAccess 等で構造体フィールドのテンソルを参照する際に呼ばれる。
 /// tl_tensor_release_safe と対になり、retain/release の対称性を保証する。
 /// 全デバイス共通: Arc::increment_strong_count で RC+1。
+
+static ACQUIRE_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static RELEASE_SAFE_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_tensor_acquire(t: *mut crate::OpaqueTensor) -> *mut crate::OpaqueTensor {
     if !t.is_null() {
+        ACQUIRE_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if crate::device_ffi::is_cpu() {
             unsafe {
                 std::sync::Arc::increment_strong_count(
@@ -161,6 +166,13 @@ pub extern "C" fn tl_tensor_acquire(t: *mut crate::OpaqueTensor) -> *mut crate::
     t
 }
 
+/// デバッグ: acquire/release_safe カウンタを出力
+pub fn dump_acquire_release_counts() {
+    let acq = ACQUIRE_COUNT.load(std::sync::atomic::Ordering::Relaxed);
+    let rel = RELEASE_SAFE_COUNT.load(std::sync::atomic::Ordering::Relaxed);
+    eprintln!("[ACQ_REL] acquire={} release_safe={} delta={}", acq, rel, acq as i64 - rel as i64);
+}
+
 /// @ffi_sig (Tensor*) -> void
 /// テンソル解放（Arc ベース、全デバイス統一）
 /// Arc の参照カウントを -1 する。RC=0 になれば Tensor（autograd グラフ含む）が
@@ -170,6 +182,7 @@ pub extern "C" fn tl_tensor_release_safe(t: *mut crate::OpaqueTensor) {
     if t.is_null() {
         return;
     }
+    RELEASE_SAFE_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     if crate::device_ffi::is_cpu() {
         // CPU: release_tensor 経由（メモリ統計 + ログ対応）
         tl_cpu::memory::release_tensor(t as *mut tl_cpu::CpuTensor<f32>);
@@ -214,21 +227,36 @@ pub extern "C" fn tl_ptr_inc_ref(ptr: *mut c_void) {
 /// 参照カウント減少。構造体・String どちらにも使われる。
 /// 戻り値: カウントが0になった場合は 1 (解放すべき), それ以外は 0
 /// 安全ガード: REF_COUNTS に未登録のポインタは 0 を返す（解放しない）。
+static DEC_REF_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static DEC_REF_FREED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static DEC_REF_SKIP: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+pub fn dump_dec_ref_counts() {
+    let total = DEC_REF_COUNT.load(std::sync::atomic::Ordering::Relaxed);
+    let freed = DEC_REF_FREED.load(std::sync::atomic::Ordering::Relaxed);
+    let skip = DEC_REF_SKIP.load(std::sync::atomic::Ordering::Relaxed);
+    eprintln!("[DEC_REF] total={} freed={} skip={}", total, freed, skip);
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_ptr_dec_ref(ptr: *mut c_void) -> i32 {
     if ptr.is_null() {
         return 0;
     }
     let key = ptr as usize;
+    DEC_REF_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     if let Ok(mut counts) = REF_COUNTS.lock() {
         if let Some(count) = counts.get_mut(&key) {
             if *count > 0 {
                 *count -= 1;
                 if *count == 0 {
                     counts.remove(&key);
+                    DEC_REF_FREED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     return 1; // should free
                 }
             }
+        } else {
+            DEC_REF_SKIP.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
     }
     0

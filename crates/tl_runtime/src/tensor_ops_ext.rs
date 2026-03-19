@@ -164,6 +164,18 @@ pub extern "C" fn tl_get_memory_bytes() -> i64 {
 #[unsafe(no_mangle)]
 /// @ffi_sig () -> f64
 pub extern "C" fn tl_get_memory_mb() -> f64 {
+    // デバッグ: alloc/release カウンタを出力
+    if crate::device_ffi::is_cpu() {
+        let alloc = tl_cpu::memory::get_alloc_count();
+        let release = tl_cpu::memory::get_release_count();
+        let true_drop = tl_cpu::tensor::get_true_drop_count();
+        let live = alloc.saturating_sub(release);
+        let true_live = alloc.saturating_sub(true_drop);
+        eprintln!("[MEM_DBG] alloc={} release={} live={} true_drop={} true_live={}", alloc, release, live, true_drop, true_live);
+        crate::memory_ffi::dump_acquire_release_counts();
+        tl_cpu::ffi::dump_ffi_acquire_release();
+        crate::memory_ffi::dump_dec_ref_counts();
+    }
     tl_get_memory_bytes() as f64 / 1024.0 / 1024.0
 }
 

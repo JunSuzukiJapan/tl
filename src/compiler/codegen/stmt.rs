@@ -1883,8 +1883,20 @@ impl<'ctx> CodeGenerator<'ctx> {
                         AssignOp::Assign => {
                             let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
                             
-                            // Free old if needed — but only if the variable owns the value (CLEANUP_NONE = borrowed, e.g. function args)
-                            if lhs_cleanup_mode != super::CLEANUP_NONE && matches!(lhs_type, Type::Struct(_,_) | Type::Tensor(_,_)) {
+                            // Free old if needed.
+                            // - Struct/Enum with CLEANUP_FULL: 旧値を emit_recursive_free で解放
+                            // - Struct/Enum with CLEANUP_NONE: 旧値はスキップ（借用値 = 解放は呼び出し元の責任）
+                            //   ただし代入後に CLEANUP_FULL に昇格（次回の代入で旧値を解放するため）
+                            // - Tensor: CLEANUP_NONE 以外のみ解放（Arc 二重解放防止）
+                            let should_free_old = match &lhs_type {
+                                Type::Struct(_, _) | Type::Enum(_, _) => lhs_cleanup_mode != super::CLEANUP_NONE,
+                                Type::Tensor(_, _) | Type::TensorShaped(_, _) => lhs_cleanup_mode != super::CLEANUP_NONE,
+                                _ => false,
+                            };
+                            if matches!(lhs_type, Type::Struct(_,_)) {
+                                eprintln!("[SHOULD_FREE] type={:?} cleanup={} should_free={}", lhs_type, lhs_cleanup_mode, should_free_old);
+                            }
+                            if should_free_old {
                                  let old_val = self.builder.build_load(load_type, lhs_ptr, "old").unwrap().into_pointer_value();
                                  let null_ptr = load_type.const_null();
                                  let is_not_null = self.builder.build_int_compare(inkwell::IntPredicate::NE, old_val, null_ptr, "").unwrap();
@@ -1903,6 +1915,16 @@ impl<'ctx> CodeGenerator<'ctx> {
                                  }
                                  self.builder.build_unconditional_branch(cont_bb).unwrap();
                                  self.builder.position_at_end(cont_bb);
+                            }
+                            
+                            // CLEANUP_NONE パラメータ変数に新しい所有値が代入された場合、
+                            // 次回の代入で旧値を解放するため cleanup mode を CLEANUP_FULL に昇格。
+                            if lhs_cleanup_mode == super::CLEANUP_NONE 
+                                && matches!(lhs_type, Type::Struct(_,_) | Type::Enum(_,_)) 
+                            {
+                                if let LValue::Variable(vname) = lhs {
+                                    self.promote_variable_cleanup(vname, super::CLEANUP_FULL);
+                                }
                             }
                             
                             self.builder.build_store(lhs_ptr, val_ir).unwrap();
@@ -3472,9 +3494,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                         _ => return Err("malloc returned void".into()),
                     };
 
-                // 2. Register with MemoryManager
+                // 2. Register with MemoryManager (REF_COUNTS に登録)
                 let void_ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
-                if let Some(register_fn) = self.module.get_function("tl_mem_register") {
+                if let Some(register_fn) = self.module.get_function("tl_mem_register_struct") {
                     let cast = self.builder
                         .build_pointer_cast(new_struct_ptr, void_ptr_type, "reg_cast")
                         .unwrap();
@@ -3826,10 +3848,15 @@ impl<'ctx> CodeGenerator<'ctx> {
                                  "struct_ptr"
                              ).map_err(|e| e.to_string())?.into_pointer_value();
                              let field_ptr = self.builder.build_struct_gep(st_llvm_ty, struct_ptr, idx as u32, "").map_err(|e|e.to_string())?;
-                             // NOTE: CLEANUP_NONE を維持。フィールド代入で old value を free すると
-                             // in-place 更新パターン (s.b1 = s.b1.step(lr)) で共有ポインタが破壊される。
-                             // main の exit(0) (V4.0 同原則) で RC 蓄積を安全に回避。
-                             Ok((Some(field_ptr), field_ty.clone(), super::CLEANUP_NONE, base_name))
+                             // V6.0 True Deep Copy by emit_deep_clone ensures each struct copy has independent memory.
+                             // Sub-struct fields also need CLEANUP_FULL to free old values during field assignment.
+                             // This pairs with emit_deep_clone's tl_tensor_acquire for correct RC balance.
+                             let field_cleanup = match &field_ty {
+                                 Type::Tensor(_, _) | Type::TensorShaped(_, _) 
+                                 | Type::Struct(_, _) | Type::Enum(_, _) => super::CLEANUP_FULL,
+                                 _ => super::CLEANUP_NONE,
+                             };
+                             Ok((Some(field_ptr), field_ty.clone(), field_cleanup, base_name))
                         }
                         None => Err(format!("LLVM type not found for {}", name))
                     }

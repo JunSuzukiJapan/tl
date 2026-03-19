@@ -792,6 +792,18 @@ impl<'ctx> CodeGenerator<'ctx> {
         Ok(())
     }
 
+    /// CLEANUP_NONE 変数の cleanup mode を指定値に昇格する。
+    /// パラメータ変数に新しい所有値が代入された後に呼び出し、
+    /// 次回の代入で旧値を正しく解放するために使用する。
+    pub(crate) fn promote_variable_cleanup(&mut self, name: &str, new_mode: u8) {
+        for scope in self.variables.iter_mut().rev() {
+            if let Some(entry) = scope.get_mut(name) {
+                entry.2 = new_mode;
+                return;
+            }
+        }
+    }
+
     fn compile_struct_defs(&mut self, structs: &[StructDef]) -> Result<(), String> {
         // Pass 1: Opaque
         for s in structs {
@@ -1388,6 +1400,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                                          let src_ptr = val.into_pointer_value();
                                          self.emit_struct_copy(sret_ptr, src_ptr, &ty)?;
                                          
+                                         // DISABLED: SRET source free — exit_scope に解放を任せる。
+                                         // sub-struct CLEANUP_FULL + promote で field/variable レベルの解放を行い、
+                                         // exit_scope の emit_all_scopes_cleanup で SRET source struct を解放する。
+                                         // self.emit_recursive_free(src_ptr.into(), &ty, CLEANUP_FULL)?;
+                                         
                                          self.emit_all_scopes_cleanup();
                                          // REMOVED: self.variables.pop(); // Handled by exit_scope later
                                          if let Some(exit_fn) = self.module.get_function("tl_mem_function_exit") {
@@ -1851,6 +1868,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                          if let Some(dest) = self.current_sret_dest {
                              let src_ptr = val.into_pointer_value();
                              self.emit_struct_copy(dest, src_ptr, &ty)?;
+                             // FIX: SRET copy 後に source struct を明示的に解放。
+                             // メソッド版の同修正と同じ理由。
+                             self.emit_recursive_free(src_ptr.into(), &ty, CLEANUP_FULL)?;
                          }
                          // FIX: main 関数のクリーンアップ SIGBUS 回避
                          if func.name == "main" {

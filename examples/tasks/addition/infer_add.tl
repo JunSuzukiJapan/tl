@@ -1,5 +1,18 @@
 // 2桁足し算タスク - 推論 (train_add.tl と同一構造)
 
+fn argmax(t: Tensor<f32, 1>) -> i64 {
+    let mut max_val = -1000000.0;
+    let mut idx = 0;
+    for k in range(0, 13) {
+        let v = t[k];
+        if v > max_val {
+            max_val = v;
+            idx = k;
+        }
+    }
+    return idx;
+}
+
 struct Linear { W: Tensor<f32, 2>, b: Tensor<f32, 1> }
 impl Linear { 
     fn new(i: i64, o: i64) -> Linear { 
@@ -86,35 +99,68 @@ fn main() {
         return;
     }
     
+    // -------------------------------------------------------
+    // Autoregressive Inference
+    // 入力: [i_d1, i_d10, +, j_d1, j_d10, =, PAD, PAD, PAD, ...]
+    // 位置5の出力 → s_d1 を予測
+    // 位置6の出力 → s_d10 を予測
+    // 位置7の出力 → s_d100 を予測
+    // -------------------------------------------------------
+    
     // Test: 12 + 34 = 46
     print("Test: 12 + 34 = 46");
     print("Expected (Reverse): 6, 4, 0");
     
+    // Step 1: s_d1 を予測 (位置5の出力)
     let data1 = [2.0, 1.0, 10.0, 4.0, 3.0, 11.0, 12.0, 12.0, 12.0, 12.0, 12.0, 12.0];
     let input1 = data1.reshape([1, 12]);
     let logits1 = model.forward(input1);
-    let flat1 = logits1.reshape([12, 13]);
+    let logits1_flat = logits1.reshape([12, 13]);
+    let p1 = argmax(logits1_flat.slice(0, 5, 6, 1).reshape([13]));
     
-    print("Predicted:");
-    let p6 = flat1.argmax(1);
-    print(p6[6]);
-    print(p6[7]);
-    print(p6[8]);
+    // Step 2: s_d10 を予測 (位置6の出力)
+    let v1 = p1 as f32;
+    let data2 = [2.0, 1.0, 10.0, 4.0, 3.0, 11.0, v1, 12.0, 12.0, 12.0, 12.0, 12.0];
+    let input2 = data2.reshape([1, 12]);
+    let logits2 = model.forward(input2);
+    let logits2_flat = logits2.reshape([12, 13]);
+    let p2 = argmax(logits2_flat.slice(0, 6, 7, 1).reshape([13]));
+    
+    // Step 3: s_d100 を予測 (位置7の出力)
+    let v2 = p2 as f32;
+    let data3 = [2.0, 1.0, 10.0, 4.0, 3.0, 11.0, v1, v2, 12.0, 12.0, 12.0, 12.0];
+    let input3 = data3.reshape([1, 12]);
+    let logits3 = model.forward(input3);
+    let logits3_flat = logits3.reshape([12, 13]);
+    let p3 = argmax(logits3_flat.slice(0, 7, 8, 1).reshape([13]));
+    
+    print("Predicted:"); print(p1); print(p2); print(p3);
     
     // Test: 99 + 1 = 100
     print("Test: 99 + 1 = 100");
     print("Expected (Reverse): 0, 0, 1");
     
-    let data2 = [9.0, 9.0, 10.0, 1.0, 0.0, 11.0, 12.0, 12.0, 12.0, 12.0, 12.0, 12.0];
-    let input2 = data2.reshape([1, 12]);
-    let logits2 = model.forward(input2);
-    let flat2 = logits2.reshape([12, 13]);
+    let q_data1 = [9.0, 9.0, 10.0, 1.0, 0.0, 11.0, 12.0, 12.0, 12.0, 12.0, 12.0, 12.0];
+    let q_input1 = q_data1.reshape([1, 12]);
+    let q_logits1 = model.forward(q_input1);
+    let q_logits1_flat = q_logits1.reshape([12, 13]);
+    let q1 = argmax(q_logits1_flat.slice(0, 5, 6, 1).reshape([13]));
     
-    print("Predicted:");
-    let p7 = flat2.argmax(1);
-    print(p7[6]);
-    print(p7[7]);
-    print(p7[8]);
+    let qv1 = q1 as f32;
+    let q_data2 = [9.0, 9.0, 10.0, 1.0, 0.0, 11.0, qv1, 12.0, 12.0, 12.0, 12.0, 12.0];
+    let q_input2 = q_data2.reshape([1, 12]);
+    let q_logits2 = model.forward(q_input2);
+    let q_logits2_flat = q_logits2.reshape([12, 13]);
+    let q2 = argmax(q_logits2_flat.slice(0, 6, 7, 1).reshape([13]));
+    
+    let qv2 = q2 as f32;
+    let q_data3 = [9.0, 9.0, 10.0, 1.0, 0.0, 11.0, qv1, qv2, 12.0, 12.0, 12.0, 12.0];
+    let q_input3 = q_data3.reshape([1, 12]);
+    let q_logits3 = model.forward(q_input3);
+    let q_logits3_flat = q_logits3.reshape([12, 13]);
+    let q3 = argmax(q_logits3_flat.slice(0, 7, 8, 1).reshape([13]));
+    
+    print("Predicted:"); print(q1); print(q2); print(q3);
     
     print("Done.");
 }

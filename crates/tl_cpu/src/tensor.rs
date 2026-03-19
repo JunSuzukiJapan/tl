@@ -45,6 +45,8 @@ pub struct CpuTensor<T: TensorScalar> {
 
 impl<T: TensorScalar> Drop for CpuTensor<T> {
     fn drop(&mut self) {
+        // 真のドロップ数をカウント（release_tensor 経由 + autograd Arc drop 両方を含む）
+        TRUE_DROP_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let data_bytes = self.data.capacity() * T::size_in_bytes();
         if data_bytes > 0 {
             crate::memory::track_free(data_bytes);
@@ -56,6 +58,13 @@ impl<T: TensorScalar> Drop for CpuTensor<T> {
             }
         }
     }
+}
+
+/// 真のドロップ数（CpuTensor::Drop が呼ばれた総回数）
+static TRUE_DROP_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+pub fn get_true_drop_count() -> usize {
+    TRUE_DROP_COUNT.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 impl<T: TensorScalar> Clone for CpuTensor<T> {
@@ -417,13 +426,16 @@ impl<T: TensorScalar> CpuTensor<T> {
             }
         }
 
-        // 4. 出力テンソルの grad_fn をクリア
-        //    grad_fn = None により、GradFn 内の TensorRef (Arc) が drop される。
-        //    入力テンソルの Arc RC が下がり、それらの grad_fn も連鎖的に drop
-        //    → グラフ全体が自然に解放される。
-        //    以前のように全ノードを走査する必要はない。
-        if let Some(ref mut meta) = self.autograd {
-            meta.grad_fn = None;
+        // 4. 全ノードの grad_fn をクリア
+        //    各ノードの grad_fn = None により、GradFn 内の TensorRef (Arc) が即座に drop される。
+        //    loss だけクリアする方式では、中間テンソルの GradFn が保持する Arc 参照が
+        //    exit_scope の release と競合してメモリリークを引き起こす。
+        //    全ノードの grad_fn を明示的にクリアして、中間テンソル間の参照を即座に解放する。
+        for &ptr in topo_order.iter() {
+            let tensor = unsafe { &mut *ptr };
+            if let Some(ref mut meta) = tensor.autograd {
+                meta.grad_fn = None;
+            }
         }
     }
 
