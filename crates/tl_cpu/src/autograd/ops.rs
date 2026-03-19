@@ -241,8 +241,40 @@ pub struct MatmulBackward<T: TensorScalar> {
 
 impl<T: TensorScalar> GradFn<T> for MatmulBackward<T> {
     fn backward(&self, grad_output: &CpuTensor<T>) -> BackendResult<Vec<CpuTensor<T>>> {
-        let grad_a = grad_output.matmul_impl(&self.b_data.transpose_impl(0, 1)?)?;
-        let grad_b = self.a_data.transpose_impl(0, 1)?.matmul_impl(grad_output)?;
+        let a_ndim = self.a_data.shape().len();
+        let b_ndim = self.b_data.shape().len();
+
+        // grad_a = grad_output @ b^T  (transpose last 2 dims of b)
+        let b_t = if b_ndim >= 2 {
+            self.b_data.transpose_impl(b_ndim - 2, b_ndim - 1)?
+        } else {
+            self.b_data.shallow_clone()
+        };
+        let grad_a = grad_output.matmul_impl(&b_t)?;
+
+        // grad_b = a^T @ grad_output  (transpose last 2 dims of a)
+        let a_t = if a_ndim >= 2 {
+            self.a_data.transpose_impl(a_ndim - 2, a_ndim - 1)?
+        } else {
+            self.a_data.shallow_clone()
+        };
+        let grad_b = a_t.matmul_impl(grad_output)?;
+
+        // grad_b の shape が b の shape と異なる場合 (batch dims), sum で集約
+        let b_shape = self.b_data.shape();
+        let gb_shape = grad_b.shape();
+        let grad_b = if gb_shape != b_shape && gb_shape.len() > b_shape.len() {
+            // batch dims を sum で削除 (例: [1,64,13] -> [64,13])
+            let extra = gb_shape.len() - b_shape.len();
+            let mut g = grad_b;
+            for _ in 0..extra {
+                g = g.sum_impl(0)?;
+            }
+            g
+        } else {
+            grad_b
+        };
+
         Ok(vec![grad_a, grad_b])
     }
     fn inputs(&self) -> Vec<TensorRef<T>> {
@@ -641,6 +673,142 @@ impl<T: TensorScalar> GradFn<T> for SliceBackward<T> {
     }
 }
 
+/// tanh の勾配: 1 - tanh²(x)
+pub struct TanhBackward<T: TensorScalar> {
+    pub input: TensorRef<T>,
+    pub output_data: CpuTensor<T>,
+}
+
+impl<T: TensorScalar> GradFn<T> for TanhBackward<T> {
+    fn backward(&self, grad_output: &CpuTensor<T>) -> BackendResult<Vec<CpuTensor<T>>> {
+        let out = self.output_data.to_vec_t();
+        let dy = grad_output.to_vec_t();
+        let grad: Vec<T> = out.iter().zip(dy.iter())
+            .map(|(&o, &g)| g * (T::one() - o * o))
+            .collect();
+        Ok(vec![CpuTensor::from_slice(&grad, self.output_data.shape(), grad_output.dtype())])
+    }
+    fn inputs(&self) -> Vec<TensorRef<T>> {
+        vec![self.input.clone()]
+    }
+}
+
+/// gelu の勾配
+pub struct GeluBackward<T: TensorScalar> {
+    pub input: TensorRef<T>,
+    pub input_data: CpuTensor<T>,
+}
+
+impl<T: TensorScalar> GradFn<T> for GeluBackward<T> {
+    fn backward(&self, grad_output: &CpuTensor<T>) -> BackendResult<Vec<CpuTensor<T>>> {
+        let x = self.input_data.to_vec_t();
+        let dy = grad_output.to_vec_t();
+        let sqrt2_inv = T::from_f64(1.0 / std::f64::consts::SQRT_2);
+        let coeff = T::from_f64(std::f64::consts::FRAC_2_SQRT_PI * 0.5);
+        let half = T::from_f64(0.5);
+        let grad: Vec<T> = x.iter().zip(dy.iter()).map(|(&xi, &dyi)| {
+            let cdf = half * (T::one() + (xi * sqrt2_inv).tanh());
+            let pdf = coeff * (-(xi * xi) * half).exp();
+            dyi * (cdf + xi * pdf)
+        }).collect();
+        Ok(vec![CpuTensor::from_slice(&grad, self.input_data.shape(), grad_output.dtype())])
+    }
+    fn inputs(&self) -> Vec<TensorRef<T>> {
+        vec![self.input.clone()]
+    }
+}
+
+/// sqrt の勾配: 0.5 / sqrt(x)
+pub struct SqrtBackward<T: TensorScalar> {
+    pub input: TensorRef<T>,
+    pub output_data: CpuTensor<T>,
+}
+
+impl<T: TensorScalar> GradFn<T> for SqrtBackward<T> {
+    fn backward(&self, grad_output: &CpuTensor<T>) -> BackendResult<Vec<CpuTensor<T>>> {
+        let out = self.output_data.to_vec_t();
+        let dy = grad_output.to_vec_t();
+        let half = T::from_f64(0.5);
+        let eps = T::from_f64(1e-12);
+        let grad: Vec<T> = out.iter().zip(dy.iter())
+            .map(|(&o, &g)| g * half / (o + eps))
+            .collect();
+        Ok(vec![CpuTensor::from_slice(&grad, self.output_data.shape(), grad_output.dtype())])
+    }
+    fn inputs(&self) -> Vec<TensorRef<T>> {
+        vec![self.input.clone()]
+    }
+}
+
+/// mean の勾配: 1/n
+pub struct MeanBackward<T: TensorScalar> {
+    pub input: TensorRef<T>,
+    pub input_shape: Vec<usize>,
+}
+
+impl<T: TensorScalar> GradFn<T> for MeanBackward<T> {
+    fn backward(&self, grad_output: &CpuTensor<T>) -> BackendResult<Vec<CpuTensor<T>>> {
+        let n: usize = self.input_shape.iter().product();
+        let scale = grad_output.to_vec_t()[0] * T::from_f64(1.0 / n as f64);
+        let grad = vec![scale; n];
+        Ok(vec![CpuTensor::from_slice(&grad, &self.input_shape, grad_output.dtype())])
+    }
+    fn inputs(&self) -> Vec<TensorRef<T>> {
+        vec![self.input.clone()]
+    }
+}
+
+/// squeeze の勾配: unsqueeze
+pub struct SqueezeBackward<T: TensorScalar> {
+    pub input: TensorRef<T>,
+    pub input_shape: Vec<usize>,
+}
+
+impl<T: TensorScalar> GradFn<T> for SqueezeBackward<T> {
+    fn backward(&self, grad_output: &CpuTensor<T>) -> BackendResult<Vec<CpuTensor<T>>> {
+        Ok(vec![grad_output.reshape_impl(&self.input_shape)?])
+    }
+    fn inputs(&self) -> Vec<TensorRef<T>> {
+        vec![self.input.clone()]
+    }
+}
+
+/// unsqueeze の勾配: squeeze
+pub struct UnsqueezeBackward<T: TensorScalar> {
+    pub input: TensorRef<T>,
+    pub input_shape: Vec<usize>,
+}
+
+impl<T: TensorScalar> GradFn<T> for UnsqueezeBackward<T> {
+    fn backward(&self, grad_output: &CpuTensor<T>) -> BackendResult<Vec<CpuTensor<T>>> {
+        Ok(vec![grad_output.reshape_impl(&self.input_shape)?])
+    }
+    fn inputs(&self) -> Vec<TensorRef<T>> {
+        vec![self.input.clone()]
+    }
+}
+
+/// silu (x * sigmoid(x)) の勾配
+pub struct SiluBackward<T: TensorScalar> {
+    pub input: TensorRef<T>,
+    pub input_data: CpuTensor<T>,
+}
+
+impl<T: TensorScalar> GradFn<T> for SiluBackward<T> {
+    fn backward(&self, grad_output: &CpuTensor<T>) -> BackendResult<Vec<CpuTensor<T>>> {
+        let x = self.input_data.to_vec_t();
+        let dy = grad_output.to_vec_t();
+        let grad: Vec<T> = x.iter().zip(dy.iter()).map(|(&xi, &dyi)| {
+            let sig = T::one() / (T::one() + (-xi).exp());
+            dyi * (sig * (T::one() + xi * (T::one() - sig)))
+        }).collect();
+        Ok(vec![CpuTensor::from_slice(&grad, self.input_data.shape(), grad_output.dtype())])
+    }
+    fn inputs(&self) -> Vec<TensorRef<T>> {
+        vec![self.input.clone()]
+    }
+}
+
 // UnsafeCell<CpuTensor<T>> を含む TensorRef<T> を保持する構造体に対して
 // Send + Sync を手動実装。CpuTensor<T> 自体が unsafe impl Send + Sync を持つため安全。
 unsafe impl<T: TensorScalar> Send for AddBackward<T> {}
@@ -693,4 +861,19 @@ unsafe impl<T: TensorScalar> Send for TrilBackward<T> {}
 unsafe impl<T: TensorScalar> Sync for TrilBackward<T> {}
 unsafe impl<T: TensorScalar> Send for SliceBackward<T> {}
 unsafe impl<T: TensorScalar> Sync for SliceBackward<T> {}
+unsafe impl<T: TensorScalar> Send for TanhBackward<T> {}
+unsafe impl<T: TensorScalar> Sync for TanhBackward<T> {}
+unsafe impl<T: TensorScalar> Send for GeluBackward<T> {}
+unsafe impl<T: TensorScalar> Sync for GeluBackward<T> {}
+unsafe impl<T: TensorScalar> Send for SqrtBackward<T> {}
+unsafe impl<T: TensorScalar> Sync for SqrtBackward<T> {}
+unsafe impl<T: TensorScalar> Send for MeanBackward<T> {}
+unsafe impl<T: TensorScalar> Sync for MeanBackward<T> {}
+unsafe impl<T: TensorScalar> Send for SqueezeBackward<T> {}
+unsafe impl<T: TensorScalar> Sync for SqueezeBackward<T> {}
+unsafe impl<T: TensorScalar> Send for UnsqueezeBackward<T> {}
+unsafe impl<T: TensorScalar> Sync for UnsqueezeBackward<T> {}
+unsafe impl<T: TensorScalar> Send for SiluBackward<T> {}
+unsafe impl<T: TensorScalar> Sync for SiluBackward<T> {}
+
 

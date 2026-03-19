@@ -1163,8 +1163,22 @@ pub extern "C" fn tl_cpu_tensor_tanh(t: *mut OpaqueTensor) -> *mut OpaqueTensor 
     if t.is_null() {
         return std::ptr::null_mut();
     }
-    match unsafe { (&*t).tanh_impl() } {
-        Ok(res) => make_tensor(res),
+    let tensor = unsafe { &*t };
+    match tensor.tanh_impl() {
+        Ok(res) => {
+            let res_clone = res.shallow_clone();
+            let ptr = make_tensor(res);
+            if tensor.requires_grad() {
+                use crate::autograd::ops::TanhBackward;
+                unsafe {
+                    (&mut *ptr).set_grad_fn(Box::new(TanhBackward {
+                        input: tensor_ref_from_ptr(t),
+                        output_data: res_clone,
+                    }));
+                }
+            }
+            ptr
+        }
         Err(e) => {
             eprintln!("Runtime Error in tanh: {}", e);
             std::ptr::null_mut()
@@ -1253,8 +1267,19 @@ pub extern "C" fn tl_cpu_tensor_mean(t: *mut OpaqueTensor) -> *mut OpaqueTensor 
         return std::ptr::null_mut();
     }
     let tensor = unsafe { &*t };
-    let mean_val = tensor.mean_all_impl(); // mean_all_impl returns f32 directly
-    make_tensor(CpuTensor::from_slice(&[mean_val], &[1], DType::F32))
+    let input_shape = tensor.shape.clone();
+    let mean_val = tensor.mean_all_impl();
+    let ptr = make_tensor(CpuTensor::from_slice(&[mean_val], &[1], DType::F32));
+    if tensor.requires_grad() {
+        use crate::autograd::ops::MeanBackward;
+        unsafe {
+            (&mut *ptr).set_grad_fn(Box::new(MeanBackward {
+                input: tensor_ref_from_ptr(t),
+                input_shape,
+            }));
+        }
+    }
+    ptr
 }
 
 pub extern "C" fn tl_cpu_tensor_max(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
@@ -1439,8 +1464,22 @@ pub extern "C" fn tl_cpu_tensor_squeeze(t: *mut OpaqueTensor, dim: i64) -> *mut 
     if t.is_null() {
         return std::ptr::null_mut();
     }
-    match unsafe { (&*t).squeeze_impl(dim as usize) } {
-        Ok(res) => make_tensor(res),
+    let tensor = unsafe { &*t };
+    let input_shape = tensor.shape.clone();
+    match tensor.squeeze_impl(dim as usize) {
+        Ok(res) => {
+            let ptr = make_tensor(res);
+            if tensor.requires_grad() {
+                use crate::autograd::ops::SqueezeBackward;
+                unsafe {
+                    (&mut *ptr).set_grad_fn(Box::new(SqueezeBackward {
+                        input: tensor_ref_from_ptr(t),
+                        input_shape,
+                    }));
+                }
+            }
+            ptr
+        }
         Err(e) => {
             eprintln!("Runtime Error in squeeze: {}", e);
             std::ptr::null_mut()
@@ -1452,8 +1491,22 @@ pub extern "C" fn tl_cpu_tensor_unsqueeze(t: *mut OpaqueTensor, dim: usize) -> *
     if t.is_null() {
         return std::ptr::null_mut();
     }
-    match unsafe { (&*t).unsqueeze_impl(dim) } {
-        Ok(res) => make_tensor(res),
+    let tensor = unsafe { &*t };
+    let input_shape = tensor.shape.clone();
+    match tensor.unsqueeze_impl(dim) {
+        Ok(res) => {
+            let ptr = make_tensor(res);
+            if tensor.requires_grad() {
+                use crate::autograd::ops::UnsqueezeBackward;
+                unsafe {
+                    (&mut *ptr).set_grad_fn(Box::new(UnsqueezeBackward {
+                        input: tensor_ref_from_ptr(t),
+                        input_shape,
+                    }));
+                }
+            }
+            ptr
+        }
         Err(e) => {
             eprintln!("Runtime Error in unsqueeze: {}", e);
             std::ptr::null_mut()
@@ -1606,8 +1659,22 @@ pub extern "C" fn tl_cpu_tensor_sqrt(t: *mut OpaqueTensor) -> *mut OpaqueTensor 
     if t.is_null() {
         return std::ptr::null_mut();
     }
-    match unsafe { (&*t).sqrt_impl() } {
-        Ok(res) => make_tensor(res),
+    let tensor = unsafe { &*t };
+    match tensor.sqrt_impl() {
+        Ok(res) => {
+            let res_clone = res.shallow_clone();
+            let ptr = make_tensor(res);
+            if tensor.requires_grad() {
+                use crate::autograd::ops::SqrtBackward;
+                unsafe {
+                    (&mut *ptr).set_grad_fn(Box::new(SqrtBackward {
+                        input: tensor_ref_from_ptr(t),
+                        output_data: res_clone,
+                    }));
+                }
+            }
+            ptr
+        }
         Err(e) => {
             eprintln!("Runtime Error in sqrt: {}", e);
             std::ptr::null_mut()
@@ -1619,8 +1686,21 @@ pub extern "C" fn tl_cpu_tensor_gelu(t: *mut OpaqueTensor) -> *mut OpaqueTensor 
     if t.is_null() {
         return std::ptr::null_mut();
     }
-    match unsafe { (&*t).gelu_impl() } {
-        Ok(res) => make_tensor(res),
+    let tensor = unsafe { &*t };
+    match tensor.gelu_impl() {
+        Ok(res) => {
+            let ptr = make_tensor(res);
+            if tensor.requires_grad() {
+                use crate::autograd::ops::GeluBackward;
+                unsafe {
+                    (&mut *ptr).set_grad_fn(Box::new(GeluBackward {
+                        input: tensor_ref_from_ptr(t),
+                        input_data: tensor.shallow_clone(),
+                    }));
+                }
+            }
+            ptr
+        }
         Err(e) => {
             eprintln!("Runtime Error in gelu: {}", e);
             std::ptr::null_mut()
@@ -1875,18 +1955,19 @@ pub extern "C" fn tl_cpu_tensor_sigmoid(t: *mut OpaqueTensor) -> *mut OpaqueTens
         return std::ptr::null_mut();
     }
     let tensor = unsafe { &*t };
-    let data: Vec<f32> = tensor
-        .data
-        .iter()
-        .map(|&x| 1.0 / (1.0 + (-x).exp()))
-        .collect();
-    make_tensor(CpuTensor::<f32> {
-        data: data,
-        data_i64: None,
-        shape: tensor.shape.clone(),
-        dtype: tensor.dtype,
-        autograd: None,
-    })
+    let data: Vec<f32> = tensor.data.iter().map(|&x| 1.0 / (1.0 + (-x).exp())).collect();
+    let sig_clone = CpuTensor::<f32> { data: data.clone(), data_i64: None, shape: tensor.shape.clone(), dtype: tensor.dtype, autograd: None };
+    let ptr = make_tensor(CpuTensor::<f32> { data, data_i64: None, shape: tensor.shape.clone(), dtype: tensor.dtype, autograd: None });
+    if tensor.requires_grad() {
+        use crate::autograd::ops::SigmoidBackward;
+        unsafe {
+            (&mut *ptr).set_grad_fn(Box::new(SigmoidBackward {
+                a: tensor_ref_from_ptr(t),
+                output: sig_clone,
+            }));
+        }
+    }
+    ptr
 }
 
 pub extern "C" fn tl_cpu_tensor_scale(t: *mut OpaqueTensor, s: f64) -> *mut OpaqueTensor {
@@ -1908,18 +1989,18 @@ pub extern "C" fn tl_cpu_tensor_silu(t: *mut OpaqueTensor) -> *mut OpaqueTensor 
         return std::ptr::null_mut();
     }
     let tensor = unsafe { &*t };
-    let data: Vec<f32> = tensor
-        .data
-        .iter()
-        .map(|&x| x * (1.0 / (1.0 + (-x).exp())))
-        .collect();
-    make_tensor(CpuTensor::<f32> {
-        data: data,
-        data_i64: None,
-        shape: tensor.shape.clone(),
-        dtype: tensor.dtype,
-        autograd: None,
-    })
+    let data: Vec<f32> = tensor.data.iter().map(|&x| x * (1.0 / (1.0 + (-x).exp()))).collect();
+    let ptr = make_tensor(CpuTensor::<f32> { data, data_i64: None, shape: tensor.shape.clone(), dtype: tensor.dtype, autograd: None });
+    if tensor.requires_grad() {
+        use crate::autograd::ops::SiluBackward;
+        unsafe {
+            (&mut *ptr).set_grad_fn(Box::new(SiluBackward {
+                input: tensor_ref_from_ptr(t),
+                input_data: tensor.shallow_clone(),
+            }));
+        }
+    }
+    ptr
 }
 
 pub extern "C" fn tl_cpu_tensor_cross_entropy(

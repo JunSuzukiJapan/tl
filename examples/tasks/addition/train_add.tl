@@ -146,13 +146,6 @@ impl GPT {
 // Training
 // ---------------
 
-// 入力フォーマット (12トークン):
-//   [i_d1, i_d10, +, j_d1, j_d10, =, s_d1, s_d10, s_d100, PAD, PAD, PAD]
-//   (ボキャブラリ: 0-9=数字, 10=+, 11==, 12=PAD)
-//
-// ターゲット (next-token prediction, 1つシフト):
-//   [i_d10, +, j_d1, j_d10, =, s_d1, s_d10, s_d100, PAD, PAD, PAD, PAD]
-
 fn train_step(model: GPT, lr: f32, i: i64, j: i64) -> GPT {
     let sum = i + j;
     
@@ -173,7 +166,6 @@ fn train_step(model: GPT, lr: f32, i: i64, j: i64) -> GPT {
     let v_s_d10 = s_d10 as f32;
     let v_s_d100 = s_d100 as f32;
     
-    // 入力: [i_d1, i_d10, +, j_d1, j_d10, =, s_d1, s_d10, s_d100, PAD, PAD, PAD]
     let data = [
         v_i_d1, v_i_d10, 10.0, 
         v_j_d1, v_j_d10, 11.0, 
@@ -181,7 +173,6 @@ fn train_step(model: GPT, lr: f32, i: i64, j: i64) -> GPT {
         12.0, 12.0, 12.0
     ];
     
-    // ターゲット: next-token shift (data を1つ右にシフト)
     let target = [
         v_i_d10, 10.0, 
         v_j_d1, v_j_d10, 11.0, 
@@ -205,17 +196,15 @@ fn train_step(model: GPT, lr: f32, i: i64, j: i64) -> GPT {
 }
 
 fn train_epoch(model: GPT, lr: f32, epoch: i64) -> GPT {
-    // 固定の例で繰り返し学習 (オーバーフィット方式)
-    // 各例を3回ずつ繰り返して収束を速める
-    model = train_step(model, lr, 12, 34);  // 12+34=46
     model = train_step(model, lr, 12, 34);
     model = train_step(model, lr, 12, 34);
-    model = train_step(model, lr, 99, 1);   // 99+1=100
+    model = train_step(model, lr, 12, 34);
     model = train_step(model, lr, 99, 1);
     model = train_step(model, lr, 99, 1);
-    model = train_step(model, lr, 50, 50);  // 50+50=100
-    model = train_step(model, lr, 23, 45);  // 23+45=68
-    model = train_step(model, lr, 7, 8);    // 7+8=15
+    model = train_step(model, lr, 99, 1);
+    model = train_step(model, lr, 50, 50);
+    model = train_step(model, lr, 23, 45);
+    model = train_step(model, lr, 7, 8);
     
     print("Epoch Done.");
     model
@@ -226,7 +215,7 @@ fn main() {
     let d_model = 64; 
     let mut model = GPT::new(vocab_size, d_model);
     
-    let lr = 0.01;
+    let lr = 0.001;
     let epochs = 200;
 
     print("Training 2-digit addition (1-layer GPT, d_model=64)");
