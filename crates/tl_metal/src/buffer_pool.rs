@@ -55,6 +55,11 @@ impl MetalBufferPool {
         list.push(buffer);
     }
 
+    /// プール内のバッファを強制解放する（OSにメモリを返却）
+    pub fn purge(&mut self) {
+        self.free_buffers.clear();
+    }
+
     /// プール内のバッファ数
     pub fn free_count(&self) -> usize {
         self.free_buffers.values().map(|v| v.len()).sum()
@@ -102,5 +107,12 @@ pub fn pool_acquire(size: usize, options: MTLResourceOptions) -> Option<Arc<Buff
 pub fn pool_release(buffer: Arc<Buffer>) {
     if let Ok(mut pool) = BUFFER_POOL.lock() {
         pool.release(buffer);
+    }
+}
+
+/// プール内のバッファを強制解放する（OSにメモリを返却）
+pub fn pool_purge() {
+    if let Ok(mut pool) = BUFFER_POOL.lock() {
+        pool.purge();
     }
 }

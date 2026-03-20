@@ -41,28 +41,33 @@ impl CausalSelfAttention {
         let K = self.k_proj.forward(x);
         let V = self.v_proj.forward(x);
 
-        let Q_split = Q.reshape([10, 4, 16]); 
+        let Q_split = Q.reshape([10, 4, 32]); 
         let Q_heads = Q_split.transpose(0, 1); 
         
-        let K_split = K.reshape([10, 4, 16]);
+        let K_split = K.reshape([10, 4, 32]);
         let K_heads = K_split.transpose(0, 1); 
         
-        let V_split = V.reshape([10, 4, 16]);
+        let V_split = V.reshape([10, 4, 32]);
         let V_heads = V_split.transpose(0, 1); 
         
         let K_heads_T = K_heads.transpose(1, 2);
-        let K_scaled = (K_heads_T * 0.25).contiguous();
+        let K_scaled = (K_heads_T * 0.176).contiguous();
         let Q_cont = Q_heads.contiguous();
+        // Softmax normalization requires -Infinity for masking, but tril(0) gives 0.0
         let logits = Q_cont.matmul(K_scaled);
+        // Create an algebraic mask: 0.0 for lower triangle, -10000.0 for upper triangle
+        let ones = logits * 0.0 + 1.0;
+        let causal_mask = ones.tril(0); 
+        let neg_inf_mask = (causal_mask - 1.0) * 10000.0; 
+        let masked = logits + neg_inf_mask;
         
-        let masked = logits.tril(0);
         let probs = masked.softmax(2); 
         let probs_cont = probs.contiguous();
         let V_cont = V_heads.contiguous();
         let y_heads = probs_cont.matmul(V_cont);
         
         let y_trans = y_heads.transpose(0, 1); 
-        let y_out = y_trans.reshape([1, 10, 64]);
+        let y_out = y_trans.reshape([1, 10, 128]);
         self.o_proj.forward(y_out) 
     } 
 }
@@ -121,54 +126,67 @@ impl Transformer {
     } 
 }
 
-fn inference(model: Transformer) {
+fn get_random_digit() -> f32 {
+    let r = Tensor::randn([1], true)[0];
+    if r < -1.28 { return 0.0; }
+    if r >= -1.28 && r < -0.84 { return 1.0; }
+    if r >= -0.84 && r < -0.52 { return 2.0; }
+    if r >= -0.52 && r < -0.25 { return 3.0; }
+    if r >= -0.25 && r < 0.0   { return 4.0; }
+    if r >= 0.0   && r < 0.25  { return 5.0; }
+    if r >= 0.25  && r < 0.52  { return 6.0; }
+    if r >= 0.52  && r < 0.84  { return 7.0; }
+    if r >= 0.84  && r < 1.28  { return 8.0; }
+    if r >= 1.28 { return 9.0; }
+    return 9.0;
+}
+
+fn inference(model: Transformer, tests: i64) {
     let SEP = 10.0;
     let PAD = 11.0;
     
-    // Test case: 1 2 3 4 -> Expect 4 3 2 1
-    
-    let d1 = 1.0;
-    let d2 = 2.0;
-    let d3 = 3.0;
-    let d4 = 4.0;
-    
-    let input = [d1, d2, d3, d4, SEP, d4, d3, d2, d1, PAD];
-    print("Full Context Input:");
-    print(input);
-
     // Positions 0..9
     let p0 = 0.0; let p1 = 1.0; let p2 = 2.0; let p3 = 3.0; let p4 = 4.0;
     let p5 = 5.0; let p6 = 6.0; let p7 = 7.0; let p8 = 8.0; let p9 = 9.0;
-    
     let P_arr = [p0, p1, p2, p3, p4, p5, p6, p7, p8, p9];
     let P_t = P_arr.reshape([1, 10]);
 
-    let X = input.reshape([1, 10]);
-    let logits = model.forward(X, P_t); // [1, 10, Vocab]
-    let logits_flat = logits.reshape([10, 12]);
-    
-    print("Checking predictions...");
-    
-    let l_step1 = logits_flat.slice(0, 4, 5, 1);
-    print("Step 1 (Pos 4) -> Expect '4':");
-    print(l_step1);
-
-    let l_step2 = logits_flat.slice(0, 5, 6, 1);
-    print("Step 2 (Pos 5) -> Expect '3':");
-    print(l_step2);
-
-    let l_step3 = logits_flat.slice(0, 6, 7, 1);
-    print("Step 3 (Pos 6) -> Expect '2':");
-    print(l_step3);
-
-    let l_step4 = logits_flat.slice(0, 7, 8, 1);
-    print("Step 4 (Pos 7) -> Expect '1':");
-    print(l_step4);
+    for t in range(0, tests) {
+        let d1 = get_random_digit();
+        let d2 = get_random_digit();
+        let d3 = get_random_digit();
+        let d4 = get_random_digit();
+        
+        let input = [d1, d2, d3, d4, SEP, d4, d3, d2, d1, PAD];
+        print("======== Test Case ========");
+        print("Input (d1..d4):");
+        print([d1, d2, d3, d4]);
+        
+        let X = input.reshape([1, 10]);
+        let logits = model.forward(X, P_t); // [1, 10, Vocab]
+        let logits_flat = logits.reshape([10, 12]);
+        
+        let p4_logits = logits_flat.slice(0, 4, 5, 1).reshape([12]);
+        let p5_logits = logits_flat.slice(0, 5, 6, 1).reshape([12]);
+        let p6_logits = logits_flat.slice(0, 6, 7, 1).reshape([12]);
+        let p7_logits = logits_flat.slice(0, 7, 8, 1).reshape([12]);
+        
+        let pred_4 = p4_logits.argmax(0)[0];
+        let pred_5 = p5_logits.argmax(0)[0];
+        let pred_6 = p6_logits.argmax(0)[0];
+        let pred_7 = p7_logits.argmax(0)[0];
+        
+        print("Expected Output (reversed):");
+        print([d4, d3, d2, d1]);
+        
+        print("Model Predictions (positions 4,5,6,7):");
+        print([pred_4, pred_5, pred_6, pred_7]);
+    }
 }
 
 fn main() {
     let vocab_size = 12;
-    let d_model = 64;
+    let d_model = 128;
     let max_len = 16;
     let model = Transformer::new(vocab_size, max_len, d_model);
     
@@ -176,5 +194,5 @@ fn main() {
     Param::load(model, "reverse_model.safetensors");
     print("Weights loaded.");
     
-    inference(model);
+    inference(model, 5);
 }

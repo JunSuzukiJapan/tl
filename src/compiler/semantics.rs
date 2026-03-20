@@ -1928,6 +1928,13 @@ impl SemanticAnalyzer {
             } => {
                 let inferred_type = self.check_expr(value)?;
 
+                if matches!(inferred_type, Type::Void) {
+                    return self.err(
+                        SemanticError::Generic("Cannot assign Void type to a variable. The expression does not return a value.".into()),
+                        Some(stmt.span.clone()),
+                    );
+                }
+
                 let final_type = if let Some(ann) = ann_opt {
                     // RESOLVE TYPE ANNOTATION (Path -> Struct)
                     let resolved_ann = self.resolve_user_type(ann);
@@ -2326,9 +2333,11 @@ impl SemanticAnalyzer {
         _type_ty: &Type,
     ) -> Option<Result<Type, TlError>> {
         // Check arguments first
+        let mut arg_types = Vec::new();
         for arg in args.iter_mut() {
-            if let Err(e) = self.check_expr(arg) {
-                return Some(Err(e));
+            match self.check_expr(arg) {
+                Ok(ty) => arg_types.push(ty),
+                Err(e) => return Some(Err(e)),
             }
         }
 
@@ -2388,6 +2397,27 @@ impl SemanticAnalyzer {
                         None,
                     ));
                 }
+                match &arg_types[0] {
+                    Type::Struct(_, _) | Type::Tensor(_, _) => {}
+                    found_ty => {
+                        return Some(self.err(
+                            SemanticError::TypeMismatch {
+                                expected: Type::Struct("Struct".to_string(), vec![]),
+                                found: found_ty.clone(),
+                            },
+                            None,
+                        ));
+                    }
+                }
+                if arg_types[1] != Type::String("String".to_string()) {
+                    return Some(self.err(
+                        SemanticError::TypeMismatch {
+                            expected: Type::String("String".to_string()),
+                            found: arg_types[1].clone(),
+                        },
+                        None,
+                    ));
+                }
                 Some(Ok(Type::Void))
             }
             ("Param", "load") => {
@@ -2402,8 +2432,38 @@ impl SemanticAnalyzer {
                     ));
                 }
                 if args.len() == 2 {
-                    Some(Ok(Type::Void)) // load(struct, path) -> Void
+                    match &arg_types[0] {
+                        Type::Struct(_, _) => {}
+                        found_ty => {
+                            return Some(self.err(
+                                SemanticError::TypeMismatch {
+                                    expected: Type::Struct("Struct".to_string(), vec![]),
+                                    found: found_ty.clone(),
+                                },
+                                None,
+                            ));
+                        }
+                    }
+                    if arg_types[1] != Type::String("String".to_string()) {
+                        return Some(self.err(
+                            SemanticError::TypeMismatch {
+                                expected: Type::String("String".to_string()),
+                                found: arg_types[1].clone(),
+                            },
+                            None,
+                        ));
+                    }
+                    Some(Ok(arg_types[0].clone())) // load(struct, path) -> struct (returns the passed struct instance)
                 } else {
+                    if arg_types[0] != Type::String("String".to_string()) {
+                        return Some(self.err(
+                            SemanticError::TypeMismatch {
+                                expected: Type::String("String".to_string()),
+                                found: arg_types[0].clone(),
+                            },
+                            None,
+                        ));
+                    }
                     Some(Ok(Type::Tensor(Box::new(Type::F32), 0))) // load(path) -> Tensor
                 }
             }

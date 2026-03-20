@@ -2421,3 +2421,17 @@ fn eigen_decompose(data: &[f32], n: usize) -> (Vec<f32>, Vec<f32>) {
     let eigenvalues: Vec<f32> = (0..n).map(|i| h[i * n + i]).collect();
     (eigenvalues, q_accum)
 }
+
+#[unsafe(no_mangle)]
+/// @ffi_sig () -> void
+/// メモリプールとOSアロケータの未使用キャッシュを強制解放する — バックグラウンドで自動的に実行
+pub extern "C" fn tl_device_mem_purge() {
+    // 1. CPUメモリ(malloc)・ゾーンアロケータのプレッシャー解放
+    crate::tensor_ops_ext::tl_mem_purge();
+
+    // 2. GPUバックエンド特有のプールパージ
+    #[cfg(target_os = "macos")]
+    {
+        tl_metal::pool_purge();
+    }
+}

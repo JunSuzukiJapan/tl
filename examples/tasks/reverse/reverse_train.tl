@@ -67,23 +67,28 @@ impl CausalSelfAttention {
         let K = self.k_proj.forward(x);
         let V = self.v_proj.forward(x);
 
-        let Q_split = Q.reshape([9, 4, 16]); 
-        let Q_heads = Q_split.transpose(0, 1); // [4, 9, 16]
+        let Q_split = Q.reshape([9, 4, 32]); 
+        let Q_heads = Q_split.transpose(0, 1); // [4, 9, 32]
         
-        let K_split = K.reshape([9, 4, 16]);
-        let K_heads = K_split.transpose(0, 1); // [4, 9, 16]
+        let K_split = K.reshape([9, 4, 32]);
+        let K_heads = K_split.transpose(0, 1); // [4, 9, 32]
         
-        let V_split = V.reshape([9, 4, 16]);
-        let V_heads = V_split.transpose(0, 1); // [4, 9, 16]
+        let V_split = V.reshape([9, 4, 32]);
+        let V_heads = V_split.transpose(0, 1); // [4, 9, 32]
         
         let K_heads_T = K_heads.transpose(1, 2);
         
-        // Scale: 1/sqrt(16) = 0.25
-        let K_scaled = (K_heads_T * 0.25).contiguous();
+        // Scale: 1/sqrt(32) = 0.176
+        let K_scaled = (K_heads_T * 0.176).contiguous();
         let Q_cont = Q_heads.contiguous();
         
+        // Softmax normalization requires -Infinity for masking, but tril(0) gives 0.0
         let logits = Q_cont.matmul(K_scaled);
-        let masked = logits.tril(0);
+        // Create an algebraic mask: 0.0 for lower triangle, -10000.0 for upper triangle
+        let ones = logits * 0.0 + 1.0;
+        let causal_mask = ones.tril(0); 
+        let neg_inf_mask = (causal_mask - 1.0) * 10000.0; 
+        let masked = logits + neg_inf_mask;
         
         let probs = masked.softmax(2); 
         
@@ -91,8 +96,8 @@ impl CausalSelfAttention {
         let V_cont = V_heads.contiguous();
         let y_heads = probs_cont.matmul(V_cont);
         
-        let y_trans = y_heads.transpose(0, 1); // [9, 4, 16]
-        let y_out = y_trans.reshape([1, 9, 64]);
+        let y_trans = y_heads.transpose(0, 1); // [9, 4, 32]
+        let y_out = y_trans.reshape([1, 9, 128]);
         
         self.o_proj.forward(y_out) 
     } 
@@ -189,7 +194,23 @@ impl Transformer {
     } 
 }
 
-fn train_step(model: Transformer, lr: f32, d1: f32, d2: f32, d3: f32, d4: f32) -> Transformer {
+fn get_random_digit() -> f32 {
+    let r = Tensor::randn([1], true)[0];
+    if r < -1.28 { return 0.0; }
+    if r >= -1.28 && r < -0.84 { return 1.0; }
+    if r >= -0.84 && r < -0.52 { return 2.0; }
+    if r >= -0.52 && r < -0.25 { return 3.0; }
+    if r >= -0.25 && r < 0.0   { return 4.0; }
+    if r >= 0.0   && r < 0.25  { return 5.0; }
+    if r >= 0.25  && r < 0.52  { return 6.0; }
+    if r >= 0.52  && r < 0.84  { return 7.0; }
+    if r >= 0.84  && r < 1.28  { return 8.0; }
+    if r >= 1.28 { return 9.0; }
+    return 9.0;
+}
+
+fn train_epoch(model: Transformer, lr: f32, steps: i64) -> Transformer {
+    let mut m = model;
     let SEP = 10.0;
     let PAD = 11.0;
     let p0 = 0.0; let p1 = 1.0; let p2 = 2.0; let p3 = 3.0; let p4 = 4.0;
@@ -197,44 +218,53 @@ fn train_step(model: Transformer, lr: f32, d1: f32, d2: f32, d3: f32, d4: f32) -
     let P_arr = [p0, p1, p2, p3, p4, p5, p6, p7, p8];
     let P_t = P_arr.reshape([1, 9]);
 
-    let X_arr = [d1, d2, d3, d4, SEP, d4, d3, d2, d1];
-    let Y_arr = [d2, d3, d4, SEP, d4, d3, d2, d1, PAD];
-    let X = X_arr.reshape([1, 9]);
-    let Y = Y_arr.reshape([1, 9]);
-    
-    let logits = model.forward(X, P_t);
-    let logits_flat = logits.reshape([9, 12]); 
-    let Y_flat = Y.reshape([9]);
-    let loss = logits_flat.cross_entropy(Y_flat);
-    loss.backward();
-    let m = model.step(lr);
-    Tensor::clear_grads();
-    loss.print();
+    for s in range(0, steps) {
+        let d1 = get_random_digit();
+        let d2 = get_random_digit();
+        let d3 = get_random_digit();
+        let d4 = get_random_digit();
+        
+        // Input: [d1, d2, d3, d4, SEP, d4, d3, d2, d1]
+        // Target: [d2, d3, d4, SEP, d4, d3, d2, d1, PAD]
+        let X_arr = [d1, d2, d3, d4, SEP, d4, d3, d2, d1];
+        let Y_arr = [d2, d3, d4, SEP, d4, d3, d2, d1, PAD];
+        let X = X_arr.reshape([1, 9]);
+        let Y = Y_arr.reshape([1, 9]);
+        
+        let logits = m.forward(X, P_t);
+        let logits_flat = logits.reshape([9, 12]); 
+        let Y_flat = Y.reshape([9]);
+        let loss = logits_flat.cross_entropy(Y_flat);
+        
+        loss.backward();
+        
+        if s % 8 == 7 {
+            m = m.step(lr * 8.0); // Scale LR by batch size
+            Tensor::clear_grads();
+        }
+        
+        if s % 50 == 0 {
+             print("    Step:"); print(s);
+             print("    Loss:"); loss.print();
+        }
+    }
     return m;
 }
 
 fn main() {
     let vocab_size = 12;
     let max_len = 16;
-    let d_model = 64; 
+    let d_model = 128; 
     let mut model = Transformer::new(vocab_size, max_len, d_model);
     
-    let lr = 0.003; 
-    let epochs = 500; 
+    let lr = 0.001; 
+    let epochs = 100; 
     
-    print("Training Sequence Reversal (Improved)...");
+    print("Training Sequence Reversal (Generalized)...");
 
     for epoch in range(0, epochs) {
-        model = train_step(model, lr, 1.0, 2.0, 3.0, 4.0);
-        model = train_step(model, lr, 1.0, 2.0, 3.0, 4.0);
-        model = train_step(model, lr, 1.0, 2.0, 3.0, 4.0);
-        model = train_step(model, lr, 1.0, 2.0, 3.0, 4.0);
-        model = train_step(model, lr, 1.0, 2.0, 3.0, 4.0);
-
-        if (epoch - ((epoch/10)*10)) == 0 {
-             print("Epoch:"); print(epoch); 
-        }
-        Tensor::mem_purge();
+        print("Epoch:"); print(epoch); 
+        model = train_epoch(model, lr, 200);
     }
     print("Training Complete.");
     

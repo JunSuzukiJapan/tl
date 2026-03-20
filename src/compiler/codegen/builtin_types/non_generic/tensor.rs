@@ -97,6 +97,39 @@ pub fn register_tensor_types(manager: &mut TypeManager) {
     tensor.register_evaluated_instance_method("mean", compile_tensor_mean_impl, vec![Type::I64], any_tensor.clone());
     tensor.register_evaluated_instance_method("mean", compile_tensor_mean_impl, vec![Type::I64, Type::Bool], any_tensor.clone());
 
+    // Optimizer steps
+    tensor.register_evaluated_instance_method(
+        "adam_step",
+        compile_tensor_adam_step,
+        vec![
+            any_tensor.clone(), // grad
+            any_tensor.clone(), // m
+            any_tensor.clone(), // v
+            Type::I64,          // step
+            Type::F32,          // lr
+            Type::F32,          // beta1
+            Type::F32,          // beta2
+            Type::F32,          // eps
+            Type::F32,          // weight_decay
+        ],
+        Type::Void,
+    );
+
+    tensor.register_evaluated_instance_method(
+        "sgd_step",
+        compile_tensor_sgd_step,
+        vec![
+            any_tensor.clone(), // grad
+            any_tensor.clone(), // velocity
+            Type::F32,          // lr
+            Type::F32,          // momentum
+            Type::F32,          // weight_decay
+            Type::F32,          // dampening
+            Type::Bool,         // nesterov
+        ],
+        Type::Void,
+    );
+
     tensor.register_evaluated_instance_method("var", compile_tensor_var_impl, vec![], any_tensor.clone());
     tensor.register_evaluated_instance_method("var", compile_tensor_var_impl, vec![Type::I64], any_tensor.clone());
     tensor.register_evaluated_instance_method("var", compile_tensor_var_impl, vec![Type::I64, Type::Bool], any_tensor.clone());
@@ -2705,4 +2738,48 @@ fn compile_tensor_solve<'ctx>(
         .map_err(|e| e.to_string())?;
     let v = codegen.check_tensor_result(call, "solve_error")?;
     Ok((v, Type::Tensor(Box::new(Type::F32), 0)))
+}
+
+// adam_step(grad, m, v, step, lr, beta1, beta2, eps, weight_decay) -> Void
+fn compile_tensor_adam_step<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj: BasicValueEnum<'ctx>,
+    _obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 9 {
+        return Err("Tensor::adam_step takes exactly 9 arguments".into());
+    }
+    let fn_val = codegen.module.get_function("tl_adam_step").ok_or("tl_adam_step not found")?;
+    
+    let mut call_args = vec![obj.into()];
+    for (v, _) in args {
+        call_args.push(v.into());
+    }
+    
+    codegen.builder.build_call(fn_val, &call_args, "adam_step").map_err(|e| e.to_string())?;
+    
+    Ok((codegen.context.i64_type().const_int(0, false).into(), Type::Void))
+}
+
+// sgd_step(grad, velocity, lr, momentum, weight_decay, dampening, nesterov) -> Void
+fn compile_tensor_sgd_step<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj: BasicValueEnum<'ctx>,
+    _obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 7 {
+        return Err("Tensor::sgd_step takes exactly 7 arguments".into());
+    }
+    let fn_val = codegen.module.get_function("tl_sgd_step").ok_or("tl_sgd_step not found")?;
+    
+    let mut call_args = vec![obj.into()];
+    for (v, _) in args {
+        call_args.push(v.into());
+    }
+    
+    codegen.builder.build_call(fn_val, &call_args, "sgd_step").map_err(|e| e.to_string())?;
+    
+    Ok((codegen.context.i64_type().const_int(0, false).into(), Type::Void))
 }

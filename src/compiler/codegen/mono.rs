@@ -481,7 +481,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             Type::Bool => Ok(self.context.bool_type().into()),
             Type::U8 => Ok(self.context.i8_type().into()), // Added U8 support
             Type::Usize => Ok(self.context.i64_type().into()), // usize as i64
-            Type::Void => panic!("Void type encountered in get_llvm_type"),
+            Type::Void => Ok(self.context.i8_type().into()), // Prevent LLVM crashes on Void Assignments using a dummy 1-byte allocation
             
             Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::GradTensor(_, _) => {
                 Ok(self.context.ptr_type(AddressSpace::default()).into())

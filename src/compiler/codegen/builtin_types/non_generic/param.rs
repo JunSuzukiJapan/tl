@@ -196,7 +196,7 @@ fn compile_param_load<'ctx>(
         let free_fn = codegen.module.get_function("tl_tensor_map_free").ok_or("tl_tensor_map_free not found")?;
         codegen.builder.build_call(free_fn, &[map_ptr.into()], "").map_err(|e| e.to_string())?;
         
-        return Ok((codegen.context.i64_type().const_int(0, false).into(), Type::Void));
+        return Ok((arg0_val.clone(), arg0_ty.clone()));
     } else {
          return Err("Param::load requires 1 or 2 args".into());
     }

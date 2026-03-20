@@ -133,7 +133,8 @@ pub extern "C" fn tl_update_all_params(lr: f32) {
 #[unsafe(no_mangle)]
 /// @ffi_sig () -> void
 pub extern "C" fn tl_clear_grads() {
-    // No-op: デバッグカウンタは削除済み
+    // 毎ステップの最後にメモリプールを解放し、未使用メモリをOSに返却する
+    crate::device_ffi::tl_device_mem_purge();
 }
 
 /// QTensor 解放
@@ -705,10 +706,17 @@ pub extern "C" fn tl_adam_step(
     }
 
     // m, v のデータを更新 (インプレース)
-    let shape_len = n;
-    let new_m_tensor = crate::device_ffi::create_runtime_tensor_f32(&m_data, &[shape_len]);
-    let new_v_tensor = crate::device_ffi::create_runtime_tensor_f32(&v_data, &[shape_len]);
-    let new_param_tensor = crate::device_ffi::create_runtime_tensor_f32(&new_param, &[shape_len]);
+    // 形状を保存するため、元の shape を取得して適用
+    let shape_t = crate::device_ffi::tl_device_tensor_get_shape(param_ptr);
+    let rank = crate::device_ffi::tl_device_tensor_numel(shape_t) as usize;
+    let shape_data_ptr = crate::device_ffi::tl_device_tensor_data(shape_t);
+    let dims_f32 = unsafe { std::slice::from_raw_parts(shape_data_ptr, rank) };
+    let shape: Vec<usize> = dims_f32.iter().map(|&x| x as usize).collect();
+    crate::device_ffi::tl_device_tensor_free(shape_t);
+
+    let new_m_tensor = crate::device_ffi::create_runtime_tensor_f32(&m_data, &shape);
+    let new_v_tensor = crate::device_ffi::create_runtime_tensor_f32(&v_data, &shape);
+    let new_param_tensor = crate::device_ffi::create_runtime_tensor_f32(&new_param, &shape);
 
     crate::device_ffi::tl_device_tensor_replace_data(param_ptr, new_param_tensor);
     crate::device_ffi::tl_device_tensor_replace_data(m_ptr, new_m_tensor);
@@ -763,9 +771,15 @@ pub extern "C" fn tl_sgd_step(
         }
     }
 
-    let shape_len = n;
-    let new_param_tensor = crate::device_ffi::create_runtime_tensor_f32(&new_param, &[shape_len]);
-    let new_vel_tensor = crate::device_ffi::create_runtime_tensor_f32(&vel_data, &[shape_len]);
+    let shape_t = crate::device_ffi::tl_device_tensor_get_shape(param_ptr);
+    let rank = crate::device_ffi::tl_device_tensor_numel(shape_t) as usize;
+    let shape_data_ptr = crate::device_ffi::tl_device_tensor_data(shape_t);
+    let dims_f32 = unsafe { std::slice::from_raw_parts(shape_data_ptr, rank) };
+    let shape: Vec<usize> = dims_f32.iter().map(|&x| x as usize).collect();
+    crate::device_ffi::tl_device_tensor_free(shape_t);
+
+    let new_param_tensor = crate::device_ffi::create_runtime_tensor_f32(&new_param, &shape);
+    let new_vel_tensor = crate::device_ffi::create_runtime_tensor_f32(&vel_data, &shape);
 
     crate::device_ffi::tl_device_tensor_replace_data(param_ptr, new_param_tensor);
     crate::device_ffi::tl_device_tensor_replace_data(vel_ptr, new_vel_tensor);

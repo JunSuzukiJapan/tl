@@ -35,7 +35,7 @@ pub mod ffi;
 pub mod ffi_ops;
 pub mod device_impl;
 
-pub use buffer_pool::MetalBufferPool;
+pub use buffer_pool::{MetalBufferPool, pool_purge};
 pub use device::{get_device, MetalDevice};
 pub use tensor::MetalTensor;
 pub use autograd::GradFn;
