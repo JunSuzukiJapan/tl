@@ -1,12 +1,10 @@
 // Sequence Reversal 推論 (reverse_train.tl で学習したモデルを使用)
 // Sequence Reversal Inference
-//
-// Matches improved architecture instructions.
 
 struct Linear { W: Tensor<f32, 2>, b: Tensor<f32, 1> }
 impl Linear { 
     fn new(i: i64, o: i64) -> Linear { 
-        Linear((Tensor::randn([i, o], true)*0.1).detach(), (Tensor::randn([o], true)*0.0).detach()) 
+        Linear((Tensor::randn([i, o], true)*0.1).detach(true), (Tensor::randn([o], true)*0.0).detach(true)) 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
         x.matmul(self.W) + self.b 
@@ -16,7 +14,7 @@ impl Linear {
 struct Embedding { w: Tensor<f32, 2> }
 impl Embedding { 
     fn new(v: i64, d: i64) -> Embedding { 
-        Embedding((Tensor::randn([v, d], true)*0.1).detach()) 
+        Embedding((Tensor::randn([v, d], true)*0.1).detach(true)) 
     } 
     fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> { 
         i.embedding(self.w) 
@@ -26,7 +24,7 @@ impl Embedding {
 struct LayerNorm { w: Tensor<f32, 1>, b: Tensor<f32, 1> }
 impl LayerNorm { 
     fn new(d: i64) -> LayerNorm { 
-        LayerNorm((Tensor::randn([d], true)*0.0+1.0).detach(), (Tensor::randn([d], true)*0.0).detach()) 
+        LayerNorm((Tensor::randn([d], true)*0.0+1.0).detach(true), (Tensor::randn([d], true)*0.0).detach(true)) 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
         x * self.w + self.b 
@@ -36,31 +34,24 @@ impl LayerNorm {
 struct CausalSelfAttention { q_proj: Linear, k_proj: Linear, v_proj: Linear, o_proj: Linear }
 impl CausalSelfAttention { 
     fn new(d: i64) -> CausalSelfAttention { 
-        // d_model=128. 4 heads -> 32 dim per head.
         return CausalSelfAttention(Linear::new(d, d), Linear::new(d, d), Linear::new(d, d), Linear::new(d, d)); 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
-        // x: [1, T, 128]
-        let Q = self.q_proj.forward(x); // [1, T, 128]
+        let Q = self.q_proj.forward(x); 
         let K = self.k_proj.forward(x);
         let V = self.v_proj.forward(x);
 
-        // Split heads: [1, T, 128] -> [T, 4, 32] -> [4, T, 32]
+        let Q_split = Q.reshape([10, 4, 16]); 
+        let Q_heads = Q_split.transpose(0, 1); 
         
-        let Q_split = Q.reshape([10, 4, 48]);  // NOTE: infer uses len 10
-        let Q_heads = Q_split.transpose(0, 1); // [4, 10, 32]
+        let K_split = K.reshape([10, 4, 16]);
+        let K_heads = K_split.transpose(0, 1); 
         
-        let K_split = K.reshape([10, 4, 48]);
-        let K_heads = K_split.transpose(0, 1); // [4, 10, 32]
+        let V_split = V.reshape([10, 4, 16]);
+        let V_heads = V_split.transpose(0, 1); 
         
-        let V_split = V.reshape([10, 4, 48]);
-        let V_heads = V_split.transpose(0, 1); // [4, 10, 32]
-        
-        // Attention
         let K_heads_T = K_heads.transpose(1, 2);
-        
-        // Scale: 1/sqrt(48) approx 0.144
-        let K_scaled = (K_heads_T * 0.144).contiguous();
+        let K_scaled = (K_heads_T * 0.25).contiguous();
         let Q_cont = Q_heads.contiguous();
         let logits = Q_cont.matmul(K_scaled);
         
@@ -70,10 +61,8 @@ impl CausalSelfAttention {
         let V_cont = V_heads.contiguous();
         let y_heads = probs_cont.matmul(V_cont);
         
-        // Merge heads
-        let y_trans = y_heads.transpose(0, 1); // [10, 4, 32]
-        let y_out = y_trans.reshape([1, 10, 192]);
-        
+        let y_trans = y_heads.transpose(0, 1); 
+        let y_out = y_trans.reshape([1, 10, 64]);
         self.o_proj.forward(y_out) 
     } 
 }
@@ -102,17 +91,18 @@ impl Block {
 struct PositionalEmbedding { w: Tensor<f32, 2> }
 impl PositionalEmbedding {
     fn new(max_len: i64, d: i64) -> PositionalEmbedding {
-        PositionalEmbedding((Tensor::randn([max_len, d], true)*0.02).detach())
+        PositionalEmbedding((Tensor::randn([max_len, d], true)*0.02).detach(true))
     }
     fn forward(self, p: Tensor<f32, 2>) -> Tensor<f32, 3> {
         p.embedding(self.w)
     }
 }
 
-struct SeqModel { w: Embedding, p: PositionalEmbedding, b1: Block, b2: Block, l: LayerNorm, h: Linear }
-impl SeqModel { 
-    fn new(v: i64, max_len: i64, d: i64) -> SeqModel { 
-        SeqModel(
+// Renamed from SeqModel to Transformer to match reverse_train.tl
+struct Transformer { w: Embedding, p: PositionalEmbedding, b1: Block, b2: Block, l: LayerNorm, h: Linear }
+impl Transformer { 
+    fn new(v: i64, max_len: i64, d: i64) -> Transformer { 
+        Transformer(
             Embedding::new(v, d), 
             PositionalEmbedding::new(max_len, d), 
             Block::new(d), 
@@ -131,7 +121,7 @@ impl SeqModel {
     } 
 }
 
-fn inference(model: SeqModel) {
+fn inference(model: Transformer) {
     let SEP = 10.0;
     let PAD = 11.0;
     
@@ -159,22 +149,18 @@ fn inference(model: SeqModel) {
     
     print("Checking predictions...");
     
-    // Step 1: Pos 4 -> Expect 4
     let l_step1 = logits_flat.slice(0, 4, 5, 1);
     print("Step 1 (Pos 4) -> Expect '4':");
     print(l_step1);
 
-    // Step 2: Pos 5 -> Expect 3
     let l_step2 = logits_flat.slice(0, 5, 6, 1);
     print("Step 2 (Pos 5) -> Expect '3':");
     print(l_step2);
 
-    // Step 3: Pos 6 -> Expect 2
     let l_step3 = logits_flat.slice(0, 6, 7, 1);
     print("Step 3 (Pos 6) -> Expect '2':");
     print(l_step3);
 
-    // Step 4: Pos 7 -> Expect 1
     let l_step4 = logits_flat.slice(0, 7, 8, 1);
     print("Step 4 (Pos 7) -> Expect '1':");
     print(l_step4);
@@ -182,12 +168,12 @@ fn inference(model: SeqModel) {
 
 fn main() {
     let vocab_size = 12;
-    let d_model = 192;
+    let d_model = 64;
     let max_len = 16;
-    let model = SeqModel::new(vocab_size, max_len, d_model);
+    let model = Transformer::new(vocab_size, max_len, d_model);
     
     print("Loading weights...");
-    Param::load("reverse_model.safetensors");
+    Param::load(model, "reverse_model.safetensors");
     print("Weights loaded.");
     
     inference(model);
