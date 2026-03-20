@@ -23,8 +23,8 @@ fn main() {
     let X = Tensor::randn([2, 2], false); 
     print(X);
 
-    // Target: one-hot labels for 3 classes
-    let target = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
+    // Target: integer class indices for 3 classes
+    let target = [0.0, 1.0];
     print(target);
 
     let model = Linear_new(2, 3);
@@ -38,7 +38,7 @@ fn main() {
     print(probs);
 
     // Loss
-    // NOTE: current backend expects probability-like inputs + one-hot labels.
+    // NOTE: current backend expects logits or probs + integer class indices.
     let loss = probs.cross_entropy(target);
     print(loss);
 

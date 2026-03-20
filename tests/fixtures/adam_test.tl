@@ -15,7 +15,7 @@ extern fn tl_adam_step(
     beta2: f32,
     eps: f32,
     weight_decay: f32
-) -> Tensor<f32, 2>;
+);
 
 fn main() {
     println("TEST START");
@@ -36,10 +36,10 @@ fn main() {
     let eps = 1e-8;
     let weight_decay = 0.0;
     
-    let mut step: i64 = 1;
+    let mut step: i64 = 0;
 
     // Adam step 1
-    w1 = tl_adam_step(
+    tl_adam_step(
         w1,
         g1,
         m1,
@@ -62,10 +62,10 @@ fn main() {
     println(w1[0, 0]);
 
     // Adam step 2
-    step = 2;
+    step = 1;
     let g2 = Tensor::ones([2, 2], false); // Grad is 1.0 again
     
-    w1 = tl_adam_step(
+    tl_adam_step(
         w1,
         g2,
         m1, // m1 was mutated in place functionally
@@ -90,8 +90,8 @@ fn main() {
     let v2 = Tensor::zeros([2, 2], false);
 
     // Adam step 1 (negative)
-    step = 1;
-    w2 = tl_adam_step(
+    step = 0;
+    tl_adam_step(
         w2,
         g_neg,
         m2,
@@ -109,8 +109,8 @@ fn main() {
 
     // Adam step 2 (negative)
     let g_neg2 = Tensor::ones([2, 2], false) * -1.0;
-    step = 2;
-    w2 = tl_adam_step(
+    step = 1;
+    tl_adam_step(
         w2,
         g_neg2,
         m2,

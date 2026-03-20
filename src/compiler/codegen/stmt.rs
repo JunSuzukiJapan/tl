@@ -3464,17 +3464,17 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // V6.0: True Deep Copy — source と dest が完全に独立したメモリを持つ
                 // これにより `let mut s = self` でフィールド更新が互いに影響しない
                 // (V5.1 の SRET RC 蓄積問題の根本解決)
-                let simple_name = name.as_str();
+                let simple_name = mangled_name.as_str();
 
                 let struct_def = self
                     .struct_defs
                     .get(simple_name)
-                    .ok_or(format!("Struct {} definition not found for deep clone", name))?
+                    .ok_or(format!("Struct {} definition not found for deep clone", simple_name))?
                     .clone();
                 let st_llvm_ty = *self
                     .struct_types
                     .get(simple_name)
-                    .ok_or(format!("LLVM Struct type {} not found for deep clone", name))?;
+                    .ok_or(format!("LLVM Struct type {} not found for deep clone", simple_name))?;
 
                 // 1. Allocate new struct memory
                 let size = st_llvm_ty
