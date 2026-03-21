@@ -1,4 +1,4 @@
-// MNIST Training - MLP Model
+// MNIST Training - MLP Model with LR Scheduling
 use mnist_common::*;
 
 fn main() {
@@ -8,19 +8,27 @@ fn main() {
     let train_x = load_mnist_images("data/train-images-idx3-ubyte");
     let train_y = load_mnist_labels("data/train-labels-idx1-ubyte");
     
-    // 2-layer MLP: 784 -> 128 -> 10
-    let mut model = MLP::new(784, 128, 10);
-    let lr = 0.01;
+    // 2-layer MLP: 784 -> 256 -> 10
+    let mut model = MLP::new(784, 256, 10);
     let batch_size = 64;
     
     // 60000 / 64 = 937.5 -> 937 batches
     let num_batches = 937; 
-    let num_epochs = 20;
+    let num_epochs = 30;
     
     print("Starting training loop...");
     
     let mut epoch = 0;
     while epoch < num_epochs {
+        // Learning rate schedule: warm start then decay
+        let lr = if epoch < 10 {
+            0.05
+        } else if epoch < 20 {
+            0.01
+        } else {
+            0.003
+        };
+        
         let mut b = 0;
         let mut running_loss = 0.0;
         
@@ -44,7 +52,7 @@ fn main() {
             b = b + 1;
         }
         
-        println("Epoch {}: Avg Loss: {}", epoch, running_loss / (num_batches as f32));
+        println("Epoch {} (lr={}): Avg Loss: {}", epoch, lr, running_loss / (num_batches as f32));
         
         epoch = epoch + 1;
     }

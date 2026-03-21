@@ -9,7 +9,7 @@ fn main() {
     let test_y = load_mnist_labels("data/t10k-labels-idx1-ubyte");
     
     // Initialize model structure (must match training)
-    let model = MLP::new(784, 128, 10);
+    let model = MLP::new(784, 256, 10);
     
     print("Loading weights...");
     Param::load(model, "mnist_weights.safetensors");

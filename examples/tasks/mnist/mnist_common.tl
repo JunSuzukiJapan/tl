@@ -7,8 +7,9 @@ struct Linear {
 
 impl Linear {
     fn new(i: i64, o: i64) -> Linear {
-        // Xavier initialization
-        let w = (Tensor::randn([i, o], true) * 0.05).detach(true);
+        // He initialization: sqrt(2/fan_in) — optimal for ReLU
+        let scale = (2.0 / (i as f32)).sqrt();
+        let w = (Tensor::randn([i, o], true) * scale).detach(true);
         let b = Tensor::zeros([o], true).detach(true);
         Linear(w, b)
     }
