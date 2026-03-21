@@ -132,12 +132,12 @@ fn test_index_select() {
 #[test]
 #[serial]
 fn test_cross_entropy() {
-    // softmax 後の prediction と target
-    let pred = MetalTensor::from_slice(&[0.7f32, 0.2, 0.1], &[3], DType::F32);
-    let target = MetalTensor::from_slice(&[1.0f32, 0.0, 0.0], &[3], DType::F32);
+    // target は integer class index です (DType::F32で保持しているが中身は整数)
+    let pred = MetalTensor::from_slice(&[0.7f32, 0.2, 0.1], &[1, 3], DType::F32);
+    let target = MetalTensor::from_slice(&[0.0f32], &[1], DType::F32);
     let loss = pred.cross_entropy_impl(&target).unwrap();
     assert_eq!(loss.shape(), &[1]);
-    // -1.0 * ln(0.7) ≈ 0.357
+    // -1.0 * ln(0.7) 周辺の何か (Softmax を再度かけるので値は少し変わります)
     let loss_val = loss.to_vec::<f32>()[0];
     assert!(loss_val > 0.0 && loss_val < 1.0, "loss = {}", loss_val);
 }

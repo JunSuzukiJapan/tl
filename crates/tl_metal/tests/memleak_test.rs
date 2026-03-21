@@ -57,7 +57,7 @@ fn test_tensor_refcount_balance() {
     ffi_ops::tl_metal_debug_reset_counters();
 
     for _ in 0..10 {
-        let mut board = MetalTensor::randn(&[8, 8], DType::F32);
+        let mut board = MetalTensor::randn(&[8, 8], DType::F32).unwrap();
         board.enable_grad();
         let board_ptr = ffi_ops::make_tensor(board);
 
@@ -116,7 +116,7 @@ fn test_rss_stability_under_repeated_ops() {
 
     // ウォームアップ: 最初の数回で Metal の初期化メモリを安定させる
     for _ in 0..5 {
-        let a = MetalTensor::randn(&[8, 8], DType::F32);
+        let a = MetalTensor::randn(&[8, 8], DType::F32).unwrap();
         let a_ptr = ffi_ops::make_tensor(a);
         let b_ptr = ffi_ops::tl_metal_softmax(a_ptr, 1);
         ffi_ops::release_if_live(b_ptr);
@@ -128,7 +128,7 @@ fn test_rss_stability_under_repeated_ops() {
 
     // 500 iteration のテンソル演算（N-Queens の forward pass を模倣）
     for _ in 0..500 {
-        let board = MetalTensor::randn(&[8, 8], DType::F32);
+        let board = MetalTensor::randn(&[8, 8], DType::F32).unwrap();
         let board_ptr = ffi_ops::make_tensor(board);
 
         let probs_ptr = ffi_ops::tl_metal_softmax(board_ptr, 1);

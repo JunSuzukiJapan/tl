@@ -32,7 +32,7 @@ fn test_tensor_creation() {
 #[serial]
 fn test_zeros_ones() {
     let zeros = MetalTensor::zeros(&[3, 3], DType::F32);
-    let ones = MetalTensor::ones(&[3, 3], DType::F32);
+    let ones = MetalTensor::ones(&[3, 3], DType::F32).unwrap();
     
     let z_data = zeros.to_vec::<f32>();
     let o_data = ones.to_vec::<f32>();
@@ -44,7 +44,7 @@ fn test_zeros_ones() {
 #[test]
 #[serial]
 fn test_randn() {
-    let t = MetalTensor::randn(&[100], DType::F32);
+    let t = MetalTensor::randn(&[100], DType::F32).unwrap();
     let data = t.to_vec::<f32>();
     
     let mean: f32 = data.iter().sum::<f32>() / data.len() as f32;
@@ -303,10 +303,10 @@ fn test_batch_norm() {
         &[1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0],
         &[1, 3, 2, 2], DType::F32
     );
-    let gamma = MetalTensor::ones(&[3], DType::F32);
+    let gamma = MetalTensor::ones(&[3], DType::F32).unwrap();
     let beta = MetalTensor::zeros(&[3], DType::F32);
     let mean = MetalTensor::from_slice(&[2.5f32, 6.5, 10.5], &[3], DType::F32);
-    let var = MetalTensor::ones(&[3], DType::F32);
+    let var = MetalTensor::ones(&[3], DType::F32).unwrap();
     
     let _ = input.batch_norm(&gamma, &beta, &mean, &var, 1e-5).unwrap();
 }

@@ -30,11 +30,11 @@ fn main() {
 
     // --- 生成関数 ---
     println!("\n--- ones ---");
-    let ones = MetalTensor::ones(&[2, 3], DType::F32);
+    let ones = MetalTensor::ones(&[2, 3], DType::F32).unwrap();
     println!("ones([2, 3]) = {:?}", ones.to_vec::<f32>());
 
     println!("\n--- randn ---");
-    let randn = MetalTensor::randn(&[2, 3], DType::F32);
+    let randn = MetalTensor::randn(&[2, 3], DType::F32).unwrap();
     println!("randn([2, 3]) = {:?}", randn.to_vec::<f32>());
 
     // --- softmax ---

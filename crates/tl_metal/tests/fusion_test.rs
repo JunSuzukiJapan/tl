@@ -23,7 +23,7 @@ fn test_fusion_add_relu() {
     let lb = LazyTensor::from_tensor(b.clone());
     let fused = la.add(&lb).relu();
     let result = fused.materialize();
-    let fused_data = result.to_vec::<f32>();
+    let fused_data = result.unwrap().to_vec::<f32>();
 
     // 非融合版
     let expected = a.add(&b).unwrap().relu_impl().unwrap();
@@ -44,7 +44,7 @@ fn test_fusion_silu_mul() {
     let lu = LazyTensor::from_tensor(up.clone());
     let fused = lg.silu().mul(&lu);
     let result = fused.materialize();
-    let fused_data = result.to_vec::<f32>();
+    let fused_data = result.unwrap().to_vec::<f32>();
 
     // 非融合版
     let silu_gate = gate.silu_impl().unwrap();
@@ -66,7 +66,7 @@ fn test_fusion_long_chain() {
     let lb = LazyTensor::from_tensor(b.clone());
     let fused = la.add(&lb).mul_scalar(2.0).relu().neg();
     let result = fused.materialize();
-    let fused_data = result.to_vec::<f32>();
+    let fused_data = result.unwrap().to_vec::<f32>();
 
     // 非融合版: neg(relu((a+b)*2))
     // a+b = [1.5, -1.5, 3.5, -3.5]
@@ -102,8 +102,8 @@ fn test_fusion_cache_hit() {
     assert_eq!(cache_before, cache_after, "Cache should hit for same pattern");
 
     // 結果も正しい
-    let data1 = r1.to_vec::<f32>();
-    let data2 = r2.to_vec::<f32>();
+    let data1 = r1.unwrap().to_vec::<f32>();
+    let data2 = r2.unwrap().to_vec::<f32>();
     assert_approx(&data1, &[4.0, 6.0], 1e-5, "cache1");
     assert_approx(&data2, &[40.0, 60.0], 1e-5, "cache2");
 }
@@ -119,7 +119,7 @@ fn test_fusion_large_tensor() {
     let lt = LazyTensor::from_tensor(t.clone());
     let fused = lt.relu().mul_scalar(3.0);
     let result = fused.materialize();
-    let fused_data = result.to_vec::<f32>();
+    let fused_data = result.unwrap().to_vec::<f32>();
 
     // 手動計算
     let expected: Vec<f32> = data.iter().map(|&x| x.max(0.0) * 3.0).collect();
@@ -133,6 +133,6 @@ fn test_fusion_leaf_only() {
     let t = MetalTensor::from_slice(&[1.0f32, 2.0, 3.0], &[3], DType::F32);
     let lt = LazyTensor::from_tensor(t);
     let result = lt.materialize();
-    let data = result.to_vec::<f32>();
+    let data = result.unwrap().to_vec::<f32>();
     assert_approx(&data, &[1.0, 2.0, 3.0], 1e-5, "leaf_only");
 }

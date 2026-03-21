@@ -691,7 +691,7 @@ fn test_conv2d_numerical() {
 #[test]
 #[serial]
 fn test_tril_positive_diagonal() {
-    let a = MetalTensor::ones(&[3, 3], DType::F32);
+    let a = MetalTensor::ones(&[3, 3], DType::F32).unwrap();
     let c = a.tril(1).unwrap();
     // diagonal=1: 主対角線 + 1つ上の対角線まで保持
     assert_tensor_approx_eq(&c, &[
@@ -704,7 +704,7 @@ fn test_tril_positive_diagonal() {
 #[test]
 #[serial]
 fn test_tril_negative_diagonal() {
-    let a = MetalTensor::ones(&[3, 3], DType::F32);
+    let a = MetalTensor::ones(&[3, 3], DType::F32).unwrap();
     let c = a.tril(-1).unwrap();
     // diagonal=-1: 主対角線の1つ下から保持
     assert_tensor_approx_eq(&c, &[

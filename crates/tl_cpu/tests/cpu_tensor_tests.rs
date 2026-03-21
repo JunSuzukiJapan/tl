@@ -12,36 +12,36 @@ fn assert_approx(a: &[f32], b: &[f32], eps: f32) {
     }
 }
 
-fn t(data: &[f32], shape: &[usize]) -> CpuTensor {
-    CpuTensor::from_slice(data, shape, DType::F32)
+fn t(data: &[f32], shape: &[usize]) -> CpuTensor<f32> {
+    CpuTensor::<f32>::from_slice(data, shape, DType::F32)
 }
 
 // ========== コンストラクタ ==========
 
 #[test]
 fn test_zeros() {
-    let z = CpuTensor::zeros(&[2, 3], DType::F32);
+    let z = CpuTensor::<f32>::zeros(&[2, 3], DType::F32);
     assert_eq!(z.shape(), &[2, 3]);
     assert_eq!(z.data_f32(), &[0.0; 6]);
 }
 
 #[test]
 fn test_ones() {
-    let o = CpuTensor::ones(&[3], DType::F32);
+    let o = CpuTensor::<f32>::ones(&[3], DType::F32);
     assert_eq!(o.shape(), &[3]);
     assert_eq!(o.data_f32(), &[1.0, 1.0, 1.0]);
 }
 
 #[test]
 fn test_from_slice() {
-    let t = CpuTensor::from_slice(&[1.0, 2.0, 3.0], &[3], DType::F32);
+    let t = CpuTensor::<f32>::from_slice(&[1.0, 2.0, 3.0], &[3], DType::F32);
     assert_eq!(t.shape(), &[3]);
     assert_eq!(t.data_f32(), &[1.0, 2.0, 3.0]);
 }
 
 #[test]
 fn test_from_slice_i64_data() {
-    let t = CpuTensor::from_slice_i64_data(&[10, 20, 30], &[3], DType::I64);
+    let t = CpuTensor::<f32>::from_slice_i64_data(&[10, 20, 30], &[3], DType::I64);
     assert_eq!(t.shape(), &[3]);
     assert_eq!(t.data_f32(), &[10.0, 20.0, 30.0]);
     let i64_vec: Vec<i64> = t.to_vec();
@@ -60,7 +60,7 @@ fn test_randn() {
 
 #[test]
 fn test_arange() {
-    let a = CpuTensor::arange(0, 5, DType::F32);
+    let a = CpuTensor::<f32>::arange(0, 5, DType::F32);
     assert_eq!(a.shape(), &[5]);
     assert_eq!(a.data_f32(), &[0.0, 1.0, 2.0, 3.0, 4.0]);
 }
@@ -69,7 +69,7 @@ fn test_arange() {
 
 #[test]
 fn test_accessors() {
-    let t = CpuTensor::from_slice(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], &[2, 3], DType::F32);
+    let t = CpuTensor::<f32>::from_slice(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], &[2, 3], DType::F32);
     assert_eq!(t.shape(), &[2, 3]);
     assert_eq!(t.dtype(), DType::F32);
     assert_eq!(t.elem_count(), 6);
@@ -419,7 +419,7 @@ fn test_contiguous() {
 fn test_cat() {
     let a = t(&[1.0, 2.0], &[2]);
     let b = t(&[3.0, 4.0, 5.0], &[3]);
-    let c = CpuTensor::cat_impl(&[&a, &b], 0).unwrap();
+    let c = CpuTensor::<f32>::cat_impl(&[&a, &b], 0).unwrap();
     assert_eq!(c.shape(), &[5]);
     assert_eq!(c.data_f32(), &[1.0, 2.0, 3.0, 4.0, 5.0]);
 }
@@ -428,7 +428,7 @@ fn test_cat() {
 fn test_cat_2d() {
     let a = t(&[1.0, 2.0, 3.0, 4.0], &[2, 2]);
     let b = t(&[5.0, 6.0, 7.0, 8.0], &[2, 2]);
-    let c = CpuTensor::cat_impl(&[&a, &b], 0).unwrap();
+    let c = CpuTensor::<f32>::cat_impl(&[&a, &b], 0).unwrap();
     assert_eq!(c.shape(), &[4, 2]);
     assert_eq!(c.data_f32(), &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]);
 }
@@ -518,7 +518,7 @@ fn test_where_cond() {
     let cond = t(&[1.0, 0.0, 1.0], &[3]);
     let x = t(&[10.0, 20.0, 30.0], &[3]);
     let y = t(&[100.0, 200.0, 300.0], &[3]);
-    let c = CpuTensor::where_cond_impl(&cond, &x, &y).unwrap();
+    let c = CpuTensor::<f32>::where_cond_impl(&cond, &x, &y).unwrap();
     assert_eq!(c.data_f32(), &[10.0, 200.0, 30.0]);
 }
 
@@ -920,20 +920,20 @@ mod trait_tests {
 
     #[test]
     fn test_trait_constructors() {
-        let z = <CpuTensor as GpuTensor>::zeros(&[2, 3], tl_backend::DType::F32).unwrap();
+        let z = <CpuTensor<f32> as GpuTensor>::zeros(&[2, 3], tl_backend::DType::F32).unwrap();
         assert_eq!(z.shape(), &[2, 3]);
 
-        let o = <CpuTensor as GpuTensor>::ones(&[3], tl_backend::DType::F32).unwrap();
+        let o = <CpuTensor<f32> as GpuTensor>::ones(&[3], tl_backend::DType::F32).unwrap();
         assert_eq!(o.to_vec_f32(), vec![1.0, 1.0, 1.0]);
 
-        let a = <CpuTensor as GpuTensor>::arange(0, 4, tl_backend::DType::F32).unwrap();
+        let a = <CpuTensor<f32> as GpuTensor>::arange(0, 4, tl_backend::DType::F32).unwrap();
         assert_eq!(a.to_vec_f32(), vec![0.0, 1.0, 2.0, 3.0]);
     }
 
     #[test]
     fn test_trait_ops() {
-        let a = CpuTensor::from_slice(&[1.0, 2.0, 3.0], &[3], DType::F32);
-        let b = CpuTensor::from_slice(&[4.0, 5.0, 6.0], &[3], DType::F32);
+        let a = CpuTensor::<f32>::from_slice(&[1.0, 2.0, 3.0], &[3], DType::F32);
+        let b = CpuTensor::<f32>::from_slice(&[4.0, 5.0, 6.0], &[3], DType::F32);
 
         let c = a.add(&b).unwrap();
         assert_eq!(c.to_vec_f32(), vec![5.0, 7.0, 9.0]);
@@ -944,7 +944,7 @@ mod trait_tests {
 
     #[test]
     fn test_trait_math() {
-        let a = CpuTensor::from_slice(&[4.0, 9.0], &[2], DType::F32);
+        let a = CpuTensor::<f32>::from_slice(&[4.0, 9.0], &[2], DType::F32);
         let s = a.sqrt().unwrap();
         let v = s.to_vec_f32();
         assert!((v[0] - 2.0).abs() < 1e-5);
@@ -956,7 +956,7 @@ mod trait_tests {
 
     #[test]
     fn test_trait_reshape() {
-        let a = CpuTensor::from_slice(&[1.0, 2.0, 3.0, 4.0], &[2, 2], DType::F32);
+        let a = CpuTensor::<f32>::from_slice(&[1.0, 2.0, 3.0, 4.0], &[2, 2], DType::F32);
         let b = a.reshape( &[4]).unwrap();
         assert_eq!(b.shape(), &[4]);
         assert_eq!(b.to_vec_f32(), vec![1.0, 2.0, 3.0, 4.0]);
@@ -964,7 +964,7 @@ mod trait_tests {
 
     #[test]
     fn test_trait_reduction() {
-        let a = CpuTensor::from_slice(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], &[2, 3], DType::F32);
+        let a = CpuTensor::<f32>::from_slice(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], &[2, 3], DType::F32);
         let s = a.sum(1).unwrap();
         assert_eq!(s.shape(), &[2]);
         let v = s.to_vec_f32();
