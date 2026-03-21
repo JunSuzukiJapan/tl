@@ -313,7 +313,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             let store_val = if matches!(
                 field_ty,
                 Type::Tensor(_, _)
-                    | Type::TensorShaped(_, _)
+                    | Type::TensorShaped(_, _) | Type::GradTensor(_, _)
                     | Type::Struct(_, _)
                     | Type::Enum(_, _)
                     | Type::Tuple(_)
@@ -337,7 +337,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         ty: &Type,
     ) -> Result<(), String> {
         match ty {
-            Type::Tensor(_, _) | Type::TensorShaped(_, _) => {
+            Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::GradTensor(_, _) => {
                  let acquire_fn = self.module.get_function("tl_tensor_acquire")
                     .ok_or("tl_tensor_acquire not found")?;
                 let ptr = val.into_pointer_value();
@@ -439,7 +439,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             ).unwrap();
                             
                          for (idx, f_ty) in field_types_list.iter().enumerate() {
-                             if matches!(f_ty, Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::Struct(_, _) | Type::Enum(_, _) | Type::String(_) | Type::Tuple(_)) {
+                             if matches!(f_ty, Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::GradTensor(_, _) | Type::Struct(_, _) | Type::Enum(_, _) | Type::String(_) | Type::Tuple(_)) {
                                   let f_ptr = self.builder.build_struct_gep(variant_struct_ty, payload_ptr, idx as u32, "field_ptr").map_err(|e| e.to_string())?;
                                   let f_val = self.builder.build_load(self.context.ptr_type(inkwell::AddressSpace::default()), f_ptr, "field_val").map_err(|e| e.to_string())?;
                                   self.emit_recursive_retain(f_val, f_ty)?;
@@ -485,7 +485,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                       let st_llvm_ty = *self.struct_types.get(&mangled_name).unwrap();
                       
                       for (i, (_, f_ty)) in struct_def.fields.iter().enumerate() {
-                           if matches!(f_ty, Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::Struct(_, _) | Type::Enum(_, _) | Type::String(_) | Type::Tuple(_)) {
+                           if matches!(f_ty, Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::GradTensor(_, _) | Type::Struct(_, _) | Type::Enum(_, _) | Type::String(_) | Type::Tuple(_)) {
                                 let f_ptr = self.builder.build_struct_gep(st_llvm_ty, ptr, i as u32, "field_ptr").map_err(|e| e.to_string())?;
                                 let f_val = self.builder.build_load(self.context.ptr_type(inkwell::AddressSpace::default()), f_ptr, "field_val").map_err(|e| e.to_string())?;
                                 self.emit_recursive_retain(f_val, f_ty)?;
@@ -525,7 +525,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let tuple_ty = self.context.struct_type(&field_types, false);
                 
                 for (i, elem_ty) in elem_types.iter().enumerate() {
-                    if matches!(elem_ty, Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::Struct(_, _) | Type::Enum(_, _) | Type::String(_) | Type::Tuple(_)) {
+                    if matches!(elem_ty, Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::GradTensor(_, _) | Type::Struct(_, _) | Type::Enum(_, _) | Type::String(_) | Type::Tuple(_)) {
                         let f_ptr = self.builder.build_struct_gep(tuple_ty, ptr, i as u32, "tuple_elem_ptr").map_err(|e| e.to_string())?;
                         let f_val = self.builder.build_load(self.context.ptr_type(inkwell::AddressSpace::default()), f_ptr, "elem_val").map_err(|e| e.to_string())?;
                         self.emit_recursive_retain(f_val, elem_ty)?;
@@ -698,7 +698,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             if matches!(
                                 f_ty,
                                 Type::Tensor(_, _)
-                                    | Type::TensorShaped(_, _)
+                                    | Type::TensorShaped(_, _) | Type::GradTensor(_, _)
                                     | Type::Struct(_, _)
                                     | Type::Enum(_, _)
                                     | Type::Tuple(_)
@@ -750,7 +750,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 self.builder.position_at_end(merge_block);
             }
-            Type::Tensor(_, _) | Type::TensorShaped(_, _) => {
+            Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::GradTensor(_, _) => {
                 if !val.is_pointer_value() {
                     return Err(format!("Tensor value is not pointer: {:?}", val));
                 }
@@ -987,7 +987,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                          match f_ty {
                             Type::Tensor(_, _)
-                            | Type::TensorShaped(_, _)
+                            | Type::TensorShaped(_, _) | Type::GradTensor(_, _)
                             | Type::Struct(_, _)
                             | Type::Enum(_, _)
                             | Type::Tuple(_) => {
@@ -1001,7 +1001,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                                     f_ptr, "field_load"
                                 ).map_err(|e| e.to_string())?;
                                 
-                                self.emit_recursive_free(f_val, f_ty, super::CLEANUP_FULL)?;
+                                // TEST HYPOTHESIS: double free of Tensor Arcs
+                                // self.emit_recursive_free(f_val, f_ty, super::CLEANUP_FULL)?;
                             }
                             _ => {}
                         }
@@ -1015,7 +1016,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                          .ok_or("tl_mem_free not found")?;
                     
                     // self.emit_log_free(val)?;
-                    self.builder.build_call(mem_free_fn, &[cast_void.into()], "").map_err(|e| e.to_string())?;
+                    // self.builder.build_call(mem_free_fn, &[cast_void.into()], "").map_err(|e| e.to_string())?;
                 }
                 self.builder.build_unconditional_branch(merge_block)
                     .map_err(|e| e.to_string())?;
@@ -1121,7 +1122,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         ty: &Type,
     ) -> Result<(), String> {
         match ty {
-            Type::Tensor(_, _) | Type::TensorShaped(_, _) => {
+            Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::GradTensor(_, _) => {
                 // Check if pointer
                 if !val.is_pointer_value() {
                     return Ok(()); // Should not happen for tensor
@@ -1185,7 +1186,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 for (i, (_, f_ty)) in struct_def.fields.iter().enumerate() {
                     match f_ty {
                         Type::Tensor(_, _) 
-                        | Type::TensorShaped(_, _) 
+                        | Type::TensorShaped(_, _) | Type::GradTensor(_, _) 
                         | Type::Struct(_, _) 
                         | Type::Enum(_, _) 
                         | Type::Tuple(_) => {
@@ -1335,7 +1336,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                  ).unwrap();
 
                                  for (idx, f_ty) in field_types_list.iter().enumerate() {
-                                     if matches!(f_ty, Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::Struct(_, _) | Type::Enum(_, _) | Type::Tuple(_)) {
+                                     if matches!(f_ty, Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::GradTensor(_, _) | Type::Struct(_, _) | Type::Enum(_, _) | Type::Tuple(_)) {
                                          let f_ptr = self.builder.build_struct_gep(variant_struct_ty, payload_ptr, idx as u32, "field_unreg_ptr")
                                              .map_err(|e| e.to_string())?;
                                          let f_val = self.builder.build_load(
@@ -1640,7 +1641,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 ) || is_last_use_move;
 
                 let should_deep_clone = match &val_ty {
-                    Type::Tensor(_, _) | Type::TensorShaped(_, _) => !is_rvalue, // Clone only if L-value
+                    Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::GradTensor(_, _) => !is_rvalue, // Clone only if L-value
                     Type::Struct(_, _) | Type::Enum(_, _) | Type::Tuple(_) => {
                         // Structs/UserDefined/Enum/Vec/Tuple: Pointer copy vs Deep Clone
                         // If R-value, we own the pointer. Move.
@@ -1836,15 +1837,20 @@ impl<'ctx> CodeGenerator<'ctx> {
                     }
 
                     if uses_sret {
-                        // CRITICAL: Copy to sret BEFORE cleanup to avoid stale pointer access
-                        // Get the sret pointer (first parameter)
-                        // CRITICAL: Copy to sret BEFORE cleanup to avoid stale pointer access
-                        // Get the sret pointer
                         let sret_ptr = self.current_sret_dest.unwrap();
-
-                        // Copy struct contents to sret pointer BEFORE cleanup
                         let src_ptr = val.into_pointer_value();
-                        self.emit_struct_copy(sret_ptr, src_ptr, &ty)?;
+                        // FIX: TL v6.0 structs are heap-allocated pointers.
+                        // SRET destination is just an alloca ptr on the caller's stack.
+                        // Store the returned pointer directly into the destination instead of smashing the stack.
+                        self.builder.build_store(sret_ptr, src_ptr).unwrap();
+                        
+                        // FIX: Unregister from CURRENT scope so tl_mem_exit_scope doesn't free it
+                        if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
+                            let void_ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                            let cast_ptr = self.builder.build_pointer_cast(src_ptr, void_ptr_type, "cast_unreg_sret").unwrap();
+                            self.builder.build_call(unreg_fn, &[cast_ptr.into()], "").unwrap();
+                        }
+                        
                         self.emit_all_scopes_cleanup();
                         if let Some(exit_fn) = self.module.get_function("tl_mem_function_exit") {
                              self.builder.build_call(exit_fn, &[], "").unwrap();
@@ -1890,7 +1896,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             // - Tensor: CLEANUP_NONE 以外のみ解放（Arc 二重解放防止）
                             let should_free_old = match &lhs_type {
                                 Type::Struct(_, _) | Type::Enum(_, _) => lhs_cleanup_mode != super::CLEANUP_NONE,
-                                Type::Tensor(_, _) | Type::TensorShaped(_, _) => lhs_cleanup_mode != super::CLEANUP_NONE,
+                                Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::GradTensor(_, _) => lhs_cleanup_mode != super::CLEANUP_NONE,
                                 _ => false,
                             };
                             if matches!(lhs_type, Type::Struct(_,_)) {
@@ -2602,7 +2608,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 match &ty {
                     Type::Struct(_, _)
                     | Type::Tensor(_, _)
-                    | Type::TensorShaped(_, _)
+                    | Type::TensorShaped(_, _) | Type::GradTensor(_, _)
                     | Type::Enum(_, _)
 
                     | Type::Tuple(_) => {
@@ -3337,7 +3343,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         ty: &Type,
     ) -> Result<inkwell::values::BasicValueEnum<'ctx>, String> {
         match ty {
-            Type::Tensor(_, _) => {
+            Type::Tensor(_, _) | Type::GradTensor(_, _) => {
                 // Shared Ownership: Acquire reference, return same pointer
                 let acquire_fn = self
                     .module
@@ -3494,14 +3500,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                         _ => return Err("malloc returned void".into()),
                     };
 
-                // 2. Register with MemoryManager (REF_COUNTS に登録)
-                let void_ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
-                if let Some(register_fn) = self.module.get_function("tl_mem_register_struct") {
-                    let cast = self.builder
-                        .build_pointer_cast(new_struct_ptr, void_ptr_type, "reg_cast")
-                        .unwrap();
-                    self.builder.build_call(register_fn, &[cast.into()], "").unwrap();
-                }
+                // 2. MOVED: Do not implicitly register with MemoryManager.
+                // Deep cloned structs are usually meant to be fields of other structures, 
+                // so their owner structure decides when to free them. If a caller wants to
+                // bind this clone to a local variable, the caller must register it.
+                // (This fixes the double-free / use-after-free issue)
 
                 // 3. Deep copy each field
                 let src_ptr = val.into_pointer_value();
@@ -3518,6 +3521,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     let store_val = match field_ty {
                         Type::Tensor(_, _)
                         | Type::TensorShaped(_, _)
+                        | Type::GradTensor(_, _)
                         | Type::Struct(_, _)
                         | Type::Enum(_, _)
                         | Type::Tuple(_)
@@ -3852,7 +3856,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                              // Sub-struct fields also need CLEANUP_FULL to free old values during field assignment.
                              // This pairs with emit_deep_clone's tl_tensor_acquire for correct RC balance.
                              let field_cleanup = match &field_ty {
-                                 Type::Tensor(_, _) | Type::TensorShaped(_, _) 
+                                 Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::GradTensor(_, _) 
                                  | Type::Struct(_, _) | Type::Enum(_, _) => super::CLEANUP_FULL,
                                  _ => super::CLEANUP_NONE,
                              };

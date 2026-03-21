@@ -33,7 +33,7 @@ fn main() {
     
     // Test 3: grad から detach へ
     let gW2 = model.W.grad();
-    let dW2 = model.W.detach();
+    let dW2 = model.W.detach(true);
     let result = dW2 - gW2;
     println("dW - gW:");
     result.print();

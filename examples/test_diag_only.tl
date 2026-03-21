@@ -58,7 +58,7 @@ fn main() {
         board = board - scaled_g; 
         println("update done.");
         
-        board = board.detach();
+        board = board.detach(false);
         println("detach done.");
         
         board.enable_grad();

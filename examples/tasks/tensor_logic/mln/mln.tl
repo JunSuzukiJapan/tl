@@ -100,8 +100,8 @@ fn main() {
         cancer_logits = cancer_logits - g_c * lr;
 
         // Detach and enable grad for next iteration
-        smokes_logits = smokes_logits.detach();
-        cancer_logits = cancer_logits.detach();
+        smokes_logits = smokes_logits.detach(true);
+        cancer_logits = cancer_logits.detach(true);
         smokes_logits.enable_grad();
         cancer_logits.enable_grad();
     }

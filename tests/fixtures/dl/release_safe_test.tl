@@ -20,7 +20,7 @@ fn main() {
         x = x - step;
         println("After sub: x = {}", x);
         
-        x = x.detach();
+        x = x.detach(false);
         println("After detach: x = {}", x);
         
         x.enable_grad();

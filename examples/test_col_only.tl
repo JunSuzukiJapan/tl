@@ -16,7 +16,7 @@ fn main() {
         col_loss.backward();
         let g = board.grad();
         board = board - g * lr;
-        board = board.detach();
+        board = board.detach(false);
         board.enable_grad();
     }
     

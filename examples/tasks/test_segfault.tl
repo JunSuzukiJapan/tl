@@ -3,22 +3,22 @@
 struct Linear { W: Tensor<f32, 2>, b: Tensor<f32, 1> }
 impl Linear { 
     fn new(i: i64, o: i64) -> Linear { 
-        Linear((Tensor::randn([i, o], true)*0.1).detach(), (Tensor::randn([o], true)*0.0).detach()) 
+        Linear((Tensor::randn([i, o], true)*0.1).detach(true), (Tensor::randn([o], true)*0.0).detach(true)) 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { x.matmul(self.W) + self.b } 
     fn step(self, lr: f32) -> Linear { 
         let mut s = self; 
         let gW = s.W.grad(); let gb = s.b.grad(); 
-        s.W = (s.W - gW * lr).detach(); s.b = (s.b - gb * lr).detach(); s 
+        s.W = (s.W - gW * lr).detach(true); s.b = (s.b - gb * lr).detach(true); s 
     } 
 }
 
 struct LayerNorm { b: Tensor<f32, 1> }
 impl LayerNorm { 
-    fn new(d: i64) -> LayerNorm { LayerNorm((Tensor::randn([d], true)*0.0).detach()) } 
+    fn new(d: i64) -> LayerNorm { LayerNorm((Tensor::randn([d], true)*0.0).detach(true)) } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { x + self.b } 
     fn step(self, lr: f32) -> LayerNorm { 
-        let mut s = self; let gb = s.b.grad(); s.b = (s.b - gb * lr).detach(); s 
+        let mut s = self; let gb = s.b.grad(); s.b = (s.b - gb * lr).detach(true); s 
     } 
 }
 

@@ -3,7 +3,7 @@ struct S { t: Tensor<f32, 1> }
 
 impl S {
     fn new() -> S {
-        let t = (Tensor::randn([5], true) * 0.0 + 1.0).detach();
+        let t = (Tensor::randn([5], true) * 0.0 + 1.0).detach(true);
         S { t: t }
     }
 }

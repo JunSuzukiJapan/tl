@@ -147,7 +147,6 @@ pub fn register_tensor_types(manager: &mut TypeManager) {
 
     // Other instance methods (no overloads)
     tensor.register_evaluated_instance_method("detach", compile_tensor_detach, vec![Type::Bool], any_tensor.clone());
-    tensor.register_evaluated_instance_method("detach", compile_tensor_detach, vec![], any_tensor.clone());
     tensor.register_evaluated_instance_method("tril", compile_tensor_tril, vec![Type::I64], any_tensor.clone());
     tensor.register_evaluated_instance_method("contiguous", compile_tensor_contiguous, vec![], any_tensor.clone());
 

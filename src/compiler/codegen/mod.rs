@@ -1398,7 +1398,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                                     // SRET Handling for Implicit Returns
                                     if let Some(sret_ptr) = self.current_sret_dest {
                                          let src_ptr = val.into_pointer_value();
-                                         self.emit_struct_copy(sret_ptr, src_ptr, &ty)?;
+                                         self.builder.build_store(sret_ptr, src_ptr).unwrap();
+
+                                         if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
+                                             let void_ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                                             let cast_ptr = self.builder.build_pointer_cast(src_ptr, void_ptr_type, "cast_unreg_sret").unwrap();
+                                             self.builder.build_call(unreg_fn, &[cast_ptr.into()], "").unwrap();
+                                         }
                                          
                                          // DISABLED: SRET source free — exit_scope に解放を任せる。
                                          // sub-struct CLEANUP_FULL + promote で field/variable レベルの解放を行い、
@@ -1604,6 +1610,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
 
         self.apply_optimizations();
+        self.module.print_to_file("dump.ll").ok();
         Ok(())
     }
 
@@ -1867,10 +1874,16 @@ impl<'ctx> CodeGenerator<'ctx> {
                          // SRET Logic
                          if let Some(dest) = self.current_sret_dest {
                              let src_ptr = val.into_pointer_value();
-                             self.emit_struct_copy(dest, src_ptr, &ty)?;
-                             // FIX: SRET copy 後に source struct を明示的に解放。
-                             // メソッド版の同修正と同じ理由。
-                             self.emit_recursive_free(src_ptr.into(), &ty, CLEANUP_FULL)?;
+                             self.builder.build_store(dest, src_ptr).unwrap();
+                             
+                             if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
+                                 let void_ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                                 let cast_ptr = self.builder.build_pointer_cast(src_ptr, void_ptr_type, "cast_unreg_sret").unwrap();
+                                 self.builder.build_call(unreg_fn, &[cast_ptr.into()], "").unwrap();
+                             }
+                             // FIXME: Now that we just store the pointer, we must NOT free the source struct
+                             // because the caller now owns that heap-allocated struct pointer!
+                             // self.emit_recursive_free(src_ptr.into(), &ty, CLEANUP_FULL)?;
                          }
                          // FIX: main 関数のクリーンアップ SIGBUS 回避
                          if func.name == "main" {

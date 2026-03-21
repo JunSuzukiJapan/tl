@@ -108,7 +108,7 @@ fn main() {
         // Update board (gradient descent)
         // Use assignment to update outer variable 'board', not let (shadowing)
         board = board - (g * lr);
-        board = board.detach();
+        board = board.detach(false);
         board.enable_grad();
     }
     

@@ -55,7 +55,7 @@ fn main() {
         current = next_s.clamp(0.0, 1.0); 
         t = t + 1;
     }
-    let target_final = current.detach(); // S_T
+    let target_final = current.detach(true); // S_T
     print("Target Final State (T=5):\n");
     // target_final.reshape([N, N]).print();
 
@@ -100,7 +100,7 @@ fn main() {
         
         let g = learnable_logits.grad();
         learnable_logits = learnable_logits - g * opt_lr;
-        learnable_logits = learnable_logits.detach();
+        learnable_logits = learnable_logits.detach(true);
         learnable_logits.enable_grad();
         
         iter = iter + 1;

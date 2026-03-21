@@ -7,6 +7,14 @@ use crate::compiler::ast::Type;
 use tl_runtime as runtime;
 use tl_cpu::ffi as cpu_ffi;
 
+unsafe extern "C" {
+    fn malloc(size: usize) -> *mut std::ffi::c_void;
+    fn calloc(count: usize, size: usize) -> *mut std::ffi::c_void;
+    fn realloc(ptr: *mut std::ffi::c_void, size: usize) -> *mut std::ffi::c_void;
+    fn free(ptr: *mut std::ffi::c_void);
+    fn abort();
+}
+
 pub fn declare_runtime_functions<'ctx>(
     context: &'ctx Context,
     module: &InkwellModule<'ctx>,
@@ -521,6 +529,23 @@ pub fn declare_runtime_functions<'ctx>(
         false,
     );
     add_fn("tl_tensor_get_f32_md", get_md_type);
+
+    // [LIBC] Explicit mapping for JIT engine to resolve memory functions
+    if let Some(f) = module.get_function("malloc") {
+        execution_engine.add_global_mapping(&f, malloc as *const () as usize);
+    }
+    if let Some(f) = module.get_function("calloc") {
+        execution_engine.add_global_mapping(&f, calloc as *const () as usize);
+    }
+    if let Some(f) = module.get_function("realloc") {
+        execution_engine.add_global_mapping(&f, realloc as *const () as usize);
+    }
+    if let Some(f) = module.get_function("free") {
+        execution_engine.add_global_mapping(&f, free as *const () as usize);
+    }
+    if let Some(f) = module.get_function("abort") {
+        execution_engine.add_global_mapping(&f, abort as *const () as usize);
+    }
 
     // [IDevice] tl_clear_grads → device_ffi
     if let Some(f) = module.get_function("tl_clear_grads") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_clear_grads as *const () as usize); }

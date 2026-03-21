@@ -37,7 +37,7 @@ fn main() {
          
          let g = board.grad();
          board = board - g * lr;
-         let board_detached = board.detach();
+         let board_detached = board.detach(true);
          board = board_detached;
          board.enable_grad();
     }

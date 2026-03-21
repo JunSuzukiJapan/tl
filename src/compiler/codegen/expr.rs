@@ -2539,7 +2539,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     let ret_ptr = ret_val.into_pointer_value();
                     // Avoid self-copy if EnumInit already wrote to sret
                     if ret_ptr != sret {
-                        self.emit_struct_copy(sret, ret_ptr, &ret_ty_compiled)?;
+                        self.builder.build_store(sret, ret_ptr).unwrap();
                     }
                     self.emit_all_scopes_cleanup();
                     if let Some(exit_fn) = self.module.get_function("tl_mem_function_exit") {
@@ -4794,60 +4794,16 @@ impl<'ctx> CodeGenerator<'ctx> {
         let mut sret_ptr = None;
 
         if uses_sret {
-             // OLD: Stack Allocation (alloca) -> Causes Free of Stack Pointer crash
-             // NEW: Heap Allocation (malloc + register) -> Correct for RefCounted Structs
+             // NEW: Allocate Temp Buffer on Stack (DPS) to match C ABI
+             let current_block = self.builder.get_insert_block().unwrap();
+             let current_func = current_block.get_parent().unwrap();
+             let alloca = self.create_entry_block_alloca(current_func, "sret_temp_static", &ret_ty)?;
              
-             // 1. Get Struct Type and Size from CodeGen struct_types map
-             let (struct_name, generics) = match &ret_ty {
-                 Type::Struct(n, g) => (n, g),
-                 _ => return Err("SRET used on non-struct type".into()),
-             };
-             
-             let mangled_name = if generics.is_empty() {
-                 struct_name.to_string()
-             } else {
-                 self.mangle_type_name(struct_name, generics)
-             };
-             
-             // Simple name lookup (as done in compile_struct_init)
-             let simple_lookup_name = mangled_name.clone();
-
-             // Try to get existing type, or monomorphize on-demand
-             let struct_type = if let Some(st) = self.struct_types.get(&simple_lookup_name)
-                 .or_else(|| self.enum_types.get(&simple_lookup_name)) {
-                 *st
-             } else {
-                 // Try on-demand monomorphization (handles both struct and enum generics)
-                 let _ = self.get_or_monomorphize_type(&ret_ty)?;
-                 *self.struct_types.get(&simple_lookup_name)
-                     .or_else(|| self.enum_types.get(&simple_lookup_name))
-                     .ok_or_else(|| format!("Struct type {} not found for SRET allocation", simple_lookup_name))?
-             };
-             
-             let size = struct_type.size_of().ok_or("Cannot determine size for SRET struct")?;
-             
-             // 2. Malloc
-             let malloc_fn = self.module.get_function("malloc").ok_or("malloc not found")?;
-             let size_i64 = self.builder.build_int_z_extend(size, self.context.i64_type(), "size_i64").unwrap();
-             let call_malloc = self.builder.build_call(malloc_fn, &[size_i64.into()], "sret_malloc").map_err(|e| e.to_string())?;
-             
-             let raw_ptr = match call_malloc.try_as_basic_value() {
-                 inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
-                 _ => return Err("malloc returned void".into()),
-             };
-             
-             // 3. Register (Initialize RefCount=1, Header)
-             // Use generic name or strict name?
-             let struct_name_str = match &ret_ty {
-                 Type::Struct(n, _) => n.as_str(),
-                 _ => "AnonymousStruct",
-             };
-             let name_global = self.builder.build_global_string_ptr(struct_name_str, "struct_name").unwrap();
-             let register_fn = self.module.get_function("tl_mem_register_struct_named").ok_or("tl_mem_register_struct_named not found")?;
-             
-             let cast_ptr = self.builder.build_pointer_cast(raw_ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "cast_ptr").unwrap();
-             let _ = self.builder.build_call(register_fn, &[cast_ptr.into(), name_global.as_pointer_value().into()], "");
-
+             let cast_ptr = self.builder.build_pointer_cast(
+                 alloca,
+                 self.context.ptr_type(inkwell::AddressSpace::default()),
+                 "cast_sret_ptr",
+             ).unwrap();
              sret_ptr = Some(cast_ptr);
         }
 
@@ -4887,9 +4843,9 @@ impl<'ctx> CodeGenerator<'ctx> {
             .map_err(|e| e.to_string())?;
 
         if let Some(ptr) = sret_ptr {
-             // Return SRET pointer. The "Value" of a struct token is the pointer to its memory.
-             // Loading it would unbox the content (e.g. the handle) which is wrong.
-             Ok((ptr.into(), ret_ty))
+             let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+             let loaded = self.builder.build_load(ptr_ty, ptr, "sret_static_loaded").unwrap();
+             Ok((loaded, ret_ty))
         } else {
              match call.try_as_basic_value() {
                  inkwell::values::ValueKind::Basic(_) => {
@@ -6684,8 +6640,9 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Return handling
         // Return handling
         if let Some(ptr) = sret_ptr {
-            // Return SRET pointer as value
-             Ok((ptr.into(), ret_ty))
+             let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+             let loaded = self.builder.build_load(ptr_ty, ptr, "sret_method_loaded").unwrap();
+             Ok((loaded, ret_ty))
         } else {
             match call.try_as_basic_value() {
                 inkwell::values::ValueKind::Basic(_) => {
@@ -8474,7 +8431,9 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
 
         if let Some(d) = dest_val {
-             return Ok((d, ret_type));
+             let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+             let loaded = self.builder.build_load(ptr_ty, d.into_pointer_value(), "sret_loaded").unwrap();
+             return Ok((loaded, ret_type));
         }
 
         let res = match call.try_as_basic_value() {

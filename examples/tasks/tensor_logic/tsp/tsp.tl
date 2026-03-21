@@ -63,7 +63,7 @@ fn main() {
         
         let g = logits.grad();
         logits = logits - g * 0.1; 
-        let logits_detached = logits.detach();
+        let logits_detached = logits.detach(true);
         logits = logits_detached;
         logits.enable_grad();
         

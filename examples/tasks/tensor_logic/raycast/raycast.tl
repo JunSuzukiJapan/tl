@@ -157,7 +157,7 @@ fn main() {
         let g = learnable_scene.grad();
         // Simple SGD
         learnable_scene = learnable_scene - g * 0.01;
-        learnable_scene = learnable_scene.detach();
+        learnable_scene = learnable_scene.detach(true);
         learnable_scene.enable_grad(); // Re-enable for next iter
         
         iter = iter + 1;

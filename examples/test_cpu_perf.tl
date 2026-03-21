@@ -23,7 +23,7 @@ fn main() {
         board = board - g * lr;
         println("  update done");
         
-        board = board.detach();
+        board = board.detach(false);
         println("  detach done");
         
         board.enable_grad();

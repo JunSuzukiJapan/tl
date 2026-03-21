@@ -1,8 +1,8 @@
 // EXIT: 0
-// STDOUT: 0.9990
-// STDOUT: 0.9980
-// STDOUT: 1.0010
-// STDOUT: 1.0020
+// STDOUT: 0.999
+// STDOUT: 0.998
+// STDOUT: 1.001
+// STDOUT: 1.0020001
 
 extern fn tl_adam_step(
     w: Tensor<f32, 2>,

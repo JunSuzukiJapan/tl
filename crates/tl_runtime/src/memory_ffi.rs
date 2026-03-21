@@ -45,7 +45,7 @@ pub extern "C" fn tl_get_refcount_count() -> i64 {
 /// @ffi_sig () -> void
 /// 関数スコープ開始（デバイス非依存）
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_mem_function_enter() {
+pub extern "C" fn tl_mem_function_enter(_num_slots: i64) {
     tl_mem_enter_scope();
 }
 

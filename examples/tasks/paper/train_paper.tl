@@ -3,7 +3,7 @@ struct Linear { W: Tensor<f32, 2>, b: Tensor<f32, 1> }
 impl Linear { 
     fn new(i: i64, o: i64) -> Linear { 
         // 0.1
-        return Linear((Tensor::randn([i, o], true)*0.1).detach(), (Tensor::randn([o], true)*0.0).detach()); 
+        return Linear((Tensor::randn([i, o], true)*0.1).detach(true), (Tensor::randn([o], true)*0.0).detach(true)); 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
         x.matmul(self.W) + self.b 
@@ -12,8 +12,8 @@ impl Linear {
         let mut s = self; 
         let gW = s.W.grad(); 
         let gb = s.b.grad(); 
-        s.W = (s.W - gW * lr).detach(); 
-        s.b = (s.b - gb * lr).detach(); 
+        s.W = (s.W - gW * lr).detach(true); 
+        s.b = (s.b - gb * lr).detach(true); 
         s 
     } 
 }
@@ -21,7 +21,7 @@ impl Linear {
 struct Embedding { w: Tensor<f32, 2> }
 impl Embedding { 
     fn new(v: i64, d: i64) -> Embedding { 
-        Embedding((Tensor::randn([v, d], true)*0.1).detach()) 
+        Embedding((Tensor::randn([v, d], true)*0.1).detach(true)) 
     } 
     fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> { 
         i.embedding(self.w) 
@@ -29,7 +29,7 @@ impl Embedding {
     fn step(self, lr: f32) -> Embedding { 
         let mut s = self; 
         let g = s.w.grad(); 
-        s.w = (s.w - g * lr).detach(); 
+        s.w = (s.w - g * lr).detach(true); 
         s 
     } 
 }
@@ -37,7 +37,7 @@ impl Embedding {
 struct LayerNorm { w: Tensor<f32, 1>, b: Tensor<f32, 1> }
 impl LayerNorm { 
     fn new(d: i64) -> LayerNorm { 
-        LayerNorm((Tensor::randn([d], true)*0.0+1.0).detach(), (Tensor::randn([d], true)*0.0).detach()) 
+        LayerNorm((Tensor::randn([d], true)*0.0+1.0).detach(true), (Tensor::randn([d], true)*0.0).detach(true)) 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
         x + self.b 
@@ -45,7 +45,7 @@ impl LayerNorm {
     fn step(self, lr: f32) -> LayerNorm { 
         let mut s = self; 
         let gb = s.b.grad(); 
-        s.b = (s.b - gb * lr).detach(); 
+        s.b = (s.b - gb * lr).detach(true); 
         s 
     } 
 }
@@ -113,13 +113,14 @@ impl Block {
     } 
 }
 
-// 1-Layer GPT
-struct GPT2 { w: Embedding, wp: Embedding, b1: Block, l: LayerNorm, h: Linear }
+// 2-Layer GPT
+struct GPT2 { w: Embedding, wp: Embedding, b1: Block, b2: Block, l: LayerNorm, h: Linear }
 impl GPT2 { 
     fn new(v: i64, d: i64) -> GPT2 { 
         GPT2(
             Embedding::new(v, d), 
             Embedding::new(12, d), 
+            Block::new(d), 
             Block::new(d), 
             LayerNorm::new(d), 
             Linear::new(d, v)
@@ -132,6 +133,7 @@ impl GPT2 {
         let pos_emb = self.wp.forward(pos);
         let x = tok_emb + pos_emb;
         let x = self.b1.forward(x);
+        let x = self.b2.forward(x);
         self.h.forward(self.l.forward(x)) 
     } 
     fn step(self, lr: f32) -> GPT2 { 
@@ -139,6 +141,7 @@ impl GPT2 {
         s.w = s.w.step(lr); 
         s.wp = s.wp.step(lr); 
         s.b1 = s.b1.step(lr); 
+        s.b2 = s.b2.step(lr); 
         s.l = s.l.step(lr); 
         s.h = s.h.step(lr); 
         s 
@@ -188,10 +191,12 @@ fn train_step(model: GPT2, lr: f32, i: i64, j: i64) -> GPT2 {
     let loss = logits_flat.cross_entropy(Y_flat);
     
     loss.backward();
-    model.step(lr)
+    let updated_model = model.step(lr);
+    // Tensor::clear_grads();
+    updated_model
 }
 
-fn train_epoch(model: GPT2, lr: f32, epoch: i64) -> GPT2 {
+fn train_epoch(model: GPT2, lr: f32, epoch: i64) {
     let total_steps = 10;
     let stride = 137;
     let offset = epoch * 79; 
@@ -205,13 +210,12 @@ fn train_epoch(model: GPT2, lr: f32, epoch: i64) -> GPT2 {
     }
     
     print("Epoch:"); print(epoch);
-    model
 }
 
 fn main() {
     // 論文に合わせたパラメータ
     let vocab_size = 13;
-    let d_model = 64;  
+    let d_model = 256;  
     
     let mut model = GPT2::new(vocab_size, d_model);
     
@@ -226,11 +230,13 @@ fn main() {
     print("Paper-based Training: 1-layer GPT, d_model=64, lr=0.001");
 
     for epoch in range(0, epochs) {
-        model = train_epoch(model, lr, epoch);
-        if epoch - ((epoch / 5) * 5) == 4 {
-            Param::save(model, "model_paper.safetensors");
-            print("Saved checkpoint.");
-        }
+        train_epoch(model, lr, epoch);
+        print("returned");
+        // if epoch - ((epoch / 5) * 5) == 4 {
+        //     Param::save(model, "model_paper.safetensors");
+        //     print("Saved checkpoint.");
+        // }
+        print("EndOfLoop:"); print(epoch);
     }
     print("Training Complete!");
     Param::save(model, "model_paper.safetensors");

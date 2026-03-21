@@ -93,7 +93,7 @@ fn main() {
         let g = val.grad();
         val = val - g * lr;
 
-        val = val.detach();
+        val = val.detach(true);
         val.enable_grad();
 
 

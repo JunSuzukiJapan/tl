@@ -7,19 +7,19 @@ impl Linear {
         print(i);
         print(o);
         // Split init to safe-guard against temp drops
-        let w = (Tensor::randn([i, o], true) * 0.1).detach();
-        let b = (Tensor::randn([o], true) * 0.0).detach();
+        let w = (Tensor::randn([i, o], true) * 0.1).detach(true);
+        let b = (Tensor::randn([o], true) * 0.0).detach(true);
         Linear(w, b)
     }
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { x.matmul(self.W) + self.b }
-    fn step(self, lr: f32) -> Linear { let mut s = self; let gW = s.W.grad(); let gb = s.b.grad(); s.W = (s.W - gW * lr).detach(); s.b = (s.b - gb * lr).detach(); s }
+    fn step(self, lr: f32) -> Linear { let mut s = self; let gW = s.W.grad(); let gb = s.b.grad(); s.W = (s.W - gW * lr).detach(true); s.b = (s.b - gb * lr).detach(true); s }
 }
 
 struct Embedding { w: Tensor<f32, 2> }
-impl Embedding { fn new(v: i64, d: i64) -> Embedding { print("Embedding::new"); let w = (Tensor::randn([v, d], true)*0.1).detach(); Embedding(w) } fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> { i.embedding(self.w) } fn step(self, lr: f32) -> Embedding { let mut s = self; let g = s.w.grad(); s.w = (s.w - g * lr).detach(); s } }
+impl Embedding { fn new(v: i64, d: i64) -> Embedding { print("Embedding::new"); let w = (Tensor::randn([v, d], true)*0.1).detach(true); Embedding(w) } fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> { i.embedding(self.w) } fn step(self, lr: f32) -> Embedding { let mut s = self; let g = s.w.grad(); s.w = (s.w - g * lr).detach(true); s } }
 
 struct LayerNorm { w: Tensor<f32, 1>, b: Tensor<f32, 1> }
-impl LayerNorm { fn new(d: i64) -> LayerNorm { print("LayerNorm::new"); let w = (Tensor::randn([d], true)*0.0+1.0).detach(); let b = (Tensor::randn([d], true)*0.0).detach(); LayerNorm(w, b) } fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { x + self.b } fn step(self, lr: f32) -> LayerNorm { let mut s = self; let gb = s.b.grad(); s.b = (s.b - gb * lr).detach(); s } }
+impl LayerNorm { fn new(d: i64) -> LayerNorm { print("LayerNorm::new"); let w = (Tensor::randn([d], true)*0.0+1.0).detach(true); let b = (Tensor::randn([d], true)*0.0).detach(true); LayerNorm(w, b) } fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { x + self.b } fn step(self, lr: f32) -> LayerNorm { let mut s = self; let gb = s.b.grad(); s.b = (s.b - gb * lr).detach(true); s } }
 
 struct CausalSelfAttention { a: Linear, p: Linear }
 impl CausalSelfAttention { fn new(d: i64) -> CausalSelfAttention { print("CSA::new"); let l1 = Linear::new(d, d*3); let l2 = Linear::new(d*3, d); CausalSelfAttention(l1, l2) } fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { let q = self.a.forward(x); let k=q; let v=q; let y = q.matmul(k.transpose(1, 2)).scale(0.125).tril(0).softmax(2).matmul(v); self.p.forward(y) } fn step(self, lr: f32) -> CausalSelfAttention { let mut s = self; s.a = s.a.step(lr); s.p = s.p.step(lr); s } }

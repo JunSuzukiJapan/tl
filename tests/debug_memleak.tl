@@ -33,7 +33,7 @@ fn main() {
          total_loss.backward();
          let g = board.grad();
          board = board - g * lr;
-         board = board.detach();
+         board = board.detach(false);
          board.enable_grad();
 
          println("Epoch {} Mem: {} MB", i, System::memory_bytes() / 1024 / 1024);

@@ -14,7 +14,7 @@ fn main() {
         
         let g = x.grad();
         x = x - g * 0.1;
-        x = x.detach();
+        x = x.detach(false);
         x.enable_grad();
         
         Tensor::clear_grads();

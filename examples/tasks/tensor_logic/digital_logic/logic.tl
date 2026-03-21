@@ -76,10 +76,10 @@ fn main() {
         W2 = W2 - gW2 * lr;
         b2 = b2 - gb2 * lr;
         
-        W1 = W1.detach(); W1.enable_grad();
-        b1 = b1.detach(); b1.enable_grad();
-        W2 = W2.detach(); W2.enable_grad();
-        b2 = b2.detach(); b2.enable_grad();
+        W1 = W1.detach(true); W1.enable_grad();
+        b1 = b1.detach(true); b1.enable_grad();
+        W2 = W2.detach(true); W2.enable_grad();
+        b2 = b2.detach(true); b2.enable_grad();
         
         iter = iter + 1;
     }
