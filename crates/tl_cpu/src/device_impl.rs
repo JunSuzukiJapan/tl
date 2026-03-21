@@ -92,8 +92,8 @@ impl IDevice for CpuDevice {
         check(ffi::tl_cpu_tensor_new_causal_mask(size))
     }
     #[inline]
-    fn tensor_from_vec_u8(&self, data: *mut c_void, len: i64) -> BackendResult<*mut c_void> {
-        check(ffi::tl_cpu_tensor_from_vec_u8(data, len))
+    fn tensor_from_vec_u8(&self, data: *mut c_void, offset: i64, shape_ptr: *const i64, rank: i64) -> BackendResult<*mut c_void> {
+        check(ffi::tl_cpu_tensor_from_vec_u8(data, offset, shape_ptr, rank))
     }
     #[inline]
     fn tensor_from_u8_labels(&self, data: *const u8, len: i64) -> BackendResult<*mut c_void> {

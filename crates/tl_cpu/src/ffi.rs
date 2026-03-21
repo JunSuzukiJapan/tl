@@ -117,16 +117,23 @@ pub extern "C" fn tl_cpu_tensor_from_i64(data: *const i64, len: i64) -> *mut Opa
 
 pub extern "C" fn tl_cpu_tensor_from_vec_u8(
     data: *mut std::ffi::c_void,
-    len: i64,
+    offset: i64,
+    shape_ptr: *const i64,
+    rank: i64,
 ) -> *mut OpaqueTensor {
-    if data.is_null() {
+    if data.is_null() || shape_ptr.is_null() || rank <= 0 {
         return std::ptr::null_mut();
     }
-    let len = len as usize;
+    let rank = rank as usize;
+    let shape_slice = unsafe { std::slice::from_raw_parts(shape_ptr, rank) };
+    let shape: Vec<usize> = shape_slice.iter().map(|&x| x as usize).collect();
+    let numel: usize = shape.iter().product();
+    
+    let offset = offset as usize;
     let data_ptr = data as *const u8;
-    let data_slice = unsafe { std::slice::from_raw_parts(data_ptr, len) };
+    let data_slice = unsafe { std::slice::from_raw_parts(data_ptr.add(offset), numel) };
     let f32_data: Vec<f32> = data_slice.iter().map(|&x| x as f32).collect();
-    make_tensor(CpuTensor::from_slice(&f32_data, &[len], DType::F32))
+    make_tensor(CpuTensor::from_slice(&f32_data, &shape, DType::F32))
 }
 
 pub extern "C" fn tl_cpu_tensor_from_u8_labels(data: *const u8, len: i64) -> *mut OpaqueTensor {

@@ -170,11 +170,12 @@ pub extern "C" fn tl_device_tensor_randn_debug(
 pub extern "C" fn tl_device_tensor_new_causal_mask(size: usize) -> *mut c_void {
     dispatch(|d| d.tensor_new_causal_mask(size))
 }
-/// @ffi_sig (void*, i64) -> Tensor*
-/// data は Vec<u8> のバッファポインタ
+/// @ffi_sig (void*, i64, i64*, i64) -> Tensor*
+/// data は Vec<u8> のバッファポインタ, offset はバイトオフセット,
+/// shape_ptr は shape 配列 (*const i64), rank は shape の要素数
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_device_tensor_from_vec_u8(data: *mut c_void, len: i64) -> *mut c_void {
-    dispatch(|d| d.tensor_from_vec_u8(data, len))
+pub extern "C" fn tl_device_tensor_from_vec_u8(data: *mut c_void, offset: i64, shape_ptr: *const i64, rank: i64) -> *mut c_void {
+    dispatch(|d| d.tensor_from_vec_u8(data, offset, shape_ptr, rank))
 }
 /// @ffi_sig (u8*, i64) -> Tensor*
 #[unsafe(no_mangle)]

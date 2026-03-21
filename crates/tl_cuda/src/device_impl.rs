@@ -67,8 +67,25 @@ impl IDevice for CudaDeviceImpl {
     fn tensor_new_causal_mask(&self, size: usize) -> BackendResult<*mut c_void> {
         Ok(v(ffi_ops::tl_cuda_new_causal_mask(size)))
     }
-    fn tensor_from_vec_u8(&self, data: *mut c_void, len: i64) -> BackendResult<*mut c_void> {
-        Ok(v(ffi_ops::tl_cuda_from_vec_u8(data, len)))
+    fn tensor_from_vec_u8(&self, data: *mut c_void, offset: i64, shape_ptr: *const i64, rank: i64) -> BackendResult<*mut c_void> {
+        if data.is_null() || shape_ptr.is_null() || rank <= 0 {
+            return Err(tl_backend::error::BackendError::InternalError(
+                "tensor_from_vec_u8: null data or shape pointer".into(),
+            ));
+        }
+        let rank_usize = rank as usize;
+        let shape_slice = unsafe { std::slice::from_raw_parts(shape_ptr, rank_usize) };
+        let shape: Vec<usize> = shape_slice.iter().map(|&x| x as usize).collect();
+        let numel: usize = shape.iter().product();
+        
+        let offset_usize = offset as usize;
+        let data_ptr = data as *const u8;
+        let data_slice = unsafe { std::slice::from_raw_parts(data_ptr.add(offset_usize), numel) };
+        let f32_data: Vec<f32> = data_slice.iter().map(|&x| x as f32).collect();
+        
+        // CPU backend で一旦作成してから CUDA にコピー
+        let cpu_tensor = crate::tensor::CudaTensor::from_f32_data(&f32_data, &shape);
+        Ok(v(ffi_ops::make_tensor(cpu_tensor)))
     }
     fn tensor_from_u8_labels(&self, data: *const u8, len: i64) -> BackendResult<*mut c_void> {
         Ok(v(ffi_ops::tl_cuda_from_u8_labels(data, len)))

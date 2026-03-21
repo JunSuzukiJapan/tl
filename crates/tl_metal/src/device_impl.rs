@@ -88,8 +88,23 @@ impl IDevice for MetalDeviceImpl {
         v(ffi_ops::tl_metal_new_causal_mask(size))
     }
     #[inline]
-    fn tensor_from_vec_u8(&self, data: *mut c_void, len: i64) -> BackendResult<*mut c_void> {
-        v(ffi_ops::tl_metal_from_vec_u8(data, len))
+    fn tensor_from_vec_u8(&self, data: *mut c_void, offset: i64, shape_ptr: *const i64, rank: i64) -> BackendResult<*mut c_void> {
+        if data.is_null() || shape_ptr.is_null() || rank <= 0 {
+            return Err(tl_backend::BackendError::InternalError(
+                "tensor_from_vec_u8: null data or shape pointer".into(),
+            ));
+        }
+        let rank = rank as usize;
+        let shape_slice = unsafe { std::slice::from_raw_parts(shape_ptr, rank) };
+        let shape: Vec<usize> = shape_slice.iter().map(|&x| x as usize).collect();
+        let numel: usize = shape.iter().product();
+        
+        let offset = offset as usize;
+        let data_ptr = data as *const u8;
+        let data_slice = unsafe { std::slice::from_raw_parts(data_ptr.add(offset), numel) };
+        let f32_data: Vec<f32> = data_slice.iter().map(|&x| x as f32).collect();
+        
+        Ok(ffi_ops::make_tensor(MetalTensor::from_slice(&f32_data, &shape, crate::DType::F32)) as *mut c_void)
     }
     #[inline]
     fn tensor_from_u8_labels(&self, data: *const u8, len: i64) -> BackendResult<*mut c_void> {
