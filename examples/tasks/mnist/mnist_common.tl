@@ -1,4 +1,4 @@
-// MNIST Common Module
+// MNIST Common Module - MLP Model
 
 struct Linear {
     W: Tensor<f32, 2>,
@@ -7,24 +7,10 @@ struct Linear {
 
 impl Linear {
     fn new(i: i64, o: i64) -> Linear {
-        // Workaround: StructInit does not correctly handle BinOp results,
-        // so we assign to intermediate variables and avoid BinOp in struct fields.
-        let w_base = Tensor::randn([i, o], true);
-        let w = w_base * 0.001;
-        let w_d = w.detach(true);
-        print("w_d after detach:");
-        print(w_d);
-        
-        let b_base = Tensor::zeros([o], true);
-        let b_d = b_base.detach(true);
-        print("b_d after detach:");
-        print(b_d);
-        
-        print("Constructing Linear...");
-        let result = Linear(w_d, b_d);
-        print("Linear constructed, checking result.W:");
-        print(result.W);
-        result
+        // Xavier initialization
+        let w = (Tensor::randn([i, o], true) * 0.05).detach(true);
+        let b = Tensor::zeros([o], true).detach(true);
+        Linear(w, b)
     }
     
     fn forward(self, x: Tensor<f32, 2>) -> Tensor<f32, 2> {
@@ -39,7 +25,30 @@ impl Linear {
         s.b = (s.b - gb * lr).detach(true);
         s
     }
+}
 
+// 2-layer MLP: input -> hidden (ReLU) -> output
+struct MLP {
+    l1: Linear,
+    l2: Linear
+}
+
+impl MLP {
+    fn new(input_dim: i64, hidden_dim: i64, output_dim: i64) -> MLP {
+        MLP(Linear::new(input_dim, hidden_dim), Linear::new(hidden_dim, output_dim))
+    }
+    
+    fn forward(self, x: Tensor<f32, 2>) -> Tensor<f32, 2> {
+        let h = self.l1.forward(x).relu();
+        self.l2.forward(h)
+    }
+    
+    fn step(self, lr: f32) -> MLP {
+        let mut s = self;
+        s.l1 = s.l1.step(lr);
+        s.l2 = s.l2.step(lr);
+        s
+    }
 }
 
 // Read a big-endian i32 from 4 consecutive bytes in a Vec<u8>
@@ -57,7 +66,6 @@ fn load_mnist_images(path: String) -> Tensor<f32, 2> {
     let len = vec.len();
     if len == 0 {
         print("Error: Failed to read file or empty file: " + path);
-        // Return dummy
         let t = Tensor::zeros([1, 784], false);
         return t;
     }
@@ -71,10 +79,7 @@ fn load_mnist_images(path: String) -> Tensor<f32, 2> {
     
     let dim = rows * cols;
     
-    // Use Tensor::from_vec_u8 to convert byte data to tensor
-    // Pixel data starts at offset 16
-    // First, we need to create a sub-view from offset 16
-    // Since from_vec_u8 doesn't support offset, we'll read manually
+    // Load pixel data into tensor (pixel data starts at offset 16)
     let mut result: Tensor<f32, 2> = Tensor::zeros([count, 784], false);
     
     let total_pixels = count * 784;
@@ -84,7 +89,6 @@ fn load_mnist_images(path: String) -> Tensor<f32, 2> {
         let col = i - (row * 784);
         result[row, col] = (byte_val as f32) / 255.0;
     }
-    
     
     result
 }

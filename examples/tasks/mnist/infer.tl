@@ -1,15 +1,15 @@
-// MNIST Inference
+// MNIST Inference - MLP Model
 
 use mnist_common::*;
 
 fn main() {
-    print("=== MNIST Inference ===");
+    print("=== MNIST Inference (MLP) ===");
     
     let test_x = load_mnist_images("data/t10k-images-idx3-ubyte");
     let test_y = load_mnist_labels("data/t10k-labels-idx1-ubyte");
     
-    // Initialize model structure (use fully qualified name)
-    let model = Linear::new(784, 10);
+    // Initialize model structure (must match training)
+    let model = MLP::new(784, 128, 10);
     
     print("Loading weights...");
     Param::load(model, "mnist_weights.safetensors");
@@ -27,8 +27,6 @@ fn main() {
         let logits = model.forward(x);
         let preds = logits.argmax(1);
         
-        // preds is float (index), y is int (label)
-        // item() returns float for both (due to runtime casting)
         if preds.item() == y.item() {
              correct = correct + 1;
         }
@@ -36,8 +34,5 @@ fn main() {
         i = i + 1;
     }
 
-    print("Accuracy:");
-    print(correct);
-    print("/");
-    print(total);
+    println("Accuracy: {}/{}", correct, total);
 }
