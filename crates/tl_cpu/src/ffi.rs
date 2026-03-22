@@ -1634,7 +1634,14 @@ pub extern "C" fn tl_cpu_tensor_replace_data(dst: *mut OpaqueTensor, src: *mut O
         return;
     }
     unsafe {
-        *dst = (&*src).clone();
+        let dst_t = &mut *dst;
+        let src_t = &*src;
+        // データと shape のみ入れ替え、autograd メタは保持
+        dst_t.data = src_t.data.clone();
+        dst_t.data_i64 = src_t.data_i64.clone();
+        dst_t.shape = src_t.shape.clone();
+        dst_t.dtype = src_t.dtype;
+        // dst_t.autograd はそのまま保持 → requires_grad が維持される
     }
 }
 

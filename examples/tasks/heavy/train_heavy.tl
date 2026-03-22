@@ -11,7 +11,7 @@ struct Linear {
 impl Linear { 
     fn new(i: i64, o: i64) -> Linear { 
         Linear(
-            (Tensor::randn([i, o], true)*0.1).detach(true),
+            (Tensor::randn([i, o], true)*0.02).detach(true),
             (Tensor::randn([o], true)*0.0).detach(true),
             Tensor::zeros([i, o], false),
             Tensor::zeros([i, o], false),
@@ -37,7 +37,7 @@ struct Embedding {
 impl Embedding { 
     fn new(v: i64, d: i64) -> Embedding {
         Embedding(
-            (Tensor::randn([v, d], true)*0.1).detach(true),
+            (Tensor::randn([v, d], true)*0.02).detach(true),
             Tensor::zeros([v, d], false),
             Tensor::zeros([v, d], false)
         )
@@ -89,7 +89,8 @@ impl CausalSelfAttention {
         let k = self.k_proj.forward(x); 
         let v = self.v_proj.forward(x); 
         let kt = k.transpose(1, 2);
-        let scores = q.matmul(kt) * 0.125;
+        // scale = 1/sqrt(d_model) = 1/sqrt(128) ≈ 0.0884
+        let scores = q.matmul(kt) * 0.0884;
         
         // Proper causal mask: -inf for future positions
         let ones = scores * 0.0 + 1.0;
@@ -254,12 +255,10 @@ fn train_epoch(state: TrainState, lr: f32, steps: i64) -> TrainState {
         
         loss.backward();
         
-        // Gradient accumulation over 8 steps + Adam step
-        if s % 8 == 7 {
-            st.model = st.model.step(st.global_step, lr);
-            Tensor::clear_grads();
-            st.global_step = st.global_step + 1;
-        }
+        // 毎ステップ Adam step (adam_step 内で grad 自動クリア)
+        st.model = st.model.step(st.global_step, lr);
+        Tensor::clear_grads();
+        st.global_step = st.global_step + 1;
         
         if s % 160 == 0 {
              print("    Loss:"); loss.print();
@@ -278,7 +277,7 @@ fn main() {
         print("Loaded parameters from model_heavy.safetensors");
     }
     
-    let lr = 0.001;
+    let lr = 0.0003;
     let epochs = 1500;
 
     print("Training Heavy Model: 2-layer GPT, Adam, d_model=128");
