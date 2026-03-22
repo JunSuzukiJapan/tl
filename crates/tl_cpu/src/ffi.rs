@@ -2979,6 +2979,7 @@ pub extern "C" fn tl_cpu_tensor_layer_norm(
                         input_data: inp.shallow_clone(),
                         weight: if !weight.is_null() { tensor_ref_from_ptr(weight) } else { tensor_ref_from_ptr(input) },
                         weight_data: w.shallow_clone(),
+                        bias: if !bias.is_null() { tensor_ref_from_ptr(bias) } else { tensor_ref_from_ptr(input) },
                         eps,
                     }));
                 }
