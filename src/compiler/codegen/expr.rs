@@ -584,37 +584,65 @@ fn compile_tensor_sum<'ctx>(
         ))
     }
 }
-fn compile_tensor_slice<'ctx>(
+/// .slice(start, len) — グローバル関数版
+/// FFI: tl_tensor_slice(t, dim=0, start, end=start+len, step=1)
+fn compile_tensor_slice2<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     obj_val: BasicValueEnum<'ctx>,
     obj_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    if args.len() != 2 {
-        return Err("slice requires 2 arguments".into());
-    }
+    let i64_ty = codegen.context.i64_type();
 
-
-    let (start_val, _) = args[0].clone();
-    let (len_val, _) = args[1].clone();
+    let dim = i64_ty.const_int(0, false);
+    let start = args[0].0.into_int_value();
+    let len = args[1].0.into_int_value();
+    let end = codegen.builder.build_int_add(start, len, "slice_end")
+        .map_err(|e| e.to_string())?;
+    let step = i64_ty.const_int(1, false);
 
     let fn_val = codegen.module.get_function("tl_tensor_slice").unwrap();
-    let call = codegen
-        .builder
-        .build_call(
-            fn_val,
-            &[obj_val.into(), start_val.into(), len_val.into()],
-            "slice_res",
-        )
+    let call = codegen.builder
+        .build_call(fn_val, &[obj_val.into(), dim.into(), start.into(), end.into(), step.into()], "slice_res")
         .map_err(|e| e.to_string())?;
     let res = match call.try_as_basic_value() {
         inkwell::values::ValueKind::Basic(v) => v,
         _ => return Err("Invalid slice return".into()),
     };
-
-    // codegen.emit_register_tensor(res, &obj_ty)?;
     Ok((res, obj_ty))
 }
+
+/// .slice(dim, start, len) — グローバル関数版
+/// FFI: tl_tensor_slice(t, dim, start, end=start+len, step=1)
+#[allow(dead_code)]
+fn compile_tensor_slice3<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj_val: BasicValueEnum<'ctx>,
+    obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let i64_ty = codegen.context.i64_type();
+
+    let dim = args[0].0;
+    let start = args[1].0.into_int_value();
+    let len = args[2].0.into_int_value();
+    let end = codegen.builder.build_int_add(start, len, "slice_end")
+        .map_err(|e| e.to_string())?;
+    let step = i64_ty.const_int(1, false);
+
+    let fn_val = codegen.module.get_function("tl_tensor_slice").unwrap();
+    let call = codegen.builder
+        .build_call(fn_val, &[obj_val.into(), dim.into(), start.into(), end.into(), step.into()], "slice_res")
+        .map_err(|e| e.to_string())?;
+    let res = match call.try_as_basic_value() {
+        inkwell::values::ValueKind::Basic(v) => v,
+        _ => return Err("Invalid slice return".into()),
+    };
+    Ok((res, obj_ty))
+}
+
+
+
 
 fn compile_tensor_to<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
@@ -1112,7 +1140,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         tensor_methods.register_eval("save", compile_tensor_save);
         tensor_methods.register_uneval("reshape", compile_tensor_reshape_uneval);
         tensor_methods.register_eval("sum", compile_tensor_sum);
-        tensor_methods.register_eval("slice", compile_tensor_slice);
+        tensor_methods.register_eval("slice", compile_tensor_slice2);
         tensor_methods.register_eval("to", compile_tensor_to);
         tensor_methods.register_eval("to_device", compile_tensor_to);
         tensor_methods.register_eval("add_assign", compile_tensor_add_assign);
@@ -3930,7 +3958,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         Type::F64 => self.context.f64_type().into(),
                         Type::I32 | Type::Char(_) => self.context.i32_type().into(),
                         Type::U8 => self.context.i8_type().into(),
-                        Type::I64 | Type::Usize | Type::Entity => self.context.i64_type().into(),
+                        Type::Usize | Type::Entity => self.context.i64_type().into(),
                         Type::Enum(_, _) | Type::Ptr(_) | Type::GradTensor(_, _)
                         | Type::TensorShaped(_, _) => self
                             .context
@@ -6882,22 +6910,22 @@ impl<'ctx> CodeGenerator<'ctx> {
                  Type::F32 
             }
             Some(inkwell::types::BasicTypeEnum::PointerType(_)) => {
-                if name.starts_with("tl_string_") {
-                    Type::String("String".to_string())
-                } else if name.contains("alloc") || name.contains("init") {
-                    // Allocators return generic pointers usually
-                    // Use I64 as opaque pointer type placeholder
+                // method_return_types (add_fn_typed 経由) で登録済みのはず。
+                // ここに到達するのは未登録のFFI関数 → tensor系のデフォルトか、登録漏れバグ。
+                if name.contains("alloc") || name.contains("init") {
                     Type::I64
+                } else if name.contains("tensor") {
+                    Type::Tensor(Box::new(Type::F32), 0)
                 } else {
-                     // Log warning?
-                     // Verify if it's a known generic method
-                     // For now, default to I64 (opaque handle) to avoid Tensor mismatch logic
-                     // UNLESS we are sure it's a tensor method.
-                     if name.contains("tensor") {
-                         Type::Tensor(Box::new(Type::F32), 0)
-                     } else {
-                         Type::I64
-                     }
+                    // ポインタを返すFFI関数が method_return_types に未登録 → 登録漏れの可能性
+                    // builtins.rs の add_fn_typed で登録すること
+                    debug_assert!(
+                        false,
+                        "FFI function '{}' returns a pointer but has no entry in method_return_types. \
+                         Use add_fn_typed in builtins.rs to register both LLVM declaration and return type.",
+                        name
+                    );
+                    Type::I64
                 }
             }
             _ => Type::Void, 

@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use inkwell::context::Context;
 use inkwell::execution_engine::ExecutionEngine;
 use inkwell::module::Module as InkwellModule;
@@ -19,6 +21,7 @@ pub fn declare_runtime_functions<'ctx>(
     context: &'ctx Context,
     module: &InkwellModule<'ctx>,
     execution_engine: &ExecutionEngine<'ctx>,
+    ret_types: &mut HashMap<String, Type>,
 ) {
 
     // Debug helper
@@ -56,11 +59,19 @@ pub fn declare_runtime_functions<'ctx>(
     );
 
     // Helper to add function only if not exists
-
     let add_fn = |name: &str, ty: inkwell::types::FunctionType<'ctx>| {
         if module.get_function(name).is_none() {
             module.add_function(name, ty, None);
         }
+    };
+
+    // Helper: LLVM宣言 + セマンティクス型を同時登録（ポインタ返却FFI用）
+    // これにより register_builtin_return_types での登録漏れが構造的に防止される
+    let add_fn_typed = |name: &str, ty: inkwell::types::FunctionType<'ctx>, ret_type: Type, ret_types: &mut HashMap<String, Type>| {
+        if module.get_function(name).is_none() {
+            module.add_function(name, ty, None);
+        }
+        ret_types.insert(name.to_string(), ret_type);
     };
 
     let print_i64_type = void_type.fn_type(&[i64_type.into()], false);
@@ -225,9 +236,9 @@ pub fn declare_runtime_functions<'ctx>(
     let download_file_type = i64_type.fn_type(&[i8_ptr.into(), i8_ptr.into()], false);
     add_fn("tl_download_file", download_file_type);
 
-    // tl_read_file(path: *const c_char) -> *const c_char
+    // tl_read_file(path: *const c_char) -> *mut StringStruct
     let read_file_type = i8_ptr.fn_type(&[i8_ptr.into()], false);
-    add_fn("tl_read_file", read_file_type);
+    add_fn_typed("tl_read_file", read_file_type, Type::String("String".to_string()), ret_types);
 
     // tl_write_file(path: *const c_char, content: *const c_char) -> i64
     let write_file_type = i64_type.fn_type(&[i8_ptr.into(), i8_ptr.into()], false);
@@ -427,9 +438,9 @@ pub fn declare_runtime_functions<'ctx>(
     let len_str_type = i64_type.fn_type(&[i8_ptr.into()], false);
     add_fn("tl_string_len", len_str_type);
     
-    // tl_string_from_char(c: i32) -> *mut c_char
+    // tl_string_from_char(c: i32) -> *mut StringStruct
     let from_char_type = i8_ptr.fn_type(&[i32_type.into()], false);
-    add_fn("tl_string_from_char", from_char_type);
+    add_fn_typed("tl_string_from_char", from_char_type, Type::String("String".to_string()), ret_types);
 
     // tl_string_char_at(s: *mut StringStruct, index: i64) -> i64 (char as i64)
     let char_at_type = i64_type.fn_type(&[void_ptr.into(), i64_type.into()], false);
@@ -449,7 +460,7 @@ pub fn declare_runtime_functions<'ctx>(
     // If function returns void*, then build_call returns void*.
     // But expr.rs expects pointer to StringStruct. void* is fine.
     let new_string_type = void_ptr.fn_type(&[i8_ptr.into()], false);
-    add_fn("tl_string_new", new_string_type);
+    add_fn_typed("tl_string_new", new_string_type, Type::String("String".to_string()), ret_types);
     
     // tl_string_free(s: *mut StringStruct) -> void
     add_fn("tl_string_free", free_type);
@@ -3082,6 +3093,12 @@ pub fn declare_runtime_functions<'ctx>(
         execution_engine.add_global_mapping(&f, runtime::logic::tl_query as *const () as usize);
     }
 
+    // tl_kb_entity_name(id: i64) -> *mut StringStruct
+    let kb_entity_name_type = i8_ptr.fn_type(&[i64_type.into()], false);
+    add_fn_typed("tl_kb_entity_name", kb_entity_name_type, Type::String("String".to_string()), ret_types);
+    if let Some(f) = module.get_function("tl_kb_entity_name") {
+        execution_engine.add_global_mapping(&f, runtime::logic::tl_kb_entity_name as *const () as usize);
+    }
 
     // tl_get_memory_mb() -> i64
     let get_memory_type = i64_type.fn_type(&[], false);
@@ -3307,7 +3324,7 @@ pub fn declare_runtime_functions<'ctx>(
 
     // tl_string_from_int
     let str_from_int_type = i8_ptr.fn_type(&[i64_type.into()], false);
-    add_fn("tl_string_from_int", str_from_int_type);
+    add_fn_typed("tl_string_from_int", str_from_int_type, Type::String("String".to_string()), ret_types);
     if let Some(f) = module.get_function("tl_string_from_int") {
         execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_from_int as *const () as usize);
     }

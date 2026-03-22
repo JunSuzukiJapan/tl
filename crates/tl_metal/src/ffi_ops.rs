@@ -1154,7 +1154,6 @@ pub fn tl_metal_grad(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
     let tensor = unsafe { &*t };
     if let Some(grad) = tensor.get_grad() {
         let ptr = make_tensor(grad);
-        let result = unsafe { &*ptr };
         ptr
     } else {
         std::ptr::null_mut()
@@ -1777,7 +1776,6 @@ pub fn tl_metal_mul_scalar(t: *mut OpaqueTensor, s: f64) -> *mut OpaqueTensor {
                 use crate::autograd::ops::MulScalarBackward;
                 unsafe { (&mut *ptr).set_grad_fn(Box::new(MulScalarBackward { a: tensor_ref_from_ptr(t), s: s as f32 })); }
             }
-            let result = unsafe { &*ptr };
             ptr
         },
         Err(e) => {

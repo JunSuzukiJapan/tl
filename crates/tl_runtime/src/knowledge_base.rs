@@ -942,3 +942,12 @@ unsafe fn extract_string(ptr: *const i8) -> String {
     }
     unsafe { CStr::from_ptr(ptr).to_string_lossy().into_owned() }
 }
+
+/// エンティティIDからエンティティ名を取得
+/// コンパイラシグネチャ: tl_kb_entity_name(id: i64) -> *mut crate::string_ffi::StringStruct
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_kb_entity_name(id: i64) -> *mut crate::string_ffi::StringStruct {
+    let store = KB.lock().unwrap();
+    let name = store.entity_ids.get(&id).cloned().unwrap_or_else(|| format!("?{}", id));
+    unsafe { crate::string_ffi::make_string_struct(name) }
+}

@@ -13,8 +13,8 @@ allowed(user, perm) :- grant(user, perm).
 permission(perm) :- perm(_, perm).
 
 fn print_entity(name_id: i64) {
-    let t = [i | i <- 0..1 { name_id }].reshape([1, 1]).to_i64();
-    print(t);
+    let name = tl_kb_entity_name(name_id);
+    print(name);
 }
 
 fn main() {

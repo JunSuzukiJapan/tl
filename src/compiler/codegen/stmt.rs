@@ -115,6 +115,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
 
     /// Copy struct contents from src to dst pointer (used for sret)
+    #[allow(dead_code)]
     pub(crate) fn emit_struct_copy(
         &mut self,
         dst: inkwell::values::PointerValue<'ctx>,
@@ -267,6 +268,7 @@ impl<'ctx> CodeGenerator<'ctx> {
     }
     
     /// Helper function to copy struct fields from src to dst
+    #[allow(dead_code)]
     fn copy_struct_fields(
         &mut self,
         dst: inkwell::values::PointerValue<'ctx>,
@@ -996,7 +998,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                     ptr, i as u32, "field_gep"
                                 ).map_err(|e| e.to_string())?;
                                 
-                                let f_val = self.builder.build_load(
+                                let _f_val = self.builder.build_load(
                                     self.context.ptr_type(inkwell::AddressSpace::default()),
                                     f_ptr, "field_load"
                                 ).map_err(|e| e.to_string())?;
@@ -1012,7 +1014,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // D. Free Wrapper Memory
                 // Skip for Vec (stack value semantics)
                 if name != "Vec" {
-                    let mem_free_fn = self.module.get_function("tl_mem_free")
+                    let _mem_free_fn = self.module.get_function("tl_mem_free")
                          .ok_or("tl_mem_free not found")?;
                     
                     // self.emit_log_free(val)?;

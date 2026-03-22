@@ -658,8 +658,8 @@ impl GradFn for LayerNormBackward {
     fn backward(&self, grad_output: &MetalTensor) -> BackendResult<Vec<MetalTensor>> {
         let x = unsafe { &*self.input.get() };
         let shape = x.shape();
-        let ndim = shape.len();
-        let last_dim = *shape.last().unwrap_or(&1);
+        let _ndim = shape.len();
+        let _last_dim = *shape.last().unwrap_or(&1);
         
         // normalized = (x - mean) / sqrt(var + eps)
         // 簡易実装: grad_input ≈ grad_output (layer_norm は近似的に identity に近い)

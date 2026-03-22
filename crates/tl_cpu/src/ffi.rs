@@ -1612,7 +1612,18 @@ pub extern "C" fn tl_cpu_tensor_print(t: *mut OpaqueTensor) {
     }
     let tensor = unsafe { &*t };
     if tensor.shape().is_empty() {
-        println!("Tensor[cleared]");
+        // 0-rank scalar tensor: print the scalar value if data exists
+        let data = tensor.data_f32();
+        if !data.is_empty() {
+            let v = data[0];
+            if v == v.floor() && v.abs() < 1e9 {
+                println!("{}", v as i64);
+            } else {
+                println!("{}", v);
+            }
+        } else {
+            println!("Tensor[cleared]");
+        }
         return;
     }
     println!("{:?}", tensor.data_f32());

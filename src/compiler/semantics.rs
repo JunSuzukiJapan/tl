@@ -4493,6 +4493,28 @@ impl SemanticAnalyzer {
                         );
                     }
                     return Ok(Type::I64);
+                } else if name == "tl_kb_entity_name" {
+                    if args.len() != 1 {
+                        return self.err(
+                            SemanticError::ArgumentCountMismatch {
+                                name: name.clone(),
+                                expected: 1,
+                                found: args.len(),
+                            },
+                            Some(expr.span.clone()),
+                        );
+                    }
+                    let arg_ty = self.check_expr(&mut args[0])?;
+                    if !matches!(arg_ty, Type::I64 | Type::I32 | Type::F32 | Type::F64) {
+                        return self.err(
+                            SemanticError::TypeMismatch {
+                                expected: Type::I64,
+                                found: arg_ty,
+                            },
+                            Some(args[0].span.clone()),
+                        );
+                    }
+                    return Ok(Type::String("String".to_string()));
                 } else if name == "tl_http_download" {
                     if args.len() != 2 {
                         return self.err(

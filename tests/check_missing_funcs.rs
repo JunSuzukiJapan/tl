@@ -31,6 +31,12 @@ fn check_missing_runtime_functions() {
         "tl_debug_print_ptr", 
         "tl_kb_", 
         "tl_tensor_acquire", 
+        // libc標準関数（OSが提供するため tl_runtime での定義不要）
+        "abort",
+        "calloc",
+        "free",
+        "malloc",
+        "realloc",
         // CPU/GPU切り替えロジックで直接使われないものなど
         "tl_tensor_get_shape", // lib.rsで定義されていたはずだが
         "tl_tensor_matmul_4d", // 命名規則違いの可能性

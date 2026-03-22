@@ -169,7 +169,7 @@ pub extern "C" fn tl_get_memory_mb() -> f64 {
         let alloc = tl_cpu::memory::get_alloc_count();
         let release = tl_cpu::memory::get_release_count();
         let true_drop = tl_cpu::tensor::get_true_drop_count();
-        let live = alloc.saturating_sub(release);
+        let _live = alloc.saturating_sub(release);
         let true_live = alloc.saturating_sub(true_drop);
         let alloc_bytes = tl_cpu::memory::get_total_allocated() as f64 / (1024.0 * 1024.0);
         let free_bytes = tl_cpu::memory::get_total_released() as f64 / (1024.0 * 1024.0);
@@ -191,6 +191,7 @@ pub extern "C" fn tl_mem_purge() {
     {
         unsafe extern "C" {
             fn malloc_zone_pressure_relief(zone: *mut std::ffi::c_void, goal: usize) -> usize;
+            #[allow(dead_code)]
             fn malloc_default_zone() -> *mut std::ffi::c_void;
         }
         unsafe {

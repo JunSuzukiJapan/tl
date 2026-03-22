@@ -110,6 +110,7 @@ kernel void index_select_f32(
 // パイプラインキャッシュ
 static WHERE_PIPELINE: std::sync::OnceLock<Result<ComputePipelineState, String>> = std::sync::OnceLock::new();
 static TRIL_PIPELINE: std::sync::OnceLock<Result<ComputePipelineState, String>> = std::sync::OnceLock::new();
+#[allow(dead_code)]
 static CE_PIPELINE: std::sync::OnceLock<Result<ComputePipelineState, String>> = std::sync::OnceLock::new();
 static REPEAT_PIPELINE: std::sync::OnceLock<Result<ComputePipelineState, String>> = std::sync::OnceLock::new();
 static INDEX_SEL_PIPELINE: std::sync::OnceLock<Result<ComputePipelineState, String>> = std::sync::OnceLock::new();
@@ -138,6 +139,7 @@ fn get_tril_pipeline() -> BackendResult<&'static ComputePipelineState> {
     TRIL_PIPELINE.get_or_init(|| compile_special_pipeline("tril_f32"))
         .as_ref().map_err(|e| BackendError::DeviceError(e.clone()))
 }
+#[allow(dead_code)]
 fn get_ce_pipeline() -> BackendResult<&'static ComputePipelineState> {
     CE_PIPELINE.get_or_init(|| compile_special_pipeline("cross_entropy_elementwise_f32"))
         .as_ref().map_err(|e| BackendError::DeviceError(e.clone()))
@@ -258,7 +260,7 @@ impl MetalTensor {
     pub fn cross_entropy_impl(&self, target: &MetalTensor) -> BackendResult<MetalTensor> {
         // logits: [N, C], target: [N] (integer class indices)
         let logits_shape = MetalTensor::shape(self);
-        let target_shape = MetalTensor::shape(target);
+        let _target_shape = MetalTensor::shape(target);
 
         let logits_data: Vec<f32> = self.to_vec();
         let target_data: Vec<f32> = target.to_vec();

@@ -389,8 +389,13 @@ pub fn register_tensor_types(manager: &mut TypeManager) {
     tensor.register_evaluated_instance_method("debug_ptr", tensor_misc::compile_debug_ptr, vec![], Type::Void);
     tensor.register_evaluated_instance_method("display", tensor_misc::compile_display, vec![], Type::Void);
     
-    // Slice (implemented in tensor_misc.rs)
-    tensor.register_evaluated_instance_method("slice", tensor_misc::compile_slice, vec![Type::I64, Type::I64, Type::I64, Type::I64], any_tensor.clone());
+    // Slice — 引数数ごとの専用関数 (tensor_misc.rs):
+    //   .slice(start, len)            → compile_slice2
+    //   .slice(dim, start, len)       → compile_slice3
+    //   .slice(dim, start, end, step) → compile_slice4
+    tensor.register_evaluated_instance_method("slice", tensor_misc::compile_slice2, vec![Type::I64, Type::I64], any_tensor.clone());
+    tensor.register_evaluated_instance_method("slice", tensor_misc::compile_slice3, vec![Type::I64, Type::I64, Type::I64], any_tensor.clone());
+    tensor.register_evaluated_instance_method("slice", tensor_misc::compile_slice4, vec![Type::I64, Type::I64, Type::I64, Type::I64], any_tensor.clone());
     
     // Dim-specific ops (implemented in tensor_reduce.rs)
     tensor.register_evaluated_instance_method("sum_dim", tensor_reduce::compile_sum_dim, vec![Type::I64, Type::Bool], any_tensor.clone());

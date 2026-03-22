@@ -140,6 +140,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             codegen.context,
             &codegen.module,
             &codegen.execution_engine,
+            &mut codegen.method_return_types,
         );
 
         codegen.register_builtin_return_types();
@@ -150,13 +151,13 @@ impl<'ctx> CodeGenerator<'ctx> {
     }
 
     fn register_builtin_return_types(&mut self) {
+        // ポインタ返却FFI関数の型は declare_runtime_functions 内の add_fn_typed で一元登録済み。
+        // ここには add_fn_typed で登録できない特殊なケース（メソッド呼び出し等）のみ残す。
+
         // Path
         self.method_return_types.insert("tl_path_new".to_string(), Type::Struct("Path".to_string(), vec![]));
         self.method_return_types.insert("tl_path_to_string".to_string(), Type::String("String".to_string()));
         self.method_return_types.insert("tl_path_join".to_string(), Type::Struct("Path".to_string(), vec![]));
-        
-        // String
-        self.method_return_types.insert("tl_string_new".to_string(), Type::String("String".to_string()));
 
         // File
         self.method_return_types.insert("tl_file_open".to_string(), Type::Struct("File".to_string(), vec![]));
@@ -165,10 +166,9 @@ impl<'ctx> CodeGenerator<'ctx> {
         self.method_return_types.insert("tl_args_get".to_string(), Type::String("String".to_string()));
         self.method_return_types.insert("tl_env_get".to_string(), Type::String("String".to_string()));
         self.method_return_types.insert("tl_string_char_at".to_string(), Type::Char("Char".to_string()));
-        
-        // Opaque struct pointers (treated as structs but return pointers, so we must register them to avoid Tensor default)
-        self.method_return_types.insert("tl_tensor_map_new".to_string(), Type::Struct("Map".to_string(), vec![]));
 
+        // Opaque struct pointers
+        self.method_return_types.insert("tl_tensor_map_new".to_string(), Type::Struct("Map".to_string(), vec![]));
     }
 
     pub fn dump_ir(&self) {

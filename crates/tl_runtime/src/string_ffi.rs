@@ -234,7 +234,7 @@ pub extern "C" fn tl_hash_string(s: *mut StringStruct) -> i64 {
 }
 
 /// Helper: Rust String → *mut StringStruct
-unsafe fn make_string_struct(s: String) -> *mut StringStruct {
+pub unsafe fn make_string_struct(s: String) -> *mut StringStruct {
     unsafe {
         let c_str = CString::new(s).unwrap();
         let ptr = c_str.into_raw();

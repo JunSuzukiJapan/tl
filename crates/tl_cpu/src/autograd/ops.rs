@@ -561,7 +561,7 @@ impl<T: TensorScalar> GradFn<T> for LayerNormBackward<T> {
         let ndim = shape.len();
         let d = shape[ndim - 1]; // normalized dimension
         let n = x.len() / d; // batch size (all dims except last)
-        let eps_t = T::from_f64(self.eps);
+        let _eps_t = T::from_f64(self.eps);
 
         let mut dx = vec![T::zero(); x.len()];
 

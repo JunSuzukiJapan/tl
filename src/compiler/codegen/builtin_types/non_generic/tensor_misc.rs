@@ -70,8 +70,8 @@ pub fn compile_display<'ctx>(
     ))
 }
 
-/// slice(dim, start, end, step) -> Tensor
-pub fn compile_slice<'ctx>(
+/// .slice(start, len) → FFI: tl_tensor_slice(t, dim=0, start, end=start+len, step=1)
+pub fn compile_slice2<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     obj: BasicValueEnum<'ctx>,
     obj_ty: Type,
@@ -81,17 +81,65 @@ pub fn compile_slice<'ctx>(
         .module
         .get_function("tl_tensor_slice")
         .ok_or("tl_tensor_slice not found")?;
-    
-    let mut call_args: Vec<inkwell::values::BasicMetadataValueEnum> = Vec::with_capacity(args.len() + 1);
-    call_args.push(obj.into());
-    for (val, _) in &args {
-        call_args.push((*val).into());
-    }
-    
-    let call = codegen
-        .builder
-        .build_call(fn_val, &call_args, "slice_res")
+    let i64_ty = codegen.context.i64_type();
+
+    let dim = i64_ty.const_int(0, false);
+    let start = args[0].0.into_int_value();
+    let len = args[1].0.into_int_value();
+    let end = codegen.builder.build_int_add(start, len, "slice_end")
+        .map_err(|e| e.to_string())?;
+    let step = i64_ty.const_int(1, false);
+
+    let call = codegen.builder
+        .build_call(fn_val, &[obj.into(), dim.into(), start.into(), end.into(), step.into()], "slice_res")
         .map_err(|e| e.to_string())?;
     let res = codegen.check_tensor_result(call, "slice_error")?;
     Ok((res, obj_ty))
 }
+
+/// .slice(dim, start, len) → FFI: tl_tensor_slice(t, dim, start, end=start+len, step=1)
+pub fn compile_slice3<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj: BasicValueEnum<'ctx>,
+    obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let fn_val = codegen
+        .module
+        .get_function("tl_tensor_slice")
+        .ok_or("tl_tensor_slice not found")?;
+    let i64_ty = codegen.context.i64_type();
+
+    let dim = args[0].0;
+    let start = args[1].0.into_int_value();
+    let len = args[2].0.into_int_value();
+    let end = codegen.builder.build_int_add(start, len, "slice_end")
+        .map_err(|e| e.to_string())?;
+    let step = i64_ty.const_int(1, false);
+
+    let call = codegen.builder
+        .build_call(fn_val, &[obj.into(), dim.into(), start.into(), end.into(), step.into()], "slice_res")
+        .map_err(|e| e.to_string())?;
+    let res = codegen.check_tensor_result(call, "slice_error")?;
+    Ok((res, obj_ty))
+}
+
+/// .slice(dim, start, end, step) → FFI: tl_tensor_slice(t, dim, start, end, step)
+pub fn compile_slice4<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj: BasicValueEnum<'ctx>,
+    obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let fn_val = codegen
+        .module
+        .get_function("tl_tensor_slice")
+        .ok_or("tl_tensor_slice not found")?;
+
+    let call = codegen.builder
+        .build_call(fn_val, &[obj.into(), args[0].0.into(), args[1].0.into(), args[2].0.into(), args[3].0.into()], "slice_res")
+        .map_err(|e| e.to_string())?;
+    let res = codegen.check_tensor_result(call, "slice_error")?;
+    Ok((res, obj_ty))
+}
+
