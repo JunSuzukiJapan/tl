@@ -6,8 +6,11 @@ use metal::{Buffer, MTLResourceOptions};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, LazyLock};
 
-/// バッファプールのキー: (サイズ, リソースオプション)
-type PoolKey = (usize, MTLResourceOptions);
+/// バッファプールのキー: サイズのみ
+/// Metal の resource_options() は作成時に指定した MTLResourceOptions と
+/// 異なるビットフラグを返す場合がある (ドライバ内部の追加フラグ)。
+/// そのため size のみをキーとして使用し、options 不一致による miss を防ぐ。
+type PoolKey = usize;
 
 /// Metal バッファプール
 pub struct MetalBufferPool {
@@ -29,8 +32,8 @@ impl MetalBufferPool {
     }
 
     /// プールからバッファを取得（なければ None）
-    pub fn acquire(&mut self, size: usize, options: MTLResourceOptions) -> Option<Arc<Buffer>> {
-        let key = (size, options);
+    pub fn acquire(&mut self, size: usize, _options: MTLResourceOptions) -> Option<Arc<Buffer>> {
+        let key = size;
         if let Some(list) = self.free_buffers.get_mut(&key) {
             if let Some(buffer) = list.pop() {
                 self.hits += 1;
@@ -46,13 +49,15 @@ impl MetalBufferPool {
     /// OS にメモリが返される（GPU メモリリーク防止）。
     pub fn release(&mut self, buffer: Arc<Buffer>) {
         let size = buffer.length() as usize;
-        let options = buffer.resource_options();
-        let key = (size, options);
+        let key = size;
         let list = self.free_buffers.entry(key).or_default();
         
         // Persistent GPU Pool 戦略: 
-        // OS(Metalドライバ)へバッファを返却するとRSS膨張などの問題が起きるため、上限なしで保持し続ける
-        list.push(buffer);
+        // ただしサイズバケットあたり最大 32 バッファに制限し、無限蓄積を防止
+        if list.len() < 32 {
+            list.push(buffer);
+        }
+        // 32 を超えた場合は drop して OS に返す
     }
 
     /// プール内のバッファを強制解放する（OSにメモリを返却）

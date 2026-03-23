@@ -82,9 +82,7 @@ pub fn acquire_tensor(t: *mut OpaqueTensor) {
 fn make_tensor_safe(result: BackendResult<MetalTensor>) -> *mut OpaqueTensor {
     match result {
         Ok(t) => {
-            let ptr = make_tensor(t);
-            eprintln!("[ARC] make_tensor {:p}", ptr);
-            ptr
+            make_tensor(t)
         },
         Err(e) => {
             eprintln!("Metal Backend FFI Error: {}", e);

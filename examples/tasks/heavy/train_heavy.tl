@@ -1,7 +1,6 @@
 // Heavy Model: 2-Layer GPT + Adam + 2桁足し算
+// 改善版: ignore_index=-1 で入力位置のlossを除外 + gradient accumulation
 // Vocab: 0-9(数字), 10(+), 11(=), 12(PAD) → vocab_size=13
-// Input format: [d1_1, d1_10, +, d2_1, d2_10, =, s_1, s_10, s_100, PAD, PAD, PAD]
-// Target:       [d1_10, +, d2_1, d2_10, =, s_1, s_10, s_100, PAD, PAD, PAD, PAD]
 
 struct Linear { 
     W: Tensor<f32, 2>, b: Tensor<f32, 1>,
@@ -11,7 +10,7 @@ struct Linear {
 impl Linear { 
     fn new(i: i64, o: i64) -> Linear { 
         Linear(
-            (Tensor::randn([i, o], true)*0.02).detach(true),
+            (Tensor::randn([i, o], true)*0.1).detach(true),
             (Tensor::randn([o], true)*0.0).detach(true),
             Tensor::zeros([i, o], false),
             Tensor::zeros([i, o], false),
@@ -37,7 +36,7 @@ struct Embedding {
 impl Embedding { 
     fn new(v: i64, d: i64) -> Embedding {
         Embedding(
-            (Tensor::randn([v, d], true)*0.02).detach(true),
+            (Tensor::randn([v, d], true)*0.1).detach(true),
             Tensor::zeros([v, d], false),
             Tensor::zeros([v, d], false)
         )
@@ -89,10 +88,8 @@ impl CausalSelfAttention {
         let k = self.k_proj.forward(x); 
         let v = self.v_proj.forward(x); 
         let kt = k.transpose(1, 2);
-        // scale = 1/sqrt(d_model) = 1/sqrt(128) ≈ 0.0884
-        let scores = q.matmul(kt) * 0.0884;
+        let scores = q.matmul(kt) * 0.088388; // 1/sqrt(128) = 0.088388
         
-        // Proper causal mask: -inf for future positions
         let ones = scores * 0.0 + 1.0;
         let causal_mask = ones.tril(0); 
         let neg_inf_mask = (causal_mask - 1.0) * 10000.0; 
@@ -113,17 +110,13 @@ impl CausalSelfAttention {
 
 struct MLP { f: Linear, p: Linear }
 impl MLP { 
-    fn new(d: i64) -> MLP { 
-        MLP(Linear::new(d, d*4), Linear::new(d*4, d)) 
-    } 
+    fn new(d: i64) -> MLP { MLP(Linear::new(d, d*4), Linear::new(d*4, d)) } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
         self.p.forward(self.f.forward(x).relu()) 
     } 
     fn step(self, step_n: i64, lr: f32) -> MLP { 
         let mut s = self; 
-        s.f = s.f.step(step_n, lr); 
-        s.p = s.p.step(step_n, lr); 
-        s 
+        s.f = s.f.step(step_n, lr); s.p = s.p.step(step_n, lr); s 
     } 
 }
 
@@ -138,54 +131,33 @@ impl Block {
     } 
     fn step(self, step_n: i64, lr: f32) -> Block { 
         let mut s = self; 
-        s.l1 = s.l1.step(step_n, lr); 
-        s.a = s.a.step(step_n, lr); 
-        s.l2 = s.l2.step(step_n, lr); 
-        s.m = s.m.step(step_n, lr); 
-        s 
+        s.l1 = s.l1.step(step_n, lr); s.a = s.a.step(step_n, lr); 
+        s.l2 = s.l2.step(step_n, lr); s.m = s.m.step(step_n, lr); s 
     } 
 }
 
-// 2-Layer GPT
-struct GPTHeavy { 
-    w: Embedding, wp: Embedding, 
-    b1: Block, b2: Block,
-    l: LayerNorm, h: Linear 
-}
+struct GPTHeavy { w: Embedding, wp: Embedding, b1: Block, b2: Block, l: LayerNorm, h: Linear }
 impl GPTHeavy { 
     fn new(v: i64, d: i64) -> GPTHeavy { 
-        GPTHeavy(
-            Embedding::new(v, d), 
-            Embedding::new(12, d), 
-            Block::new(d), 
-            Block::new(d),
-            LayerNorm::new(d), 
-            Linear::new(d, v)
-        ) 
+        GPTHeavy(Embedding::new(v, d), Embedding::new(12, d), 
+            Block::new(d), Block::new(d), LayerNorm::new(d), Linear::new(d, v)) 
     } 
     fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> { 
         let pos_data = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0];
         let pos = pos_data.reshape([1, 12]);
-        let tok_emb = self.w.forward(i);
-        let pos_emb = self.wp.forward(pos);
-        let x = tok_emb + pos_emb;
+        let x = self.w.forward(i) + self.wp.forward(pos);
         let x = self.b1.forward(x);
         let x = self.b2.forward(x);
         self.h.forward(self.l.forward(x)) 
     } 
     fn step(self, step_n: i64, lr: f32) -> GPTHeavy { 
         let mut s = self; 
-        s.w = s.w.step(step_n, lr); 
-        s.wp = s.wp.step(step_n, lr); 
-        s.b1 = s.b1.step(step_n, lr); 
-        s.b2 = s.b2.step(step_n, lr);
-        s.l = s.l.step(step_n, lr); 
-        s.h = s.h.step(step_n, lr); 
-        s 
+        s.w = s.w.step(step_n, lr); s.wp = s.wp.step(step_n, lr); 
+        s.b1 = s.b1.step(step_n, lr); s.b2 = s.b2.step(step_n, lr);
+        s.l = s.l.step(step_n, lr); s.h = s.h.step(step_n, lr); s 
     }
 }
 
-// Random digit generator
 fn get_random_digit() -> i64 {
     let r = Tensor::randn([1], true)[0];
     if r < -1.28 { return 0; }
@@ -200,10 +172,7 @@ fn get_random_digit() -> i64 {
     return 9;
 }
 
-struct TrainState {
-    global_step: i64,
-    model: GPTHeavy
-}
+struct TrainState { global_step: i64, model: GPTHeavy }
 
 fn train_epoch(state: TrainState, lr: f32, steps: i64) -> TrainState {
     let mut st = state;
@@ -237,12 +206,14 @@ fn train_epoch(state: TrainState, lr: f32, steps: i64) -> TrainState {
             12.0, 12.0, 12.0
         ];
         
-        // Target: shifted by 1 position
+        // Target: ignore_index=-1 で入力位置を除外
+        // 位置0-4: 入力の次のトークン予測 → -1 (ignore)
+        // 位置5-7: 答え予測 → s_d1, s_d10, s_d100
+        // 位置8-11: PAD → -1 (ignore)
         let target = [
-            v_i_d10, 10.0, 
-            v_j_d1, v_j_d10, 11.0, 
+            -1.0, -1.0, -1.0, -1.0, -1.0,
             v_s_d1, v_s_d10, v_s_d100, 
-            12.0, 12.0, 12.0, 12.0
+            -1.0, -1.0, -1.0, -1.0
         ];
         
         let X = data.reshape([1, 12]);
@@ -255,10 +226,12 @@ fn train_epoch(state: TrainState, lr: f32, steps: i64) -> TrainState {
         
         loss.backward();
         
-        // 毎ステップ Adam step (adam_step 内で grad 自動クリア)
-        st.model = st.model.step(st.global_step, lr);
-        Tensor::clear_grads();
-        st.global_step = st.global_step + 1;
+        // Gradient accumulation over 8 steps
+        if s % 8 == 7 {
+            st.model = st.model.step(st.global_step, lr);
+            Tensor::clear_grads();
+            st.global_step = st.global_step + 1;
+        }
         
         if s % 160 == 0 {
              print("    Loss:"); loss.print();
@@ -278,13 +251,19 @@ fn main() {
     }
     
     let lr = 0.0003;
-    let epochs = 1500;
+    let epochs = 500;
 
-    print("Training Heavy Model: 2-layer GPT, Adam, d_model=128");
+    print("Training Heavy Model: ignore_index + grad_accum_8");
 
     for epoch in range(0, epochs) {
         print("Epoch:"); print(epoch);
-        state = train_epoch(state, lr, 160);
+        state = train_epoch(state, lr, 500);
+        
+        // 50エポック毎に中間保存
+        if epoch % 50 == 49 {
+            Param::save(state.model, "model_heavy.safetensors");
+            print("Checkpoint saved.");
+        }
     }
     
     print("Training Complete!");

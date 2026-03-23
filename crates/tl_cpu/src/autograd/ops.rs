@@ -482,16 +482,37 @@ impl<T: TensorScalar> GradFn<T> for CrossEntropyBackward<T> {
         let batch_size = target_data.len();
         let num_classes = self.num_classes;
         let mut grad = softmax_data.clone();
-        // grad = softmax - one_hot(targets)
+        
+        // 有効サンプル数を数える (ignore_index=-1 を除外)
+        let mut valid_count = 0usize;
         for i in 0..batch_size {
-            let target_idx = T::to_usize(target_data[i]);
-            if target_idx < num_classes {
-                grad[i * num_classes + target_idx] = grad[i * num_classes + target_idx] - T::one();
+            let target_idx_i64 = target_data[i].to_f64() as i64;
+            if target_idx_i64 >= 0 {
+                valid_count += 1;
             }
         }
-        // scale by grad_output and batch_size
+        if valid_count == 0 {
+            valid_count = 1; // ゼロ除算防止
+        }
+        
+        // grad = softmax - one_hot(targets), target=-1 の行はゼロ
+        for i in 0..batch_size {
+            let target_idx_i64 = target_data[i].to_f64() as i64;
+            if target_idx_i64 < 0 {
+                // ignore_index: この行の gradient を全て 0 にする
+                for j in 0..num_classes {
+                    grad[i * num_classes + j] = T::zero();
+                }
+            } else {
+                let target_idx = target_idx_i64 as usize;
+                if target_idx < num_classes {
+                    grad[i * num_classes + target_idx] = grad[i * num_classes + target_idx] - T::one();
+                }
+            }
+        }
+        // scale by grad_output and valid_count
         let scale = grad_output.to_vec_t()[0];
-        let inv_batch = T::from_f64(1.0 / batch_size as f64);
+        let inv_batch = T::from_f64(1.0 / valid_count as f64);
         let grad: Vec<T> = grad.iter().map(|g| *g * scale * inv_batch).collect();
         let shape = self.softmax_output.shape().to_vec();
         Ok(vec![CpuTensor::from_slice(&grad, &shape, self.softmax_output.dtype())])
