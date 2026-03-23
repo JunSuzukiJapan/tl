@@ -1394,6 +1394,27 @@ pub extern "C" fn tl_device_tensor_conv2d(
 ) -> *mut c_void {
     dispatch(|d| d.tensor_conv2d(input, weight, bias, stride, padding, dilation, groups))
 }
+
+/// Simple conv2d wrapper: 4-arg (input, weight, padding, stride) → 7-arg full conv2d
+/// codegen は (input, weight, padding: i64, stride: i64) を渡すため、
+/// bias=null, dilation=1, groups=1 を補完して完全なシグネチャに変換する
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_conv2d_simple_wrapper(
+    input: *mut c_void,
+    weight: *mut c_void,
+    padding: i64,
+    stride: i64,
+) -> *mut c_void {
+    tl_device_tensor_conv2d(
+        input,
+        weight,
+        std::ptr::null_mut(), // bias = null
+        stride as usize,
+        padding as usize,
+        1, // dilation = 1
+        1, // groups = 1
+    )
+}
 /// @ffi_sig (Tensor*, Tensor*, Tensor*, Tensor*, Tensor*, bool, f64, f64) -> Tensor*
 /// input, running_mean, running_var, weight, bias + training, momentum, eps
 #[unsafe(no_mangle)]

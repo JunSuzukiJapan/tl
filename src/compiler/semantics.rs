@@ -3987,11 +3987,22 @@ impl SemanticAnalyzer {
                 } else {
                     match (&left, &right) {
                         (Type::String(_), Type::String(_)) => {
-                            Ok(Type::String("String".to_string()))
+                            Ok(result_ty)
                         }
-                        (Type::String(_), Type::Char(_)) => Ok(Type::String("String".to_string())),
-                        (Type::Char(_), Type::String(_)) => Ok(Type::String("String".to_string())),
-                        (Type::Char(_), Type::Char(_)) => Ok(Type::String("String".to_string())), // Optional: Char + Char -> String?
+                        (Type::String(_), Type::Char(_)) | (Type::Char(_), Type::String(_)) => {
+                            // String + Char の連結のみ許可。Eq/Neq等は型エラー
+                            match op {
+                                BinOp::Add => Ok(Type::String("String".to_string())),
+                                _ => self.err(
+                                    SemanticError::TypeMismatch {
+                                        expected: left,
+                                        found: right,
+                                    },
+                                    None,
+                                ),
+                            }
+                        }
+                        (Type::Char(_), Type::Char(_)) => Ok(result_ty),
                         (Type::Tensor(inner, _rank), val) if **inner == *val => Ok(result_ty),
                         (val, Type::Tensor(inner, _rank)) if **inner == *val => {
                             // Scalar * Tensor -> Tensor
@@ -6033,7 +6044,14 @@ impl SemanticAnalyzer {
                 self.exit_scope();
 
                 // 5. Result Type is Tensor<BodyType, Rank = indices.len()>
-                Ok(Type::Tensor(Box::new(body_type), indices.len()))
+                // body_typeがTensor(X, 0)(rank-0スカラーテンソル)なら inner型Xに正規化
+                // これにより [k | ... { probs[r, c] }] の型が Tensor(Tensor(F32,0), 1) ではなく
+                // Tensor(F32, 1) になる
+                let normalized_body_type = match body_type {
+                    Type::Tensor(inner, 0) => *inner,
+                    other => other,
+                };
+                Ok(Type::Tensor(Box::new(normalized_body_type), indices.len()))
             }
 
             ExprKind::Block(stmts) => {

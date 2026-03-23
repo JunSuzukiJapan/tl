@@ -2798,8 +2798,8 @@ pub fn declare_runtime_functions<'ctx>(
         false,
     );
     module.add_function("tl_tensor_conv2d", conv2d_type, None);
-    // [IDevice] map_tensor_fn! → device_ffi
-    if let Some(f) = module.get_function("tl_tensor_conv2d") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_conv2d as *const () as usize); }
+    // Simple wrapper: 4-arg (input, weight, padding, stride) → 7-arg device_ffi
+    if let Some(f) = module.get_function("tl_tensor_conv2d") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_conv2d_simple_wrapper as *const () as usize); }
 
     // tl_tensor_batch_norm(input, running_mean, running_var, weight, bias, training, momentum, eps) -> *mut
     let batch_norm_type = void_ptr.fn_type(

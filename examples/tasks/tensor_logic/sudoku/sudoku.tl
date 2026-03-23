@@ -35,15 +35,15 @@ fn main() {
         let val = 0;
         
         // Manual char to digit conversion
-        if c == "1" { let val = 1; }
-        if c == "2" { let val = 2; }
-        if c == "3" { let val = 3; }
-        if c == "4" { let val = 4; }
-        if c == "5" { let val = 5; }
-        if c == "6" { let val = 6; }
-        if c == "7" { let val = 7; }
-        if c == "8" { let val = 8; }
-        if c == "9" { let val = 9; }
+        if c == '1' { let val = 1; }
+        if c == '2' { let val = 2; }
+        if c == '3' { let val = 3; }
+        if c == '4' { let val = 4; }
+        if c == '5' { let val = 5; }
+        if c == '6' { let val = 6; }
+        if c == '7' { let val = 7; }
+        if c == '8' { let val = 8; }
+        if c == '9' { let val = 9; }
         
         if val > 0 {
             // Found a hint
