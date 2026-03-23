@@ -214,9 +214,7 @@ SKIP_FILES = {
     "system_test.tl",
 
     # --- autograd 使用ファイル ---
-    "sudoku.tl",  # 型エラー: expected Bool, found String
-    "lenia.tl",   # GPU 負荷大 (64x64 grid × 100 steps)
-    "gnn.tl",     # GPU 負荷大 (250 epochs)
+    # (sudoku, lenia, gnn は修正済み — fix/tensor-logic-tasks)
     
     # 計算量が多い/GPU負荷が高いテスト
     "kv_cache_test.tl",
@@ -232,11 +230,7 @@ SKIP_FILES = {
 # 2026-02-14: 直近実行でタイムアウト/abort したファイルを明示スキップ
 SKIP_PATH_SUFFIXES = {
     "examples/tasks/tensor_logic/lenia/repro.tl",
-    "examples/tasks/tensor_logic/mln/mln.tl",
-    "examples/tasks/tensor_logic/n_queens/n_queens.tl",
     "examples/tasks/tensor_logic/n_queens/n_queens_debug.tl",
-    "examples/tasks/tensor_logic/raycast/raycast.tl",
-    "examples/tasks/tensor_logic/tsp/tsp.tl",
     "examples/test_nqueens_debug.tl",
     "tests/fixtures/debug/mem_leak_extended.tl",
     "examples/apps/tinyllama/debug_chatbot.tl",
