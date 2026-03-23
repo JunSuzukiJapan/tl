@@ -218,8 +218,6 @@ SKIP_FILES = {
     
     # 計算量が多い/GPU負荷が高いテスト
     "kv_cache_test.tl",
-    "recommendation.tl",
-    "inverse_life.tl",
 
     # --- Crash Reproduction Files ---
     "repro_reshape_segfault.tl",

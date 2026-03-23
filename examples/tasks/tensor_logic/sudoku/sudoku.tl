@@ -1,4 +1,3 @@
-// SKIP: Requires external resources or model files
 // Differentiable Sudoku Solver using Tensor Logic
 // Usage: cargo run --release --bin tl -- run examples/tasks/tensor_logic/sudoku/sudoku.tl -- "PUZZLE_STRING"
 
