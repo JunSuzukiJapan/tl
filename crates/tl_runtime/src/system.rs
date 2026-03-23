@@ -726,6 +726,16 @@ pub extern "C" fn tl_adam_step(
     crate::device_ffi::tl_device_tensor_free(new_param_tensor);
     crate::device_ffi::tl_device_tensor_free(new_m_tensor);
     crate::device_ffi::tl_device_tensor_free(new_v_tensor);
+
+    // param の grad をゼロクリア (grad 蓄積を防止)
+    // backward() は grad_fn のみクリアし grad データは保持するため、
+    // 明示的にクリアしないと次の backward で累積してしまう
+    if crate::device_ffi::is_cpu() {
+        unsafe {
+            let cpu_param = &mut *(param as *mut tl_cpu::CpuTensor<f32>);
+            cpu_param.zero_grad();
+        }
+    }
 }
 
 /// SGD with momentum:

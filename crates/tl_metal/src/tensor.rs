@@ -442,67 +442,99 @@ impl MetalTensor {
         Ok(())
     }
 
-    /// backward（逆伝播）— ワークリスト方式（スタックオーバーフロー防止）
-    /// TensorRef (Arc) ベースで入力テンソルの生存を保証。
+    /// backward（逆伝播）— CPU 版と同一構造
+    /// 1. DFS でトポロジカル順序を構築
+    /// 2. 出力テンソルの勾配を ones で初期化
+    /// 3. 逆トポロジカル順序で勾配を伝播
+    /// 4. 全ノードの grad_fn をクリア (V5.0 連鎖解放)
     pub fn backward(&mut self) -> BackendResult<()> {
         if !self.requires_grad() {
             return Ok(());
         }
+        let self_ptr = self as *mut Self;
 
-        // 初期勾配: すべて 1
+        // 1. DFS でトポロジカル順序を構築
+        let mut topo_order: Vec<*mut Self> = Vec::new();
+        let mut visited = std::collections::HashSet::<usize>::new();
+        Self::build_topo(self_ptr, &mut visited, &mut topo_order);
+
+        // 2. 出力テンソルの勾配を ones で初期化
         let ones = MetalTensor::ones(self.shape(), self.dtype())?;
-        let self_ptr = self as *mut MetalTensor;
+        if let Some(ref mut meta) = self.autograd {
+            meta.grad = Some(ones);
+        }
 
-        // ワークリスト: (テンソル生ポインタ, 出力勾配)
-        let mut worklist: Vec<(*mut MetalTensor, MetalTensor)> = vec![(self_ptr, ones)];
-        // 訪問済みノードを記録（backward後にgrad_fnをクリアするため）
-        let mut visited: Vec<*mut MetalTensor> = Vec::new();
+        // 3. 逆トポロジカル順序で勾配を伝播
+        for &ptr in topo_order.iter().rev() {
+            let tensor = unsafe { &*ptr };
+            let grad = tensor.autograd.as_ref()
+                .and_then(|m| m.grad.as_ref())
+                .map(|g| g.shallow_clone());
 
-        while let Some((tensor_ptr, grad_output)) = worklist.pop() {
-            let tensor = unsafe { &mut *tensor_ptr };
-            visited.push(tensor_ptr);
+            if let Some(grad_output) = grad {
+                let propagation = tensor.autograd.as_ref().and_then(|m| {
+                    m.grad_fn.as_ref().map(|gf| {
+                        let grads = gf.backward(&grad_output);
+                        let inputs = gf.inputs();
+                        (grads, inputs)
+                    })
+                });
 
-            // grad_fn から入力勾配を計算してワークリストに追加
-            let propagation = if let Some(meta) = tensor.autograd.as_ref() {
-                if let Some(gf) = meta.grad_fn.as_ref() {
-                    let grads = gf.backward(&grad_output)?;
-                    let inputs = gf.inputs();
-                    Some((grads, inputs))
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
-
-            // 勾配を累積
-            tensor.accumulate_grad(grad_output)?;
-
-            if let Some((grads, inputs)) = propagation {
-                for (input_ref, grad) in inputs.into_iter().zip(grads.into_iter()) {
-                    let input_ptr = input_ref.get() as *mut MetalTensor;
-                    let input = unsafe { &*input_ptr };
-                    if input.requires_grad() {
-                        worklist.push((input_ptr, grad));
+                if let Some((grads_result, inputs)) = propagation {
+                    let grads = match grads_result {
+                        Ok(g) => g,
+                        Err(e) => {
+                            eprintln!("Autograd backward error: {}", e);
+                            continue;
+                        }
+                    };
+                    for (input_ref, grad) in inputs.into_iter().zip(grads.into_iter()) {
+                        let input = unsafe { &mut *input_ref.get() };
+                        if input.requires_grad() {
+                            input.accumulate_grad(grad)?;
+                        }
                     }
                 }
             }
         }
 
-        // === 計算グラフ解放（V5.0 メモリ管理） ===
-        // ドキュメントの方針「テンソルは最後まで解放しない（Persistent Pool or Rustの自然なDropに任せる）」に従う。
-        // ここで手動で grad_fn = None にして参照を絶つと、
-        // ダブルフリーなどの UAF(Use-After-Free) を引き起こし、MetalのSegfaultのトリガーとなるため削除。
-        /*
-        for &ptr in &visited {
+        // 4. 全ノードの grad_fn をクリア (V5.0 連鎖解放)
+        //    GPU コマンドの完了を待機してからクリア
+        crate::command_stream::sync_stream();
+        for &ptr in topo_order.iter() {
             let tensor = unsafe { &mut *ptr };
             if let Some(ref mut meta) = tensor.autograd {
                 meta.grad_fn = None;
             }
         }
-        */
 
         Ok(())
+    }
+
+    /// DFS でトポロジカル順序を構築（CPU 版と同一ロジック）
+    fn build_topo(
+        ptr: *mut Self,
+        visited: &mut std::collections::HashSet<usize>,
+        topo: &mut Vec<*mut Self>,
+    ) {
+        let key = ptr as usize;
+        if visited.contains(&key) {
+            return;
+        }
+        visited.insert(key);
+        let tensor = unsafe { &*ptr };
+        if let Some(ref meta) = tensor.autograd {
+            if let Some(ref gf) = meta.grad_fn {
+                for input_ref in gf.inputs() {
+                    let input_ptr = input_ref.get() as *mut Self;
+                    let input_tensor = unsafe { &*input_ptr };
+                    if input_tensor.requires_grad() {
+                        Self::build_topo(input_ptr, visited, topo);
+                    }
+                }
+            }
+        }
+        topo.push(ptr);
     }
 
     /// 計算グラフから切り離す（データのみの shallow clone）

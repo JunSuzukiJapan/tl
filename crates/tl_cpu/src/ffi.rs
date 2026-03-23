@@ -1634,7 +1634,14 @@ pub extern "C" fn tl_cpu_tensor_replace_data(dst: *mut OpaqueTensor, src: *mut O
         return;
     }
     unsafe {
-        *dst = (&*src).clone();
+        let dst_t = &mut *dst;
+        let src_t = &*src;
+        // データと shape のみ入れ替え、autograd メタは保持
+        dst_t.data = src_t.data.clone();
+        dst_t.data_i64 = src_t.data_i64.clone();
+        dst_t.shape = src_t.shape.clone();
+        dst_t.dtype = src_t.dtype;
+        // dst_t.autograd はそのまま保持 → requires_grad が維持される
     }
 }
 
@@ -2055,16 +2062,25 @@ pub extern "C" fn tl_cpu_tensor_cross_entropy(
         }
     }
 
-    // 2. NLL loss: -mean(log(softmax[target]))
+    // 2. NLL loss: -mean(log(softmax[target])), ignoring target == -1
     let mut loss = 0.0f32;
+    let mut valid_count = 0usize;
     for i in 0..batch_size {
-        let idx = t_data[i] as usize;
+        let idx = t_data[i];
+        // ignore_index: target が -1 の位置は loss をスキップ
+        if idx < 0 {
+            continue;
+        }
+        let idx = idx as usize;
         if idx < num_classes {
             let p = softmax_data[i * num_classes + idx].max(1e-7);
             loss -= p.ln();
+            valid_count += 1;
         }
     }
-    loss /= batch_size as f32;
+    if valid_count > 0 {
+        loss /= valid_count as f32;
+    }
 
     // 3. Save softmax for backward
     let softmax_tensor = CpuTensor::<f32> {
@@ -2979,6 +2995,7 @@ pub extern "C" fn tl_cpu_tensor_layer_norm(
                         input_data: inp.shallow_clone(),
                         weight: if !weight.is_null() { tensor_ref_from_ptr(weight) } else { tensor_ref_from_ptr(input) },
                         weight_data: w.shallow_clone(),
+                        bias: if !bias.is_null() { tensor_ref_from_ptr(bias) } else { tensor_ref_from_ptr(input) },
                         eps,
                     }));
                 }

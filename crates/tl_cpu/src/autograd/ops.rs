@@ -197,34 +197,39 @@ impl<T: TensorScalar> GradFn<T> for SoftmaxBackward<T> {
         let s = self.output.to_vec_t();
         let g = grad_output.to_vec_t();
         let shape = self.output.shape();
-        if shape.len() == 2 && self.axis == 1 {
-            let rows = shape[0];
-            let cols = shape[1];
-            let mut result = vec![T::zero(); s.len()];
-            for i in 0..rows {
-                let start = i * cols;
-                let end = start + cols;
-                let s_row = &s[start..end];
-                let g_row = &g[start..end];
-                let mut sg_sum = T::zero();
-                for (si, gi) in s_row.iter().zip(g_row.iter()) {
-                    sg_sum = sg_sum + *si * *gi;
-                }
-                for j in 0..cols {
-                    result[start + j] = s_row[j] * (g_row[j] - sg_sum);
-                }
-            }
-            Ok(vec![CpuTensor::from_slice(&result, shape, self.output.dtype())])
+        let ndim = shape.len();
+
+        // 正規化された axis
+        let axis = if self.axis < 0 {
+            (ndim as i32 + self.axis) as usize
         } else {
-            let mut sg_sum = T::zero();
-            for (si, gi) in s.iter().zip(g.iter()) {
-                sg_sum = sg_sum + *si * *gi;
+            self.axis as usize
+        };
+
+        let outer: usize = shape[..axis].iter().product();
+        let axis_size = shape[axis];
+        let inner: usize = shape[axis + 1..].iter().product();
+
+        let mut result = vec![T::zero(); s.len()];
+
+        // 各 softmax スライス (outer × inner) ごとに独立して勾配計算
+        for o in 0..outer {
+            for k in 0..inner {
+                // sg_sum = sum_j(s[j] * g[j]) for this slice
+                let mut sg_sum = T::zero();
+                for j in 0..axis_size {
+                    let idx = o * axis_size * inner + j * inner + k;
+                    sg_sum = sg_sum + s[idx] * g[idx];
+                }
+                // result[j] = s[j] * (g[j] - sg_sum)
+                for j in 0..axis_size {
+                    let idx = o * axis_size * inner + j * inner + k;
+                    result[idx] = s[idx] * (g[idx] - sg_sum);
+                }
             }
-            let result: Vec<T> = s.iter().zip(g.iter())
-                .map(|(si, gi)| *si * (*gi - sg_sum))
-                .collect();
-            Ok(vec![CpuTensor::from_slice(&result, shape, self.output.dtype())])
         }
+
+        Ok(vec![CpuTensor::from_slice(&result, shape, self.output.dtype())])
     }
     fn inputs(&self) -> Vec<TensorRef<T>> {
         vec![self.a.clone()]
@@ -477,16 +482,37 @@ impl<T: TensorScalar> GradFn<T> for CrossEntropyBackward<T> {
         let batch_size = target_data.len();
         let num_classes = self.num_classes;
         let mut grad = softmax_data.clone();
-        // grad = softmax - one_hot(targets)
+        
+        // 有効サンプル数を数える (ignore_index=-1 を除外)
+        let mut valid_count = 0usize;
         for i in 0..batch_size {
-            let target_idx = T::to_usize(target_data[i]);
-            if target_idx < num_classes {
-                grad[i * num_classes + target_idx] = grad[i * num_classes + target_idx] - T::one();
+            let target_idx_i64 = target_data[i].to_f64() as i64;
+            if target_idx_i64 >= 0 {
+                valid_count += 1;
             }
         }
-        // scale by grad_output and batch_size
+        if valid_count == 0 {
+            valid_count = 1; // ゼロ除算防止
+        }
+        
+        // grad = softmax - one_hot(targets), target=-1 の行はゼロ
+        for i in 0..batch_size {
+            let target_idx_i64 = target_data[i].to_f64() as i64;
+            if target_idx_i64 < 0 {
+                // ignore_index: この行の gradient を全て 0 にする
+                for j in 0..num_classes {
+                    grad[i * num_classes + j] = T::zero();
+                }
+            } else {
+                let target_idx = target_idx_i64 as usize;
+                if target_idx < num_classes {
+                    grad[i * num_classes + target_idx] = grad[i * num_classes + target_idx] - T::one();
+                }
+            }
+        }
+        // scale by grad_output and valid_count
         let scale = grad_output.to_vec_t()[0];
-        let inv_batch = T::from_f64(1.0 / batch_size as f64);
+        let inv_batch = T::from_f64(1.0 / valid_count as f64);
         let grad: Vec<T> = grad.iter().map(|g| *g * scale * inv_batch).collect();
         let shape = self.softmax_output.shape().to_vec();
         Ok(vec![CpuTensor::from_slice(&grad, &shape, self.softmax_output.dtype())])
@@ -549,6 +575,7 @@ pub struct LayerNormBackward<T: TensorScalar> {
     pub input_data: CpuTensor<T>,
     pub weight: TensorRef<T>,
     pub weight_data: CpuTensor<T>,
+    pub bias: TensorRef<T>,
     pub eps: f64,
 }
 
@@ -561,9 +588,10 @@ impl<T: TensorScalar> GradFn<T> for LayerNormBackward<T> {
         let ndim = shape.len();
         let d = shape[ndim - 1]; // normalized dimension
         let n = x.len() / d; // batch size (all dims except last)
-        let _eps_t = T::from_f64(self.eps);
 
         let mut dx = vec![T::zero(); x.len()];
+        let mut dw = vec![T::zero(); d]; // dγ: weight の勾配
+        let mut db = vec![T::zero(); d]; // dβ: bias の勾配
 
         for i in 0..n {
             let start = i * d;
@@ -591,7 +619,13 @@ impl<T: TensorScalar> GradFn<T> for LayerNormBackward<T> {
                 x_hat[j] = (row[j] - mean) * std_inv;
             }
 
-            // grad through layer_norm
+            // dγ += dy * x_hat, dβ += dy (summed over batch)
+            for j in 0..d {
+                dw[j] = dw[j] + dy_row[j] * x_hat[j];
+                db[j] = db[j] + dy_row[j];
+            }
+
+            // dx: grad through layer_norm
             let mut dy_sum = T::zero();
             let mut dy_xhat_sum = T::zero();
             for j in 0..d {
@@ -607,12 +641,15 @@ impl<T: TensorScalar> GradFn<T> for LayerNormBackward<T> {
             }
         }
 
-        Ok(vec![CpuTensor::from_slice(&dx, shape, self.input_data.dtype())])
+        let dtype = self.input_data.dtype();
+        Ok(vec![
+            CpuTensor::from_slice(&dx, shape, dtype),
+            CpuTensor::from_slice(&dw, &[d], dtype),
+            CpuTensor::from_slice(&db, &[d], dtype),
+        ])
     }
     fn inputs(&self) -> Vec<TensorRef<T>> {
-        // weight と bias への勾配は省略 (leaf tensor として直接 grad 蓄積)
-        // ここでは input への勾配のみ返す
-        vec![self.input.clone()]
+        vec![self.input.clone(), self.weight.clone(), self.bias.clone()]
     }
 }
 
