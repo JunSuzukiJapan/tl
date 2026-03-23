@@ -426,15 +426,22 @@ impl<T: TensorScalar> CpuTensor<T> {
             }
         }
 
-        // 4. 全ノードの grad_fn をクリア
+        // 4. 全ノードの grad_fn をクリアし、中間ノードの grad も解放
         //    各ノードの grad_fn = None により、GradFn 内の TensorRef (Arc) が即座に drop される。
         //    loss だけクリアする方式では、中間テンソルの GradFn が保持する Arc 参照が
         //    exit_scope の release と競合してメモリリークを引き起こす。
         //    全ノードの grad_fn を明示的にクリアして、中間テンソル間の参照を即座に解放する。
+        //    また、中間ノード（grad_fn を持っていたノード）の grad も不要なのでクリアする。
+        //    リーフテンソル（grad_fn == None）の grad は .grad() で取得するため保持する。
         for &ptr in topo_order.iter() {
             let tensor = unsafe { &mut *ptr };
             if let Some(ref mut meta) = tensor.autograd {
+                let is_intermediate = meta.grad_fn.is_some();
                 meta.grad_fn = None;
+                // 中間ノードの勾配はbackward後に不要 → メモリ解放
+                if is_intermediate {
+                    meta.grad = None;
+                }
             }
         }
     }
