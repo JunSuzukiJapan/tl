@@ -84,7 +84,7 @@ impl IDevice for CudaDeviceImpl {
         let f32_data: Vec<f32> = data_slice.iter().map(|&x| x as f32).collect();
         
         // CPU backend で一旦作成してから CUDA にコピー
-        let cpu_tensor = crate::tensor::CudaTensor::from_f32_data(&f32_data, &shape);
+        let cpu_tensor = crate::tensor::CudaTensor::from_slice(&f32_data, &shape, crate::DType::F32);
         Ok(v(ffi_ops::make_tensor(cpu_tensor)))
     }
     fn tensor_from_u8_labels(&self, data: *const u8, len: i64) -> BackendResult<*mut c_void> {

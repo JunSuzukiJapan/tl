@@ -807,7 +807,27 @@ pub fn tl_cuda_slice(
     start: usize,
     len: usize,
 ) -> *mut OpaqueTensor {
-    unsafe { make_result(get(t).slice_impl(dim, start, len)) }
+    unsafe {
+        let input_shape = get(t).shape().to_vec();
+        let mut result = match get(t).slice_impl(dim, start, len) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("CUDA FFI Error: {}", e);
+                return std::ptr::null_mut();
+            }
+        };
+        if get(t).requires_grad() {
+            let input_ref = tensor_ref_from_ptr(t);
+            result.set_grad_fn(Box::new(SliceBackward {
+                input: input_ref,
+                input_shape,
+                dim,
+                start,
+                len,
+            }));
+        }
+        make_tensor(result)
+    }
 }
 #[no_mangle]
 pub fn tl_cuda_cat(a: *mut OpaqueTensor, b: *mut OpaqueTensor, dim: i64) -> *mut OpaqueTensor {
@@ -819,7 +839,20 @@ pub fn tl_cuda_cat_i64(a: *mut OpaqueTensor, b: *mut OpaqueTensor, dim: i64) -> 
 }
 #[no_mangle]
 pub fn tl_cuda_tril(t: *mut OpaqueTensor, diagonal: i64) -> *mut OpaqueTensor {
-    unsafe { make_result(get(t).tril_impl(diagonal as i32)) }
+    unsafe {
+        let diag = diagonal as i32;
+        let mut result = match get(t).tril_impl(diag) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("CUDA FFI Error: {}", e);
+                return std::ptr::null_mut();
+            }
+        };
+        set_grad_unary(&mut result, t, |tr| {
+            Box::new(TrilBackward { input: tr, diagonal: diag })
+        });
+        make_tensor(result)
+    }
 }
 #[no_mangle]
 pub fn tl_cuda_repeat_interleave(
@@ -878,7 +911,20 @@ pub fn tl_cuda_layer_norm(
     bias: *mut OpaqueTensor,
     eps: f64,
 ) -> *mut OpaqueTensor {
-    unsafe { make_result(get(input).layer_norm_impl(get(weight), get(bias), eps as f32)) }
+    unsafe {
+        let mut result = match get(input).layer_norm_impl(get(weight), get(bias), eps as f32) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("CUDA FFI Error: {}", e);
+                return std::ptr::null_mut();
+            }
+        };
+        if get(input).requires_grad() {
+            let input_ref = tensor_ref_from_ptr(input);
+            result.set_grad_fn(Box::new(LayerNormBackward { input: input_ref }));
+        }
+        make_tensor(result)
+    }
 }
 #[no_mangle]
 pub fn tl_cuda_max_pool2d(

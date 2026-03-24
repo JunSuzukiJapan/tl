@@ -16,87 +16,36 @@
 | save/load (バイナリ形式) | ✅ 実装済み |
 | safetensors (TensorMap) | ✅ tl_runtime 層で実装（デバイス非依存） |
 | Arc ベース統一所有権 (V5.0) | ✅ 実装済み |
+| FFI autograd 接続 | ✅ 全演算接続済み |
+| backward() 中間 grad 解放 | ✅ 修正済み |
 
 ---
 
 ## 必要な作業
 
-### 1. 🔴🔴 FFI 関数の autograd 未接続（学習パイプライン不動の根本原因）
+### 1. ✅ FFI 関数の autograd 接続（完了）
 
-**優先度: 最高** | **ファイル**: `crates/tl_cuda/src/ffi_ops.rs`
+**ステータス: 完了** | **ファイル**: `crates/tl_cuda/src/ffi_ops.rs`
 
-CUDA の FFI 関数のうち、**autograd 対応済みはわずか 3 演算** のみ。
-CPU では **30 演算** が `set_grad_fn` を呼んでおり、CUDA では基本演算の勾配が計算できないため、
-**学習パイプラインが一切動作しない**状態。
+全 FFI 関数に autograd が接続済み。`ffi_binary_op!`/`ffi_unary_op!` マクロおよび手動実装により、
+全学習対象演算で `set_grad_fn` が呼ばれる状態。
 
-#### autograd 対応状況（CPU vs CUDA）
+追加で接続した演算:
+- `layer_norm` → `LayerNormBackward`
+- `tril` → `TrilBackward`
+- `slice` → `SliceBackward`
 
-| 演算 | CPU | CUDA | 備考 |
-|:--|:--:|:--:|:--|
-| Add | ✅ | ❌ | `AddBackward` (ops定義済み) |
-| Sub | ✅ | ❌ | `SubBackward` (ops定義済み) |
-| Mul | ✅ | ❌ | `MulBackward` (ops定義済み) |
-| Div | ✅ | ❌ | `DivBackward` (ops定義済み) |
-| Matmul | ✅ | ❌ | `MatmulBackward` (ops定義済み) |
-| AddScalar | ✅ | ❌ | `AddScalarBackward` (ops定義済み) |
-| SubScalar | ✅ | ❌ | `SubScalarBackward` (ops定義済み) |
-| MulScalar | ✅ | ❌ | `MulScalarBackward` (ops定義済み) |
-| DivScalar | ✅ | ❌ | `DivScalarBackward` (ops定義済み) |
-| Pow | ✅ | ❌ | `PowBackward` (ops定義済み) |
-| Neg | ✅ | ❌ | `NegBackward` (ops定義済み) |
-| Exp | ✅ | ❌ | `ExpBackward` (ops定義済み) |
-| Log | ✅ | ❌ | `LogBackward` (ops定義済み) |
-| Sqrt | ✅ | ❌ | `SqrtBackward` (ops定義済み) |
-| Relu | ✅ | ❌ | `ReluBackward` (ops定義済み) |
-| Sigmoid | ✅ | ❌ | `SigmoidBackward` (ops定義済み) |
-| Tanh | ✅ | ❌ | `TanhBackward` (ops定義済み) |
-| Gelu | ✅ | ❌ | `GeluBackward` (ops定義済み) |
-| Silu | ✅ | ❌ | `SiluBackward` (ops定義済み) |
-| Sumall | ✅ | ❌ | `SumallBackward` (ops定義済み) |
-| SumDim | ✅ | ❌ | `SumDimBackward` (ops定義済み) |
-| Mean | ✅ | ❌ | `MeanAllBackward`/`MeanDimBackward` (ops定義済み) |
-| Reshape | ✅ | ❌ | `ReshapeBackward` (ops定義済み) |
-| Transpose | ✅ | ❌ | `TransposeBackward` (ops定義済み) |
-| Softmax | ✅ | ✅ | |
-| CrossEntropy | ✅ | ✅ | |
-| Embedding | ✅ | ✅ | |
-| LayerNorm | ✅ | ❌ | `LayerNormBackward` (ops定義済み) |
-| Tril | ✅ | ❌ | ❌ ops自体が未定義 |
-| Squeeze | ✅ | ❌ | ❌ ops自体が未定義 |
-| Unsqueeze | ✅ | ❌ | ❌ ops自体が未定義 |
-| Slice | ✅ | ❌ | ❌ ops自体が未定義 |
-
-**修正方針**:
-
-1. **ffi_ops.rs**: CPU の `ffi.rs` を参考に、各FFI関数に `requires_grad()` チェックと `set_grad_fn` 呼び出しを追加
-2. **autograd/ops.rs**: 不足している4つの backward ops (`TrilBackward`, `SqueezeBackward`, `UnsqueezeBackward`, `SliceBackward`) を追加
-3. 既存の `autograd/ops.rs` に定義済みの backward 構造体は **そのまま利用可能**（27個は定義済みだが ffi_ops から呼ばれていないだけ）
-
-> [!IMPORTANT]
-> autograd ops の構造体は 35 個定義済みだが、FFI 関数でそれらを接続する `set_grad_fn` 呼び出しが **3個しかない**。
-> 定義と接続の乖離が根本原因。
+`autograd/ops.rs` に追加した backward 構造体:
+- `TrilBackward`, `SliceBackward`, `SqueezeBackward`, `UnsqueezeBackward`
 
 ---
 
-### 2. 🔴 backward() 中間ノードの grad 未解放（メモリリーク）
+### 2. ✅ backward() 中間ノードの grad 解放（完了）
 
-**優先度: 高** | **ファイル**: `crates/tl_cuda/src/tensor.rs` L545-550
+**ステータス: 完了** | **ファイル**: `crates/tl_cuda/src/tensor.rs`
 
-CPU 版で修正済みの問題が CUDA にも存在する。
-backward() の計算グラフ解放ステップで `grad_fn = None` はしているが、**中間ノードの `grad` をクリアしていない**。
-
-```rust
-// 現在のコード (L545-550)
-for entry in visited.iter_mut() {
-    let tensor = unsafe { &mut *entry.0 };
-    if let Some(ref mut meta) = tensor.autograd {
-        meta.grad_fn = None;
-        // ← ここで中間ノードの grad もクリアすべき
-    }
-}
-```
-
-**修正方針**: CPU 版 (`crates/tl_cpu/src/tensor.rs` L429-444) と同様に、中間ノード（`grad_fn` を持つノード）の `grad` も `None` にする。リーフテンソルの grad は `.grad()` で取得するため保持。
+CPU 版と同様に、backward() の計算グラフ解放ステップで中間ノード（`grad_fn` を持つノード）の `grad` もクリアするよう修正済み。
+リーフテンソルの grad は `.grad()` で取得するため保持。
 
 ---
 

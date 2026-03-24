@@ -53,7 +53,11 @@ unsafe_send_sync!(
     ScaleBackward,
     Conv2dBackward,
     BatchNormBackward,
-    DropoutBackward
+    DropoutBackward,
+    TrilBackward,
+    SliceBackward,
+    SqueezeBackward,
+    UnsqueezeBackward
 );
 
 /// TensorRef ヘルパー
@@ -893,5 +897,89 @@ impl GradFn for DropoutBackward {
     }
     fn inputs(&self) -> Vec<TensorRef> {
         vec![self.mask.clone()]
+    }
+}
+
+// ========== 形状操作 (追加) ==========
+
+/// tril の勾配: 下三角マスクをそのまま適用
+pub struct TrilBackward {
+    pub input: TensorRef,
+    pub diagonal: i32,
+}
+impl GradFn for TrilBackward {
+    fn backward(&self, grad_output: &CudaTensor) -> BackendResult<Vec<CudaTensor>> {
+        Ok(vec![grad_output.tril_impl(self.diagonal)?])
+    }
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.input.clone()]
+    }
+}
+
+/// slice の勾配: ゼロテンソルを作成し、slice 範囲に grad を scatter
+pub struct SliceBackward {
+    pub input: TensorRef,
+    pub input_shape: Vec<usize>,
+    pub dim: usize,
+    pub start: usize,
+    pub len: usize,
+}
+impl GradFn for SliceBackward {
+    fn backward(&self, grad_output: &CudaTensor) -> BackendResult<Vec<CudaTensor>> {
+        // 元の shape のゼロテンソルを作成し、slice 位置に grad を配置
+        // GPU 上で実行: pad_with_zeros で元 shape に戻す
+        let mut result = CudaTensor::zeros(&self.input_shape, DType::F32);
+        // narrow で slice した逆操作:
+        // grad_output の内容を result の [start..start+len] に scatter
+        let grad_data = grad_output.to_vec::<f32>();
+        let mut result_data = result.to_vec::<f32>();
+
+        let outer: usize = self.input_shape[..self.dim].iter().product::<usize>().max(1);
+        let inner: usize = self.input_shape[self.dim + 1..].iter().product::<usize>().max(1);
+        let dim_size = self.input_shape[self.dim];
+
+        for o in 0..outer {
+            for s in 0..self.len {
+                for k in 0..inner {
+                    let src = o * self.len * inner + s * inner + k;
+                    let dst = o * dim_size * inner + (self.start + s) * inner + k;
+                    if src < grad_data.len() && dst < result_data.len() {
+                        result_data[dst] = grad_data[src];
+                    }
+                }
+            }
+        }
+        Ok(vec![CudaTensor::from_slice(&result_data, &self.input_shape, DType::F32)])
+    }
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.input.clone()]
+    }
+}
+
+/// squeeze の勾配: reshape で元 shape に戻す
+pub struct SqueezeBackward {
+    pub input: TensorRef,
+    pub input_shape: Vec<usize>,
+}
+impl GradFn for SqueezeBackward {
+    fn backward(&self, grad_output: &CudaTensor) -> BackendResult<Vec<CudaTensor>> {
+        Ok(vec![grad_output.reshape_impl(&self.input_shape)?])
+    }
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.input.clone()]
+    }
+}
+
+/// unsqueeze の勾配: reshape で元 shape に戻す
+pub struct UnsqueezeBackward {
+    pub input: TensorRef,
+    pub input_shape: Vec<usize>,
+}
+impl GradFn for UnsqueezeBackward {
+    fn backward(&self, grad_output: &CudaTensor) -> BackendResult<Vec<CudaTensor>> {
+        Ok(vec![grad_output.reshape_impl(&self.input_shape)?])
+    }
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.input.clone()]
     }
 }

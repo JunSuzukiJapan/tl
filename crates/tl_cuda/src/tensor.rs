@@ -542,10 +542,17 @@ impl CudaTensor {
 
         // 計算グラフ解放
         // visited の Arc 参照が全テンソルを生かしているため安全にアクセス可能
+        // 中間ノード（grad_fn を持つノード）の grad も不要なのでクリアする。
+        // リーフテンソル（grad_fn == None）の grad は .grad() で取得するため保持する。
         for entry in visited.iter_mut() {
             let tensor = unsafe { &mut *entry.0 };
             if let Some(ref mut meta) = tensor.autograd {
+                let is_intermediate = meta.grad_fn.is_some();
                 meta.grad_fn = None;
+                // 中間ノードの勾配はbackward後に不要 → メモリ解放
+                if is_intermediate {
+                    meta.grad = None;
+                }
             }
         }
         Ok(())
