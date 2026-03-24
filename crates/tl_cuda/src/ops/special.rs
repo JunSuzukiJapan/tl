@@ -197,12 +197,42 @@ impl CudaTensor {
         let n = logits_shape[0];
         let c = logits_shape[1];
 
+        // targets が F32 の場合、i64 に変換 (.tl は全値を f32 で保持)
+        let i64_targets = if target.dtype() == DType::F32 {
+            let target_count = target.elem_count();
+            let f32_bytes = target_count * 4;
+            let mut f32_host = vec![0f32; target_count];
+            unsafe {
+                crate::cuda_sys::cudaMemcpy(
+                    f32_host.as_mut_ptr() as *mut std::ffi::c_void,
+                    target.buffer.ptr(),
+                    f32_bytes,
+                    crate::cuda_sys::cudaMemcpyKind::cudaMemcpyDeviceToHost,
+                );
+            }
+            let i64_host: Vec<i64> = f32_host.iter().map(|&v| v as i64).collect();
+            let t = CudaTensor::uninit(&[target_count], DType::I64);
+            let i64_bytes = target_count * 8;
+            unsafe {
+                crate::cuda_sys::cudaMemcpy(
+                    t.buffer.ptr(),
+                    i64_host.as_ptr() as *const std::ffi::c_void,
+                    i64_bytes,
+                    crate::cuda_sys::cudaMemcpyKind::cudaMemcpyHostToDevice,
+                );
+            }
+            Some(t)
+        } else {
+            None
+        };
+        let actual_targets = i64_targets.as_ref().unwrap_or(target);
+
         let losses = CudaTensor::uninit(&[n], DType::F32);
         let stream = crate::stream::get_stream().raw();
         unsafe {
             launch_cross_entropy_kernel(
                 self.buffer.ptr() as *const f32,
-                target.buffer.ptr() as *const i64,
+                actual_targets.buffer.ptr() as *const i64,
                 losses.buffer.ptr() as *mut f32,
                 n as i32,
                 c as i32,
