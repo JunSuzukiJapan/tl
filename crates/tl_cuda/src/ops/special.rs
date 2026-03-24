@@ -96,6 +96,37 @@ extern "C" {
 }
 
 impl CudaTensor {
+    /// F32 テンソルを I64 に変換するヘルパー
+    /// .tl は全値を f32 で保持するため、i64 を期待するカーネルに渡す前に変換が必要
+    fn ensure_i64(&self) -> Option<CudaTensor> {
+        if self.dtype() == DType::F32 {
+            let count = self.elem_count();
+            let f32_bytes = count * 4;
+            let mut f32_host = vec![0f32; count];
+            unsafe {
+                crate::cuda_sys::cudaMemcpy(
+                    f32_host.as_mut_ptr() as *mut std::ffi::c_void,
+                    self.buffer.ptr(),
+                    f32_bytes,
+                    crate::cuda_sys::cudaMemcpyKind::cudaMemcpyDeviceToHost,
+                );
+            }
+            let i64_host: Vec<i64> = f32_host.iter().map(|&v| v as i64).collect();
+            let t = CudaTensor::uninit(&[count], DType::I64);
+            let i64_bytes = count * 8;
+            unsafe {
+                crate::cuda_sys::cudaMemcpy(
+                    t.buffer.ptr(),
+                    i64_host.as_ptr() as *const std::ffi::c_void,
+                    i64_bytes,
+                    crate::cuda_sys::cudaMemcpyKind::cudaMemcpyHostToDevice,
+                );
+            }
+            Some(t)
+        } else {
+            None
+        }
+    }
     /// Softmax — GPU カーネル
     pub fn softmax_impl(&self, axis: i32) -> BackendResult<CudaTensor> {
         let shape = self.shape().to_vec();
@@ -197,34 +228,7 @@ impl CudaTensor {
         let n = logits_shape[0];
         let c = logits_shape[1];
 
-        // targets が F32 の場合、i64 に変換 (.tl は全値を f32 で保持)
-        let i64_targets = if target.dtype() == DType::F32 {
-            let target_count = target.elem_count();
-            let f32_bytes = target_count * 4;
-            let mut f32_host = vec![0f32; target_count];
-            unsafe {
-                crate::cuda_sys::cudaMemcpy(
-                    f32_host.as_mut_ptr() as *mut std::ffi::c_void,
-                    target.buffer.ptr(),
-                    f32_bytes,
-                    crate::cuda_sys::cudaMemcpyKind::cudaMemcpyDeviceToHost,
-                );
-            }
-            let i64_host: Vec<i64> = f32_host.iter().map(|&v| v as i64).collect();
-            let t = CudaTensor::uninit(&[target_count], DType::I64);
-            let i64_bytes = target_count * 8;
-            unsafe {
-                crate::cuda_sys::cudaMemcpy(
-                    t.buffer.ptr(),
-                    i64_host.as_ptr() as *const std::ffi::c_void,
-                    i64_bytes,
-                    crate::cuda_sys::cudaMemcpyKind::cudaMemcpyHostToDevice,
-                );
-            }
-            Some(t)
-        } else {
-            None
-        };
+        let i64_targets = target.ensure_i64();
         let actual_targets = i64_targets.as_ref().unwrap_or(target);
 
         let losses = CudaTensor::uninit(&[n], DType::F32);
@@ -359,12 +363,14 @@ impl CudaTensor {
     /// one_hot — GPU カーネル
     pub fn one_hot_impl(&self, num_classes: usize) -> BackendResult<CudaTensor> {
         let batch = self.elem_count();
+        let i64_conv = self.ensure_i64();
+        let actual = i64_conv.as_ref().unwrap_or(self);
         let out_shape = vec![batch, num_classes];
         let output = CudaTensor::zeros(&out_shape, DType::F32);
         let stream = crate::stream::get_stream().raw();
         unsafe {
             launch_one_hot_kernel(
-                self.buffer.ptr() as *const i64,
+                actual.buffer.ptr() as *const i64,
                 output.buffer.ptr() as *mut f32,
                 batch as i32,
                 num_classes as i32,
@@ -383,13 +389,15 @@ impl CudaTensor {
         embed_dim: usize,
     ) -> BackendResult<CudaTensor> {
         let seq_len = indices.elem_count();
+        let i64_conv = indices.ensure_i64();
+        let actual_indices = i64_conv.as_ref().unwrap_or(indices);
         let out_shape = vec![vocab_size, embed_dim];
         let output = CudaTensor::zeros(&out_shape, DType::F32);
         let stream = crate::stream::get_stream().raw();
         unsafe {
             launch_scatter_add_kernel(
                 grad.buffer.ptr() as *const f32,
-                indices.buffer.ptr() as *const i64,
+                actual_indices.buffer.ptr() as *const i64,
                 output.buffer.ptr() as *mut f32,
                 seq_len as i32,
                 embed_dim as i32,
