@@ -96,6 +96,27 @@ extern "C" {
 }
 
 impl CudaTensor {
+    /// f32 テンソルを i64 に変換するヘルパー
+    /// TL は全値を f32 で保持するが、GPU カーネルは i64 ポインタを期待する。
+    /// embedding_impl と同パターン: GPU→Host(f32)→convert→Host(i64)→GPU
+    fn ensure_i64_indices(&self) -> CudaTensor {
+        if self.dtype() == DType::I64 {
+            return self.shallow_clone();
+        }
+        let count = self.elem_count();
+        let mut f32_host = vec![0f32; count];
+        unsafe {
+            crate::cuda_sys::cudaMemcpy(
+                f32_host.as_mut_ptr() as *mut std::ffi::c_void,
+                self.buffer.ptr(),
+                count * 4,
+                crate::cuda_sys::cudaMemcpyKind::cudaMemcpyDeviceToHost,
+            );
+        }
+        let i64_host: Vec<i64> = f32_host.iter().map(|&v| v as i64).collect();
+        CudaTensor::from_slice(&i64_host, self.shape(), DType::I64)
+    }
+
     /// Softmax — GPU カーネル
     pub fn softmax_impl(&self, axis: i32) -> BackendResult<CudaTensor> {
         let shape = self.shape().to_vec();
@@ -197,12 +218,15 @@ impl CudaTensor {
         let n = logits_shape[0];
         let c = logits_shape[1];
 
+        // TL は全値を f32 で保持するため、i64 に変換
+        let i64_targets = target.ensure_i64_indices();
+
         let losses = CudaTensor::uninit(&[n], DType::F32);
         let stream = crate::stream::get_stream().raw();
         unsafe {
             launch_cross_entropy_kernel(
                 self.buffer.ptr() as *const f32,
-                target.buffer.ptr() as *const i64,
+                i64_targets.buffer.ptr() as *const i64,
                 losses.buffer.ptr() as *mut f32,
                 n as i32,
                 c as i32,
@@ -331,10 +355,14 @@ impl CudaTensor {
         let batch = self.elem_count();
         let out_shape = vec![batch, num_classes];
         let output = CudaTensor::zeros(&out_shape, DType::F32);
+
+        // TL は全値を f32 で保持するため、i64 に変換
+        let i64_indices = self.ensure_i64_indices();
+
         let stream = crate::stream::get_stream().raw();
         unsafe {
             launch_one_hot_kernel(
-                self.buffer.ptr() as *const i64,
+                i64_indices.buffer.ptr() as *const i64,
                 output.buffer.ptr() as *mut f32,
                 batch as i32,
                 num_classes as i32,
@@ -355,11 +383,15 @@ impl CudaTensor {
         let seq_len = indices.elem_count();
         let out_shape = vec![vocab_size, embed_dim];
         let output = CudaTensor::zeros(&out_shape, DType::F32);
+
+        // TL は全値を f32 で保持するため、i64 に変換
+        let i64_indices = indices.ensure_i64_indices();
+
         let stream = crate::stream::get_stream().raw();
         unsafe {
             launch_scatter_add_kernel(
                 grad.buffer.ptr() as *const f32,
-                indices.buffer.ptr() as *const i64,
+                i64_indices.buffer.ptr() as *const i64,
                 output.buffer.ptr() as *mut f32,
                 seq_len as i32,
                 embed_dim as i32,
