@@ -1176,10 +1176,15 @@ pub fn tl_cuda_enable_grad(t: *mut OpaqueTensor) {
 #[no_mangle]
 pub fn tl_cuda_replace_data(a: *mut OpaqueTensor, b: *mut OpaqueTensor) {
     unsafe {
+        let dst = get_mut(a);
         let new_data = get(b)
             .clone_data()
             .unwrap_or_else(|_| CudaTensor::zeros(&[0], DType::F32));
-        *get_mut(a) = new_data;
+        // autograd メタデータ(requires_grad, grad)を保持する
+        // replace_data はデータのみ入れ替え、autograd 状態を破壊してはいけない
+        let saved_autograd = dst.autograd.take();
+        *dst = new_data;
+        dst.autograd = saved_autograd;
     }
 }
 
