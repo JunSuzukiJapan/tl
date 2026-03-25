@@ -735,6 +735,22 @@ pub extern "C" fn tl_adam_step(
             let cpu_param = &mut *(param as *mut tl_cpu::CpuTensor<f32>);
             cpu_param.zero_grad();
         }
+    } else {
+        // GPU (CUDA / Metal): zero_grad を呼び出す
+        #[cfg(not(target_os = "macos"))]
+        {
+            unsafe {
+                let cuda_param = &mut *(param as *mut tl_cuda::tensor::CudaTensor);
+                cuda_param.zero_grad();
+            }
+        }
+        #[cfg(target_os = "macos")]
+        {
+            unsafe {
+                let metal_param = &mut *(param as *mut tl_metal::MetalTensor);
+                metal_param.zero_grad();
+            }
+        }
     }
 }
 
