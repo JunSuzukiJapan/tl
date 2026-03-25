@@ -493,62 +493,97 @@ impl CudaTensor {
         Ok(())
     }
 
-    /// backward（逆伝播）
+    /// backward（逆伝播）— Metal 版と同一構造
+    /// 1. DFS でトポロジカル順序を構築
+    /// 2. 出力テンソルの勾配を ones で初期化
+    /// 3. 逆トポロジカル順序で勾配を伝播
+    /// 4. 全ノードの grad_fn をクリア
     pub fn backward(&mut self) -> BackendResult<()> {
         if !self.requires_grad() {
             return Ok(());
         }
+        let self_ptr = self as *mut Self;
 
+        // 1. DFS でトポロジカル順序を構築
+        let mut topo_order: Vec<*mut Self> = Vec::new();
+        let mut visited = std::collections::HashSet::<usize>::new();
+        Self::build_topo(self_ptr, &mut visited, &mut topo_order);
+
+        // 2. 出力テンソルの勾配を ones で初期化（replace, not accumulate）
         let ones = CudaTensor::ones(self.shape(), self.dtype());
-        let self_ptr = self as *mut CudaTensor;
+        if let Some(ref mut meta) = self.autograd {
+            meta.grad = Some(ones);
+        }
 
-        // worklist: (ポインタ, 勾配, Arc参照保持)
-        // Arc を保持しないとポインタが dangling になる
-        let mut worklist: Vec<(*mut CudaTensor, CudaTensor, Option<TensorRef>)> =
-            vec![(self_ptr, ones, None)];
-        // visited: (ポインタ, Arc参照保持)
-        // cleanup 時に grad_fn を drop → TensorRef drop → CudaTensor 解放を防ぐため
-        // Arc 参照を cleanup 完了まで保持する
-        let mut visited: Vec<(*mut CudaTensor, Option<TensorRef>)> = Vec::new();
+        // 3. 逆トポロジカル順序で勾配を伝播
+        for &ptr in topo_order.iter().rev() {
+            let tensor = unsafe { &*ptr };
+            let grad = tensor.autograd.as_ref()
+                .and_then(|m| m.grad.as_ref())
+                .map(|g| g.shallow_clone());
 
-        while let Some((tensor_ptr, grad_output, arc_ref)) = worklist.pop() {
-            let tensor = unsafe { &mut *tensor_ptr };
-            visited.push((tensor_ptr, arc_ref));
+            if let Some(grad_output) = grad {
+                let propagation = tensor.autograd.as_ref().and_then(|m| {
+                    m.grad_fn.as_ref().map(|gf| {
+                        let grads = gf.backward(&grad_output);
+                        let inputs = gf.inputs();
+                        (grads, inputs)
+                    })
+                });
 
-            let propagation = if let Some(meta) = tensor.autograd.as_ref() {
-                if let Some(gf) = meta.grad_fn.as_ref() {
-                    let grads = gf.backward(&grad_output)?;
-                    let inputs = gf.inputs();
-                    Some((grads, inputs))
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
-
-            tensor.accumulate_grad(grad_output)?;
-
-            if let Some((grads, inputs)) = propagation {
-                for (input_ref, grad) in inputs.into_iter().zip(grads.into_iter()) {
-                    let input_ptr = input_ref.get() as *mut CudaTensor;
-                    let input = unsafe { &*input_ptr };
-                    if input.requires_grad() {
-                        worklist.push((input_ptr, grad, Some(input_ref)));
+                if let Some((grads_result, inputs)) = propagation {
+                    let grads = match grads_result {
+                        Ok(g) => g,
+                        Err(e) => {
+                            eprintln!("Autograd backward error: {}", e);
+                            continue;
+                        }
+                    };
+                    for (input_ref, grad) in inputs.into_iter().zip(grads.into_iter()) {
+                        let input = unsafe { &mut *input_ref.get() };
+                        if input.requires_grad() {
+                            input.accumulate_grad(grad)?;
+                        }
                     }
                 }
             }
         }
 
-        // 計算グラフ解放
-        // visited の Arc 参照が全テンソルを生かしているため安全にアクセス可能
-        for entry in visited.iter_mut() {
-            let tensor = unsafe { &mut *entry.0 };
+        // 4. 全ノードの grad_fn をクリア
+        crate::stream::sync_stream();
+        for &ptr in topo_order.iter() {
+            let tensor = unsafe { &mut *ptr };
             if let Some(ref mut meta) = tensor.autograd {
                 meta.grad_fn = None;
             }
         }
         Ok(())
+    }
+
+    /// DFS でトポロジカル順序を構築（Metal 版と同一ロジック）
+    fn build_topo(
+        ptr: *mut Self,
+        visited: &mut std::collections::HashSet<usize>,
+        topo: &mut Vec<*mut Self>,
+    ) {
+        let key = ptr as usize;
+        if visited.contains(&key) {
+            return;
+        }
+        visited.insert(key);
+        let tensor = unsafe { &*ptr };
+        if let Some(ref meta) = tensor.autograd {
+            if let Some(ref gf) = meta.grad_fn {
+                for input_ref in gf.inputs() {
+                    let input_ptr = input_ref.get() as *mut Self;
+                    let input_tensor = unsafe { &*input_ptr };
+                    if input_tensor.requires_grad() {
+                        Self::build_topo(input_ptr, visited, topo);
+                    }
+                }
+            }
+        }
+        topo.push(ptr);
     }
 
     /// 計算グラフから切り離す
