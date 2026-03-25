@@ -878,7 +878,27 @@ pub fn tl_cuda_layer_norm(
     bias: *mut OpaqueTensor,
     eps: f64,
 ) -> *mut OpaqueTensor {
-    unsafe { make_result(get(input).layer_norm_impl(get(weight), get(bias), eps as f32)) }
+    unsafe {
+        let result_ptr = make_result(get(input).layer_norm_impl(get(weight), get(bias), eps as f32));
+        if !result_ptr.is_null() && get(input).requires_grad() {
+            let w_ref = if !weight.is_null() && get(weight).requires_grad() {
+                Some(tensor_ref_from_ptr(weight))
+            } else {
+                None
+            };
+            let b_ref = if !bias.is_null() && get(bias).requires_grad() {
+                Some(tensor_ref_from_ptr(bias))
+            } else {
+                None
+            };
+            let result = &mut *(result_ptr as *mut CudaTensor);
+            result.enable_grad();
+            result.set_grad_fn(Box::new(LayerNormBackward::new(
+                get(input), w_ref, b_ref, eps as f32,
+            )));
+        }
+        result_ptr
+    }
 }
 #[no_mangle]
 pub fn tl_cuda_max_pool2d(

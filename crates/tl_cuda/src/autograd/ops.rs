@@ -696,19 +696,49 @@ impl GradFn for EmbeddingBackward {
 
 pub struct LayerNormBackward {
     pub input: TensorRef,
+    pub weight: Option<TensorRef>,
+    pub bias: Option<TensorRef>,
+    pub eps: f32,
 }
 impl LayerNormBackward {
-    pub fn new(t: &CudaTensor) -> Self {
-        Self { input: make_ref(t) }
+    pub fn new(t: &CudaTensor, w: Option<TensorRef>, b: Option<TensorRef>, eps: f32) -> Self {
+        Self { input: make_ref(t), weight: w, bias: b, eps }
     }
 }
 impl GradFn for LayerNormBackward {
     fn backward(&self, grad_output: &CudaTensor) -> BackendResult<Vec<CudaTensor>> {
-        // 簡易: grad をそのまま通す
-        Ok(vec![grad_output.shallow_clone()])
+        // 簡易: grad をそのまま通す (Metal 版と同一パターン)
+        let grad_input = grad_output.shallow_clone();
+        
+        let mut grads = vec![grad_input];
+        
+        if let Some(ref _w_ref) = self.weight {
+            let go_shape = grad_output.shape();
+            if go_shape.len() >= 2 {
+                // [batch, seq, dim] → sum over [batch, seq] → [dim]
+                let mut g = grad_output.shallow_clone();
+                for _ in 0..(go_shape.len() - 1) {
+                    g = g.sum_impl(0)?;
+                }
+                grads.push(g.shallow_clone());  // grad_weight
+                grads.push(g);                  // grad_bias
+            } else {
+                grads.push(grad_output.shallow_clone());
+                grads.push(grad_output.shallow_clone());
+            }
+        }
+        
+        Ok(grads)
     }
     fn inputs(&self) -> Vec<TensorRef> {
-        vec![self.input.clone()]
+        let mut inputs = vec![self.input.clone()];
+        if let Some(ref w) = self.weight {
+            inputs.push(w.clone());
+        }
+        if let Some(ref b) = self.bias {
+            inputs.push(b.clone());
+        }
+        inputs
     }
 }
 
