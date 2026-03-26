@@ -640,22 +640,49 @@ impl CrossEntropyBackward {
     }
 }
 impl GradFn for CrossEntropyBackward {
-    fn backward(&self, grad_output: &CudaTensor) -> BackendResult<Vec<CudaTensor>> {
+    fn backward(&self, _grad_output: &CudaTensor) -> BackendResult<Vec<CudaTensor>> {
         let logits = get_ref(&self.logits);
         let targets = get_ref(&self.targets);
         let shape = logits.shape();
-        let batch = shape[0];
-        let classes = shape[1];
+        let batch_size = shape[0];
+        let num_classes = shape[1];
 
-        // 全て GPU 演算で完結
-        let probs = logits.softmax_impl(-1)?;
-        let one_hot = targets.one_hot_impl(classes)?;
-        let diff = probs.sub_impl(&one_hot)?;
-        let scale = grad_output.mul_scalar_impl(1.0 / batch as f32)?;
-        // scale は scalar [1]、diff は [batch, classes] → broadcast mul
-        let ones = CudaTensor::ones(shape, DType::F32);
-        let scale_broadcast = ones.mul_impl(&scale)?;
-        Ok(vec![diff.mul_impl(&scale_broadcast)?])
+        // CPU 演算で勾配を計算（Metal 版と同一ロジック）
+        crate::stream::sync_stream();
+        let logits_data: Vec<f32> = logits.to_vec();
+        let label_data: Vec<f32> = targets.to_vec();
+
+        // 1. softmax (numerically stable)
+        let mut grad_data = vec![0.0f32; batch_size * num_classes];
+        for i in 0..batch_size {
+            let start = i * num_classes;
+            let end = start + num_classes;
+            let row = &logits_data[start..end];
+            let max_val = row.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+            let mut sum_exp = 0.0f32;
+            for j in 0..num_classes {
+                grad_data[start + j] = (row[j] - max_val).exp();
+                sum_exp += grad_data[start + j];
+            }
+            for j in 0..num_classes {
+                grad_data[start + j] /= sum_exp;
+            }
+        }
+
+        // 2. softmax - one_hot(target), scaled by 1/batch_size
+        let scale = 1.0 / batch_size as f32;
+        for i in 0..batch_size {
+            let idx = label_data[i] as usize;
+            if idx < num_classes {
+                grad_data[i * num_classes + idx] -= 1.0;
+            }
+        }
+        for v in grad_data.iter_mut() {
+            *v *= scale;
+        }
+
+        let grad = CudaTensor::from_slice(&grad_data, shape, DType::F32);
+        Ok(vec![grad])
     }
     fn inputs(&self) -> Vec<TensorRef> {
         vec![self.logits.clone()]
