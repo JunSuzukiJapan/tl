@@ -252,10 +252,21 @@ impl GradFn for MatmulBackward {
         let b = get_ref(&self.b);
         let a_ndim = a.shape().len();
         let b_ndim = b.shape().len();
-        let bt = b.transpose_impl(b_ndim - 2, b_ndim - 1)?;
-        let at = a.transpose_impl(a_ndim - 2, a_ndim - 1)?;
-        let ga = grad_output.matmul_impl(&bt)?;
-        let gb = at.matmul_impl(grad_output)?;
+        let bt = if b_ndim >= 2 {
+            b.transpose_impl(b_ndim - 2, b_ndim - 1)?
+        } else {
+            b.transpose_impl(0, 1)?
+        };
+        let at = if a_ndim >= 2 {
+            a.transpose_impl(a_ndim - 2, a_ndim - 1)?
+        } else {
+            a.transpose_impl(0, 1)?
+        };
+        let ga_raw = grad_output.matmul_impl(&bt)?;
+        let gb_raw = at.matmul_impl(grad_output)?;
+        // Reduce broadcast dimensions to match original input shapes
+        let ga = reduce_grad_to_shape(&ga_raw, a.shape())?;
+        let gb = reduce_grad_to_shape(&gb_raw, b.shape())?;
         Ok(vec![ga, gb])
     }
     fn inputs(&self) -> Vec<TensorRef> {
