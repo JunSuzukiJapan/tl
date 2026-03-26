@@ -72,7 +72,7 @@ impl CausalSelfAttention {
         let k = self.k_proj.forward(x); 
         let v = self.v_proj.forward(x); 
         let kt = k.transpose(1, 2);
-        let scores = q.matmul(kt) * 0.125;
+        let scores = q.matmul(kt) * 0.0625;
         
         let ones = scores * 0.0 + 1.0;
         let causal_mask = ones.tril(0); 
@@ -101,7 +101,7 @@ impl MLP {
         ) 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
-        self.p.forward(self.f.forward(x).relu()) 
+        self.p.forward(self.f.forward(x).gelu()) 
     } 
     fn step(self, step_n: i64, lr: f32) -> MLP { 
         let mut s = self; 
@@ -114,12 +114,7 @@ impl MLP {
 struct Block { l1: LayerNorm, a: CausalSelfAttention, l2: LayerNorm, m: MLP }
 impl Block { 
     fn new(d: i64) -> Block { 
-        Block(
-            LayerNorm::new(d),           // l1
-            CausalSelfAttention::new(d), // a
-            LayerNorm::new(d),           // l2
-            MLP::new(d)                  // m
-        ) 
+        Block(LayerNorm::new(d), CausalSelfAttention::new(d), LayerNorm::new(d), MLP::new(d)) 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
         let x = x + self.a.forward(self.l1.forward(x)); 
@@ -127,8 +122,8 @@ impl Block {
     } 
     fn step(self, step_n: i64, lr: f32) -> Block { 
         let mut s = self; 
-        s.a = s.a.step(step_n, lr); 
         s.l1 = s.l1.step(step_n, lr); 
+        s.a = s.a.step(step_n, lr); 
         s.l2 = s.l2.step(step_n, lr); 
         s.m = s.m.step(step_n, lr); 
         s 
@@ -157,37 +152,50 @@ impl Embedding {
     }
 }
 
-// 2-Layer GPT
-struct GPT { w: Embedding, wp: Embedding, b1: Block, b2: Block, l: LayerNorm, h: Linear }
+// 4-Layer GPT
+struct GPT { 
+    w: Embedding, wp: Embedding, 
+    b1: Block, b2: Block, b3: Block, b4: Block,
+    l: LayerNorm, h: Linear 
+}
 impl GPT { 
     fn new(v: i64, d: i64) -> GPT { 
         GPT(
-            Embedding::new(v, d),  // w
-            Embedding::new(12, d), // wp
-            Block::new(d),         // b1
-            Block::new(d),         // b2
-            LayerNorm::new(d),     // l
-            Linear::new(d, v)      // h
+            Embedding::new(v, d), 
+            Embedding::new(12, d), 
+            Block::new(d), 
+            Block::new(d), 
+            Block::new(d), 
+            Block::new(d), 
+            LayerNorm::new(d), 
+            Linear::new(d, v)
         ) 
     } 
     fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> { 
         let pos_data = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0];
         let pos = pos_data.reshape([1, 12]);
+        
         let tok_emb = self.w.forward(i);
         let pos_emb = self.wp.forward(pos);
         let x = tok_emb + pos_emb;
+        
         let x = self.b1.forward(x);
-        let x = self.b2.forward(x);
-        self.h.forward(self.l.forward(x)) 
+        let x = Param::checkpoint(self.b2.forward, x);
+        let x = Param::checkpoint(self.b3.forward, x);
+        let x = Param::checkpoint(self.b4.forward, x);
+        
+        self.h.forward(self.l.forward(x))  
     } 
     fn step(self, step_n: i64, lr: f32) -> GPT { 
         let mut s = self; 
-        s.b1 = s.b1.step(step_n, lr); 
-        s.b2 = s.b2.step(step_n, lr); 
-        s.h = s.h.step(step_n, lr); 
-        s.l = s.l.step(step_n, lr); 
         s.w = s.w.step(step_n, lr); 
         s.wp = s.wp.step(step_n, lr); 
+        s.b1 = s.b1.step(step_n, lr); 
+        s.b2 = s.b2.step(step_n, lr); 
+        s.b3 = s.b3.step(step_n, lr); 
+        s.b4 = s.b4.step(step_n, lr); 
+        s.l = s.l.step(step_n, lr); 
+        s.h = s.h.step(step_n, lr); 
         s 
     } 
 }
@@ -279,17 +287,25 @@ fn train_epoch(state: TrainState, lr: f32, steps: i64) -> TrainState {
 
 fn main() {
     let vocab_size = 13;
-    let d_model = 128; 
+    let d_model = 256; 
     let mut state = TrainState(1, GPT::new(vocab_size, d_model));
     
-    let lr = 0.001;
-    let epochs = 1500;
+    let lr = 0.0005;
+    let epochs = 2000;
 
-    print("Training 2-digit addition on RANDOM inputs (2-layer GPT, Adam, d_model=128)");
+    print("Training 2-digit addition on RANDOM inputs (4-layer GPT, Adam, d_model=256)");
 
     for epoch in range(0, epochs) {
         print("Epoch:"); print(epoch);
         state = train_epoch(state, lr, 160); // 160 steps inside each epoch, total 240,000 steps
+        
+        // Save periodically so we can evaluate accuracy
+        if epoch > 0 {
+            if epoch % 50 == 0 {
+                Param::save(state.model, "model_add.safetensors");
+                print("Saved checkpoint at epoch:"); print(epoch);
+            }
+        }
     }
     
     print("Training Complete!");

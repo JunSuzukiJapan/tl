@@ -60,7 +60,7 @@ impl CausalSelfAttention {
         let k = self.k_proj.forward(x); 
         let v = self.v_proj.forward(x); 
         let kt = k.transpose(1, 2);
-        let scores = q.matmul(kt) * 0.125;
+        let scores = q.matmul(kt) * 0.08838;
         
         let ones = scores * 0.0 + 1.0;
         let causal_mask = ones.tril(0); 
@@ -191,7 +191,9 @@ fn inference(model: GPT, i: i64, j: i64) {
 
 fn main() {
     print("Loading model...");
-    let mut model = GPT::new(13, 128);
+    let vocab_size = 13;
+    let d_model = 128; 
+    let model = GPT::new(vocab_size, d_model);
     Param::load(model, "model_add.safetensors");
     print("Model loaded successfully.");
 

@@ -655,8 +655,8 @@ impl GradFn for CrossEntropyBackward {
         let logits = get_ref(&self.logits);
         let targets = get_ref(&self.targets);
         let shape = logits.shape();
-        let batch_size = shape[0];
-        let num_classes = shape[1];
+        let num_classes = if shape.len() >= 2 { *shape.last().unwrap() } else { logits.elem_count() };
+        let batch_size = targets.elem_count();
 
         // CPU 演算で勾配を計算（Metal 版と同一ロジック）
         crate::stream::sync_stream();
