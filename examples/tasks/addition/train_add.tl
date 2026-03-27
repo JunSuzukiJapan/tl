@@ -72,7 +72,7 @@ impl CausalSelfAttention {
         let k = self.k_proj.forward(x); 
         let v = self.v_proj.forward(x); 
         let kt = k.transpose(1, 2);
-        let scores = q.matmul(kt) * 0.0625;
+        let scores = q.matmul(kt) * 0.08838;
         
         let ones = scores * 0.0 + 1.0;
         let causal_mask = ones.tril(0); 
@@ -101,7 +101,7 @@ impl MLP {
         ) 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
-        self.p.forward(self.f.forward(x).gelu()) 
+        self.p.forward(self.f.forward(x).relu()) 
     } 
     fn step(self, step_n: i64, lr: f32) -> MLP { 
         let mut s = self; 
@@ -152,10 +152,10 @@ impl Embedding {
     }
 }
 
-// 4-Layer GPT
+// 2-Layer GPT
 struct GPT { 
     w: Embedding, wp: Embedding, 
-    b1: Block, b2: Block, b3: Block, b4: Block,
+    b1: Block, b2: Block, 
     l: LayerNorm, h: Linear 
 }
 impl GPT { 
@@ -163,8 +163,6 @@ impl GPT {
         GPT(
             Embedding::new(v, d), 
             Embedding::new(12, d), 
-            Block::new(d), 
-            Block::new(d), 
             Block::new(d), 
             Block::new(d), 
             LayerNorm::new(d), 
@@ -181,8 +179,6 @@ impl GPT {
         
         let x = self.b1.forward(x);
         let x = Param::checkpoint(self.b2.forward, x);
-        let x = Param::checkpoint(self.b3.forward, x);
-        let x = Param::checkpoint(self.b4.forward, x);
         
         self.h.forward(self.l.forward(x))  
     } 
@@ -192,8 +188,6 @@ impl GPT {
         s.wp = s.wp.step(step_n, lr); 
         s.b1 = s.b1.step(step_n, lr); 
         s.b2 = s.b2.step(step_n, lr); 
-        s.b3 = s.b3.step(step_n, lr); 
-        s.b4 = s.b4.step(step_n, lr); 
         s.l = s.l.step(step_n, lr); 
         s.h = s.h.step(step_n, lr); 
         s 
@@ -204,30 +198,22 @@ impl GPT {
 // Training
 // ---------------
 
-fn get_random_digit() -> i64 {
-    let r = Tensor::randn([1], true)[0];
-    if r < -1.28 { return 0; }
-    if r >= -1.28 && r < -0.84 { return 1; }
-    if r >= -0.84 && r < -0.52 { return 2; }
-    if r >= -0.52 && r < -0.25 { return 3; }
-    if r >= -0.25 && r < 0.0   { return 4; }
-    if r >= 0.0   && r < 0.25  { return 5; }
-    if r >= 0.25  && r < 0.52  { return 6; }
-    if r >= 0.52  && r < 0.84  { return 7; }
-    if r >= 0.84  && r < 1.28  { return 8; }
-    return 9;
-}
-
 struct TrainState {
     global_step: i64,
     model: GPT
 }
 
-fn train_epoch(state: TrainState, lr: f32, steps: i64) -> TrainState {
+fn train_epoch(state: TrainState, lr: f32, epoch: i64) -> TrainState {
     let mut st = state;
+    let steps = 10000;
     for s in range(0, steps) {
-        let i = get_random_digit() * 10 + get_random_digit();
-        let j = get_random_digit() * 10 + get_random_digit();
+        // Linear Congruential Generator (LCG) for perfectly uniform shuffling
+        // 5003 is coprime to 10000. 4231 shifts the start each epoch.
+        let a = s * 5003 + epoch * 4231;
+        let idx = a - ((a / 10000) * 10000); 
+        
+        let i = idx / 100;
+        let j = idx - (i * 100);
         
         let sum = i + j;
         let i_d10 = i / 10;
@@ -271,13 +257,14 @@ fn train_epoch(state: TrainState, lr: f32, steps: i64) -> TrainState {
         
         loss.backward();
         
-        if s % 8 == 7 {
+        // Accumulate gradients equivalent to batch size 100
+        if s % 100 == 99 {
             st.model = st.model.step(st.global_step, lr);
             Tensor::clear_grads();
             st.global_step = st.global_step + 1;
         }
         
-        if s % 50 == 0 {
+        if s % 1000 == 0 {
              print("    Step:"); print(s);
              print("    Loss:"); loss.print();
         }
@@ -287,27 +274,24 @@ fn train_epoch(state: TrainState, lr: f32, steps: i64) -> TrainState {
 
 fn main() {
     let vocab_size = 13;
-    let d_model = 256; 
+    let d_model = 128; 
+    let d_model = 128;
     let mut state = TrainState(1, GPT::new(vocab_size, d_model));
-    
+
     let lr = 0.0005;
     let epochs = 2000;
 
-    print("Training 2-digit addition on RANDOM inputs (4-layer GPT, Adam, d_model=256)");
+    print("Training 2-digit addition on DETERMINISTIC EXHAUSTIVE inputs (10000/epoch, 2-layer GPT, Adam, d_model=128)");
 
     for epoch in range(0, epochs) {
         print("Epoch:"); print(epoch);
-        state = train_epoch(state, lr, 160); // 160 steps inside each epoch, total 240,000 steps
-        
-        // Save periodically so we can evaluate accuracy
-        if epoch > 0 {
-            if epoch % 50 == 0 {
-                Param::save(state.model, "model_add.safetensors");
-                print("Saved checkpoint at epoch:"); print(epoch);
-            }
+        state = train_epoch(state, lr, epoch);
+
+        if epoch % 5 == 0 {
+            Param::save(state.model, "model_add.safetensors");
+            print("Model saved.");
         }
     }
-    
     print("Training Complete!");
     Param::save(state.model, "model_add.safetensors");
 }

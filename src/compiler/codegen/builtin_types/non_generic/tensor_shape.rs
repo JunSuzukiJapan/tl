@@ -120,7 +120,19 @@ pub fn compile_permute<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx
 
 // ---- cat(other: Tensor) -> Tensor ----
 pub fn compile_cat<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    compile_tensor_shape_op(c, o, t, a, "cat")
+    let fn_name = "tl_tensor_cat_4d";
+    let fn_val = c.module.get_function(fn_name).ok_or("tl_tensor_cat_4d not found")?;
+    
+    let mut call_args: Vec<inkwell::values::BasicMetadataValueEnum> = Vec::with_capacity(3);
+    call_args.push(o.into());
+    for (val, _) in &a {
+        call_args.push((*val).into());
+    }
+    call_args.push(c.context.i64_type().const_int(0, false).into());
+    
+    let call = c.builder.build_call(fn_val, &call_args, "cat_res").map_err(|e| e.to_string())?;
+    let res = c.check_tensor_result(call, "cat_error")?;
+    Ok((res, t))
 }
 
 // ---- len() -> i64 ----

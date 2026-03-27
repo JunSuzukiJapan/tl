@@ -31,6 +31,14 @@ extern "C" {
         c: i32,
         stream: cudaStream_t,
     );
+    fn launch_cross_entropy_backward_kernel(
+        logits: *const f32,
+        targets: *const i64,
+        grad_out: *mut f32,
+        batch_size: i32,
+        num_classes: i32,
+        stream: cudaStream_t,
+    );
     fn launch_tril_kernel(
         input: *const f32,
         output: *mut f32,
@@ -236,6 +244,36 @@ impl CudaTensor {
         crate::stream::sync_stream();
         let total_loss = losses.sumall_impl()? / n as f32;
         Ok(CudaTensor::from_slice(&[total_loss], &[1], DType::F32))
+    }
+
+    /// Cross entropy loss backward — GPU カーネル
+    pub fn cross_entropy_backward_impl(&self, target: &CudaTensor) -> BackendResult<CudaTensor> {
+        let logits_shape = self.shape();
+        if logits_shape.len() < 2 {
+            return Err(BackendError::ShapeMismatch(
+                "cross_entropy logits must be at least 2D".into(),
+            ));
+        }
+        let num_classes = *logits_shape.last().unwrap();
+        let batch_size = target.elem_count();
+
+        // Ensure targets are i64
+        let i64_targets = target.ensure_i64_indices();
+
+        let grad = CudaTensor::uninit(logits_shape, DType::F32);
+        let stream = crate::stream::get_stream().raw();
+        unsafe {
+            launch_cross_entropy_backward_kernel(
+                self.buffer.ptr() as *const f32,
+                i64_targets.buffer.ptr() as *const i64,
+                grad.buffer.ptr() as *mut f32,
+                batch_size as i32,
+                num_classes as i32,
+                stream,
+            );
+        }
+        crate::stream::sync_stream();
+        Ok(grad)
     }
 
     /// 下三角行列 — GPU カーネル

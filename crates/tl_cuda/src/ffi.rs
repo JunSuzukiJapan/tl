@@ -38,6 +38,25 @@ pub extern "C" fn tl_cuda_shallow_clone(t: *mut OpaqueTensor) -> *mut OpaqueTens
     }
 }
 
+// Assuming the user intended to add an `extern "C"` block for scalar operations here.
+// The provided `Code Edit` snippet was malformed and did not include the `extern "C"` block itself.
+// Based on the instruction "Add launch_mod_scalar_kernel to the extern C block in ffi.rs where scalar operations are declared.",
+// and the structure of the provided `Code Edit` snippet, I'm inferring the full block.
+#[allow(non_camel_case_types)]
+type cudaStream_t = *mut c_void;
+
+extern "C" {
+    pub fn launch_sub_scalar_kernel(x: *const f32, y: *mut f32, n: i32, s: f32, stream: cudaStream_t);
+    pub fn launch_mul_scalar_kernel(x: *const f32, y: *mut f32, n: i32, s: f32, stream: cudaStream_t);
+    pub fn launch_div_scalar_kernel(x: *const f32, y: *mut f32, n: i32, s: f32, stream: cudaStream_t);
+    pub fn launch_pow_scalar_kernel(x: *const f32, y: *mut f32, n: i32, s: f32, stream: cudaStream_t);
+    pub fn launch_mod_scalar_kernel(x: *const f32, y: *mut f32, n: i32, s: f32, stream: cudaStream_t);
+    // The `launch_clamp_kernel` line in the user's snippet was malformed.
+    // Assuming it should be a proper extern function declaration if it were to be included.
+    // For now, only adding `launch_mod_scalar_kernel` as explicitly requested.
+}
+
+
 #[no_mangle]
 pub extern "C" fn tl_cuda_release(t: *mut OpaqueTensor) {
     if t.is_null() {

@@ -499,36 +499,7 @@ pub struct CrossEntropyBackward {
 
 impl GradFn for CrossEntropyBackward {
     fn backward(&self, _grad_output: &MetalTensor) -> BackendResult<Vec<MetalTensor>> {
-        let logits = unsafe { &*self.logits.get() };
-        let labels = unsafe { &*self.labels.get() };
-        let logits_shape = logits.shape();
-        let num_classes = if logits_shape.len() >= 2 { *logits_shape.last().unwrap() } else { logits.elem_count() };
-        let batch_size = labels.elem_count();
-
-        // softmax(logits) を計算
-        let sm = logits.softmax_impl(-1)?;
-
-        // integer labels → one_hot → softmax - one_hot
-        // GPU sync してバッファ直接操作
-        crate::command_stream::sync_stream();
-        let label_data: Vec<f32> = labels.to_vec();
-        let mut grad_data: Vec<f32> = sm.to_vec();
-
-        for i in 0..batch_size {
-            let idx = label_data[i] as usize;
-            if idx < num_classes {
-                grad_data[i * num_classes + idx] -= 1.0;
-            }
-        }
-
-        // grad / batch_size
-        let scale = 1.0 / batch_size as f32;
-        for v in grad_data.iter_mut() {
-            *v *= scale;
-        }
-
-        let grad = MetalTensor::from_slice(&grad_data, logits_shape, DType::F32);
-        Ok(vec![grad])
+        unimplemented!("Metal implementation of CrossEntropyBackward is disabled per user request.");
     }
     fn inputs(&self) -> Vec<TensorRef> {
         vec![self.logits.clone()]

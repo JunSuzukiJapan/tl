@@ -61,6 +61,12 @@ __global__ void pow_scalar_kernel(const float *x, float *y, int n, float s) {
     y[i] = powf(x[i], s);
 }
 
+__global__ void mod_scalar_kernel(const float *x, float *y, int n, float s) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < n)
+    y[i] = fmodf(x[i], s);
+}
+
 __global__ void clamp_kernel(const float *x, float *y, int n, float lo,
                              float hi) {
   int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -417,6 +423,45 @@ __global__ void cross_entropy_kernel(const float *logits,
     }
     int target_idx = (int)targets[i];
     losses[i] = (max_val + logf(sum_exp)) - row[target_idx];
+  }
+}
+
+// =====================================================================
+// cross_entropy_backward カーネル (各行の softmax - one_hot を計算)
+// =====================================================================
+__global__ void cross_entropy_backward_kernel(const float *logits,
+                                              const long long *targets,
+                                              float *grad_out, int batch_size,
+                                              int num_classes) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < batch_size) {
+    const float *row = logits + i * num_classes;
+    float *grad_row = grad_out + i * num_classes;
+
+    // max_val for numerical stability
+    float max_val = -3.402823466e+38f;
+    for (int j = 0; j < num_classes; j++) {
+      if (row[j] > max_val) max_val = row[j];
+    }
+
+    // sum_exp
+    float sum_exp = 0.0f;
+    for (int j = 0; j < num_classes; j++) {
+      float e = expf(row[j] - max_val);
+      grad_row[j] = e;
+      sum_exp += e;
+    }
+
+    // softmax probabilities and (prob - 1) if target
+    int target_idx = (int)targets[i];
+    float scale = 1.0f / (float)batch_size;
+    for (int j = 0; j < num_classes; j++) {
+      float prob = grad_row[j] / sum_exp;
+      if (j == target_idx) {
+        prob -= 1.0f;
+      }
+      grad_row[j] = prob * scale;
+    }
   }
 }
 
@@ -1019,6 +1064,7 @@ LAUNCH_SCALAR(add_scalar)
 LAUNCH_SCALAR(mul_scalar)
 LAUNCH_SCALAR(div_scalar)
 LAUNCH_SCALAR(pow_scalar)
+LAUNCH_SCALAR(mod_scalar)
 
 void launch_clamp_kernel(const float *x, float *y, int n, float lo, float hi,
                          cudaStream_t stream) {
@@ -1145,6 +1191,17 @@ void launch_cross_entropy_kernel(const float *logits, const long long *targets,
   int blocks = (n + threads - 1) / threads;
   cross_entropy_kernel<<<blocks, threads, 0, stream>>>(logits, targets, losses,
                                                        n, c);
+}
+
+void launch_cross_entropy_backward_kernel(const float *logits,
+                                         const long long *targets,
+                                         float *grad_out, int batch_size,
+                                         int num_classes,
+                                         cudaStream_t stream) {
+  int threads = 256;
+  int blocks = (batch_size + threads - 1) / threads;
+  cross_entropy_backward_kernel<<<blocks, threads, 0, stream>>>(
+      logits, targets, grad_out, batch_size, num_classes);
 }
 
 void launch_tril_kernel(const float *input, float *output, int rows, int cols,

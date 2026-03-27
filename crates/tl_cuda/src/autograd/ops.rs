@@ -654,45 +654,7 @@ impl GradFn for CrossEntropyBackward {
     fn backward(&self, _grad_output: &CudaTensor) -> BackendResult<Vec<CudaTensor>> {
         let logits = get_ref(&self.logits);
         let targets = get_ref(&self.targets);
-        let shape = logits.shape();
-        let num_classes = if shape.len() >= 2 { *shape.last().unwrap() } else { logits.elem_count() };
-        let batch_size = targets.elem_count();
-
-        // CPU 演算で勾配を計算（Metal 版と同一ロジック）
-        crate::stream::sync_stream();
-        let logits_data: Vec<f32> = logits.to_vec();
-        let label_data: Vec<f32> = targets.to_vec();
-
-        // 1. softmax (numerically stable)
-        let mut grad_data = vec![0.0f32; batch_size * num_classes];
-        for i in 0..batch_size {
-            let start = i * num_classes;
-            let end = start + num_classes;
-            let row = &logits_data[start..end];
-            let max_val = row.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-            let mut sum_exp = 0.0f32;
-            for j in 0..num_classes {
-                grad_data[start + j] = (row[j] - max_val).exp();
-                sum_exp += grad_data[start + j];
-            }
-            for j in 0..num_classes {
-                grad_data[start + j] /= sum_exp;
-            }
-        }
-
-        // 2. softmax - one_hot(target), scaled by 1/batch_size
-        let scale = 1.0 / batch_size as f32;
-        for i in 0..batch_size {
-            let idx = label_data[i] as usize;
-            if idx < num_classes {
-                grad_data[i * num_classes + idx] -= 1.0;
-            }
-        }
-        for v in grad_data.iter_mut() {
-            *v *= scale;
-        }
-
-        let grad = CudaTensor::from_slice(&grad_data, shape, DType::F32);
+        let grad = logits.cross_entropy_backward_impl(targets)?;
         Ok(vec![grad])
     }
     fn inputs(&self) -> Vec<TensorRef> {

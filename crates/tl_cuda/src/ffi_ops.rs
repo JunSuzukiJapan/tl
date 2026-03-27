@@ -1106,9 +1106,10 @@ pub fn tl_cuda_div_assign_scalar_f32(t: *mut OpaqueTensor, s: f32) {
 #[no_mangle]
 pub fn tl_cuda_mod_assign_scalar_f32(t: *mut OpaqueTensor, s: f32) {
     unsafe {
-        // fmod: データを直接操作
-        let data: Vec<f32> = get(t).to_vec::<f32>().iter().map(|&x| x % s).collect();
-        *get_mut(t) = CudaTensor::from_slice(&data, get(t).shape(), get(t).dtype());
+        let result = get(t).mod_scalar_impl(s);
+        if let Ok(r) = result {
+            *get_mut(t) = r;
+        }
     }
 }
 

@@ -10,6 +10,7 @@ extern "C" {
     fn launch_mul_scalar_kernel(x: *const f32, y: *mut f32, n: i32, s: f32, stream: cudaStream_t);
     fn launch_div_scalar_kernel(x: *const f32, y: *mut f32, n: i32, s: f32, stream: cudaStream_t);
     fn launch_pow_scalar_kernel(x: *const f32, y: *mut f32, n: i32, s: f32, stream: cudaStream_t);
+    fn launch_mod_scalar_kernel(x: *const f32, y: *mut f32, n: i32, s: f32, stream: cudaStream_t);
     fn launch_clamp_kernel(
         x: *const f32,
         y: *mut f32,
@@ -61,6 +62,11 @@ impl CudaTensor {
     /// スカラーべき乗
     pub fn pow_scalar_impl(&self, scalar: f32) -> BackendResult<CudaTensor> {
         self.scalar_kernel_op(launch_pow_scalar_kernel, scalar)
+    }
+
+    /// スカラー余り（modulo）
+    pub fn mod_scalar_impl(&self, scalar: f32) -> BackendResult<CudaTensor> {
+        self.scalar_kernel_op(launch_mod_scalar_kernel, scalar)
     }
 
     /// スケール（スカラー乗算の別名）
