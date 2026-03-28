@@ -24,8 +24,8 @@ impl Linear {
     } 
     fn step(self, step_n: i64, lr: f32) -> Linear { 
         let mut s = self; 
-        s.W.adam_step(s.W.grad(), s.mW, s.vW, step_n, lr, 0.9, 0.999, 1e-8, 0.0);
-        s.b.adam_step(s.b.grad(), s.mb, s.vb, step_n, lr, 0.9, 0.999, 1e-8, 0.0);
+        s.W.adam_step(s.W.grad(), s.mW, s.vW, step_n, lr, 0.9, 0.999, 1e-8, 1.0);
+        s.b.adam_step(s.b.grad(), s.mb, s.vb, step_n, lr, 0.9, 0.999, 1e-8, 1.0);
         s
     }
 }
@@ -51,8 +51,8 @@ impl LayerNorm {
     }
     fn step(self, step_n: i64, lr: f32) -> LayerNorm {
         let mut s = self; 
-        s.w.adam_step(s.w.grad(), s.mw, s.vw, step_n, lr, 0.9, 0.999, 1e-8, 0.0);
-        s.b.adam_step(s.b.grad(), s.mb, s.vb, step_n, lr, 0.9, 0.999, 1e-8, 0.0);
+        s.w.adam_step(s.w.grad(), s.mw, s.vw, step_n, lr, 0.9, 0.999, 1e-8, 1.0);
+        s.b.adam_step(s.b.grad(), s.mb, s.vb, step_n, lr, 0.9, 0.999, 1e-8, 1.0);
         s
     }
 }
@@ -147,7 +147,7 @@ impl Embedding {
     }
     fn step(self, step_n: i64, lr: f32) -> Embedding {
         let mut s = self;
-        s.w.adam_step(s.w.grad(), s.mw, s.vw, step_n, lr, 0.9, 0.999, 1e-8, 0.0);
+        s.w.adam_step(s.w.grad(), s.mw, s.vw, step_n, lr, 0.9, 0.999, 1e-8, 1.0);
         s
     }
 }
@@ -206,14 +206,22 @@ struct TrainState {
 fn train_epoch(state: TrainState, lr: f32, epoch: i64) -> TrainState {
     let mut st = state;
     let steps = 10000;
+    let mut trained_samples = 0;
+    
     for s in range(0, steps) {
-        // Linear Congruential Generator (LCG) for perfectly uniform shuffling
-        // 5003 is coprime to 10000. 4231 shifts the start each epoch.
+        // We evaluate all 10000 patterns per epoch.
+        // We shuffle them to ensure SGD gets uniform mini-batches.
         let a = s * 5003 + epoch * 4231;
         let idx = a - ((a / 10000) * 10000); 
         
         let i = idx / 100;
         let j = idx - (i * 100);
+        
+        // 50/50 Train-Validation Split based on deterministic pseudo-random hash
+        // The Grokking paper specifies evaluating whether a model generalizes to unseen data!
+        // We use a simple hash to decide if this specific (i, j) pair is in the training set.
+        let hash = (i * 137 + j * 19) % 100;
+        let is_train = hash < 50;
         
         let sum = i + j;
         let i_d10 = i / 10;
@@ -250,23 +258,27 @@ fn train_epoch(state: TrainState, lr: f32, epoch: i64) -> TrainState {
         let X = data.reshape([1, 12]);
         let Y = target.reshape([1, 12]);
         
-        let logits = st.model.forward(X);
-        let logits_flat = logits.reshape([12, 13]);
-        let Y_flat = Y.reshape([12]);
-        let loss = logits_flat.cross_entropy(Y_flat);
-        
-        loss.backward();
-        
-        // Accumulate gradients equivalent to batch size 100
-        if s % 100 == 99 {
-            st.model = st.model.step(st.global_step, lr);
-            Tensor::clear_grads();
-            st.global_step = st.global_step + 1;
-        }
-        
-        if s % 1000 == 0 {
-             print("    Step:"); print(s);
-             print("    Loss:"); loss.print();
+        // We only backpropagate on the train set
+        if is_train {
+            let logits = st.model.forward(X);
+            let logits_flat = logits.reshape([12, 13]);
+            let Y_flat = Y.reshape([12]);
+            let loss = logits_flat.cross_entropy(Y_flat);
+            
+            loss.backward();
+            trained_samples = trained_samples + 1;
+            
+            // Accumulate gradients roughly every 100 trainable samples
+            if trained_samples % 100 == 99 {
+                st.model = st.model.step(st.global_step, lr);
+                Tensor::clear_grads();
+                st.global_step = st.global_step + 1;
+            }
+            
+            if trained_samples % 1000 == 0 {
+                 print("    Step:"); print(trained_samples);
+                 print("    Loss:"); loss.print();
+            }
         }
     }
     return st;
