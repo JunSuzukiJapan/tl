@@ -25,7 +25,7 @@ impl Linear {
     fn step(self, step_n: i64, lr: f32) -> Linear { 
         let mut s = self; 
         s.W.adam_step(s.W.grad(), s.mW, s.vW, step_n, lr, 0.9, 0.999, 1e-8, 1.0);
-        s.b.adam_step(s.b.grad(), s.mb, s.vb, step_n, lr, 0.9, 0.999, 1e-8, 1.0);
+        s.b.adam_step(s.b.grad(), s.mb, s.vb, step_n, lr, 0.9, 0.999, 1e-8, 0.0);
         s
     }
 }
@@ -51,8 +51,8 @@ impl LayerNorm {
     }
     fn step(self, step_n: i64, lr: f32) -> LayerNorm {
         let mut s = self; 
-        s.w.adam_step(s.w.grad(), s.mw, s.vw, step_n, lr, 0.9, 0.999, 1e-8, 1.0);
-        s.b.adam_step(s.b.grad(), s.mb, s.vb, step_n, lr, 0.9, 0.999, 1e-8, 1.0);
+        s.w.adam_step(s.w.grad(), s.mw, s.vw, step_n, lr, 0.9, 0.999, 1e-8, 0.0);
+        s.b.adam_step(s.b.grad(), s.mb, s.vb, step_n, lr, 0.9, 0.999, 1e-8, 0.0);
         s
     }
 }
@@ -264,8 +264,9 @@ fn train_epoch(state: TrainState, lr: f32, epoch: i64) -> TrainState {
             let logits_flat = logits.reshape([12, 13]);
             let Y_flat = Y.reshape([12]);
             let loss = logits_flat.cross_entropy(Y_flat);
+            let scaled_loss = loss * 0.01;
             
-            loss.backward();
+            scaled_loss.backward();
             trained_samples = trained_samples + 1;
             
             // Accumulate gradients roughly every 100 trainable samples

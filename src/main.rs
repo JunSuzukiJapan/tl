@@ -47,7 +47,7 @@ struct Cli {
     emit_llvm: bool,
 
     /// Device (cpu, metal, cuda, auto)
-    #[arg(short, long, default_value = "cpu")]
+    #[arg(short, long, default_value = "auto")]
     device: String,
 
     /// Arguments to pass to the TL program (after --)

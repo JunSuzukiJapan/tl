@@ -651,11 +651,25 @@ impl CrossEntropyBackward {
     }
 }
 impl GradFn for CrossEntropyBackward {
-    fn backward(&self, _grad_output: &CudaTensor) -> BackendResult<Vec<CudaTensor>> {
+    fn backward(&self, grad_output: &CudaTensor) -> BackendResult<Vec<CudaTensor>> {
         let logits = get_ref(&self.logits);
         let targets = get_ref(&self.targets);
         let grad = logits.cross_entropy_backward_impl(targets)?;
-        Ok(vec![grad])
+        
+        let batch_size = logits.shape()[0];
+        
+        let grad_out_reshaped = if grad_output.elem_count() == 1 {
+            // Scalar broadcast
+            grad_output.shallow_clone()
+        } else if grad_output.shape() == &[batch_size] {
+            // Unsqueeze to [batch_size, 1] for broadcasting against [batch_size, num_classes]
+            grad_output.reshape_impl(&[batch_size, 1])?
+        } else {
+            // Unlikely fallback
+            grad_output.shallow_clone()
+        };
+        
+        Ok(vec![grad.mul_impl(&grad_out_reshaped)?])
     }
     fn inputs(&self) -> Vec<TensorRef> {
         vec![self.logits.clone()]
