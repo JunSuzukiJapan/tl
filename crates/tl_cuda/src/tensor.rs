@@ -549,12 +549,19 @@ impl CudaTensor {
             }
         }
 
-        // 4. 全ノードの grad_fn をクリア
+        // 4. 計算グラフ解放
+        // 中間ノード（grad_fn を持つノード）の grad も不要なのでクリアする。
+        // リーフテンソル（grad_fn == None）の grad は .grad() で取得するため保持する。
         crate::stream::sync_stream();
         for &ptr in topo_order.iter() {
             let tensor = unsafe { &mut *ptr };
             if let Some(ref mut meta) = tensor.autograd {
+                let is_intermediate = meta.grad_fn.is_some();
                 meta.grad_fn = None;
+                // 中間ノードの勾配はbackward後に不要 → メモリ解放
+                if is_intermediate {
+                    meta.grad = None;
+                }
             }
         }
         Ok(())

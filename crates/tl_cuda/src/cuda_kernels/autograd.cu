@@ -35,6 +35,107 @@ __global__ void scatter_add_kernel(const float *grad, const long long *indices,
 }
 
 // =====================================================================
+// f32-index variants — TL stores all values as f32
+// =====================================================================
+__global__ void one_hot_f32_kernel(const float *indices, float *output,
+                                   int batch, int classes) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < batch) {
+    int idx = (int)indices[i];
+    if (idx >= 0 && idx < classes) {
+      output[i * classes + idx] = 1.0f;
+    }
+  }
+}
+
+__global__ void scatter_add_f32_kernel(const float *grad, const float *indices,
+                                       float *output, int seq_len, int dim,
+                                       int vocab) {
+  int tid = blockIdx.x * blockDim.x + threadIdx.x;
+  int total = seq_len * dim;
+  if (tid < total) {
+    int i = tid / dim;
+    int j = tid % dim;
+    int target_row = (int)indices[i];
+    if (target_row >= 0 && target_row < vocab) {
+      atomicAdd(&output[target_row * dim + j], grad[i * dim + j]);
+    }
+  }
+}
+
+__global__ void embedding_f32_kernel(const float *weight, const float *indices,
+                                     float *output, int seq_len, int embed_dim,
+                                     int vocab_size) {
+  int tid = blockIdx.x * blockDim.x + threadIdx.x;
+  int total = seq_len * embed_dim;
+  if (tid < total) {
+    int i = tid / embed_dim;
+    int j = tid % embed_dim;
+    int idx = (int)indices[i];
+    if (idx >= 0 && idx < vocab_size) {
+      output[i * embed_dim + j] = weight[idx * embed_dim + j];
+    } else {
+      output[i * embed_dim + j] = 0.0f;
+    }
+  }
+}
+
+__global__ void cross_entropy_f32_kernel(const float *logits,
+                                         const float *targets, float *losses,
+                                         int n, int c) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < n) {
+    const float *row = logits + i * c;
+    float max_val = -3.402823466e+38f;
+    for (int j = 0; j < c; j++) {
+      if (row[j] > max_val)
+        max_val = row[j];
+    }
+    float sum_exp = 0.0f;
+    for (int j = 0; j < c; j++) {
+      sum_exp += expf(row[j] - max_val);
+    }
+    int target_idx = (int)targets[i];
+    losses[i] = (max_val + logf(sum_exp)) - row[target_idx];
+  }
+}
+
+__global__ void index_select_f32_kernel(const float *input,
+                                        const float *indices, float *output,
+                                        int outer, int inner, int old_dim,
+                                        int n_idx) {
+  int tid = blockIdx.x * blockDim.x + threadIdx.x;
+  int total = outer * n_idx * inner;
+  if (tid < total) {
+    int o = tid / (n_idx * inner);
+    int rem = tid % (n_idx * inner);
+    int d = rem / inner;
+    int i = rem % inner;
+    int src_d = (int)indices[d];
+    int src = o * old_dim * inner + src_d * inner + i;
+    output[tid] = input[src];
+  }
+}
+
+// =====================================================================
+// slice_backward カーネル (grad を元 shape のゼロテンソルに scatter)
+// =====================================================================
+__global__ void slice_backward_kernel(const float *grad, float *output,
+                                      int outer, int inner, int dim_size,
+                                      int slice_len, int start) {
+  int tid = blockIdx.x * blockDim.x + threadIdx.x;
+  int total = outer * slice_len * inner;
+  if (tid < total) {
+    int o = tid / (slice_len * inner);
+    int rem = tid % (slice_len * inner);
+    int s = rem / inner;
+    int k = rem % inner;
+    int dst = o * dim_size * inner + (start + s) * inner + k;
+    output[dst] = grad[tid];
+  }
+}
+
+// =====================================================================
 // scalar ops カーネル (element-wise: y[i] = op(x[i], scalar))
 // =====================================================================
 __global__ void add_scalar_kernel(const float *x, float *y, int n, float s) {
@@ -2615,6 +2716,66 @@ void launch_mul_mv_q6_k_kernel(const float *input, const unsigned char *w_raw,
         "[CUDA ERROR] mul_mv_q6_k launch failed: %s (blocks=%d, total=%d)\n",
         cudaGetErrorString(err), blocks, total);
   }
+}
+
+// --- f32-index variants ---
+void launch_one_hot_f32_kernel(const float *indices, float *output, int batch,
+                               int classes, cudaStream_t stream) {
+  int threads = 256;
+  int blocks = (batch + threads - 1) / threads;
+  one_hot_f32_kernel<<<blocks, threads, 0, stream>>>(indices, output, batch,
+                                                     classes);
+}
+
+void launch_scatter_add_f32_kernel(const float *grad, const float *indices,
+                                   float *output, int seq_len, int dim,
+                                   int vocab, cudaStream_t stream) {
+  int total = seq_len * dim;
+  int threads = 256;
+  int blocks = (total + threads - 1) / threads;
+  scatter_add_f32_kernel<<<blocks, threads, 0, stream>>>(grad, indices, output,
+                                                         seq_len, dim, vocab);
+}
+
+void launch_embedding_f32_kernel(const float *weight, const float *indices,
+                                 float *output, int seq_len, int embed_dim,
+                                 int vocab_size, cudaStream_t stream) {
+  int total = seq_len * embed_dim;
+  int threads = 256;
+  int blocks = (total + threads - 1) / threads;
+  embedding_f32_kernel<<<blocks, threads, 0, stream>>>(
+      weight, indices, output, seq_len, embed_dim, vocab_size);
+}
+
+void launch_cross_entropy_f32_kernel(const float *logits, const float *targets,
+                                     float *losses, int n, int c,
+                                     cudaStream_t stream) {
+  int threads = 256;
+  int blocks = (n + threads - 1) / threads;
+  cross_entropy_f32_kernel<<<blocks, threads, 0, stream>>>(logits, targets,
+                                                           losses, n, c);
+}
+
+void launch_index_select_f32_kernel(const float *input, const float *indices,
+                                    float *output, int outer, int inner,
+                                    int old_dim, int n_idx,
+                                    cudaStream_t stream) {
+  int total = outer * n_idx * inner;
+  int threads = 256;
+  int blocks = (total + threads - 1) / threads;
+  index_select_f32_kernel<<<blocks, threads, 0, stream>>>(
+      input, indices, output, outer, inner, old_dim, n_idx);
+}
+
+// --- slice_backward ---
+void launch_slice_backward_kernel(const float *grad, float *output, int outer,
+                                  int inner, int dim_size, int slice_len,
+                                  int start, cudaStream_t stream) {
+  int total = outer * slice_len * inner;
+  int threads = 256;
+  int blocks = (total + threads - 1) / threads;
+  slice_backward_kernel<<<blocks, threads, 0, stream>>>(
+      grad, output, outer, inner, dim_size, slice_len, start);
 }
 
 } // extern "C"
