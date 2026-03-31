@@ -156,23 +156,32 @@ fn inference(model: GPT, i: i64, j: i64) {
     let v_j_d1 = j_d1 as f32;
     let v_j_d10 = j_d10 as f32;
     
-    let data = [
+    let mut data = [
         v_i_d1, v_i_d10, 10.0, 
         v_j_d1, v_j_d10, 11.0, 
         12.0, 12.0, 12.0, 
         12.0, 12.0, 12.0
     ];
     
-    let X = data.reshape([1, 12]);
-    let logits = model.forward(X);
-    
-    // We expect sum_d1 at pos=6, sum_d10 at pos=7, sum_d100 at pos=8
-    let l_d1 = logits.slice(1, 5, 6, 1).reshape([13]);
-    let l_d10 = logits.slice(1, 6, 7, 1).reshape([13]);
-    let l_d100 = logits.slice(1, 7, 8, 1).reshape([13]);
-    
+    // Autoregressive generation:
+    // 1. Predict d1
+    let X1 = data.reshape([1, 12]);
+    let logits1 = model.forward(X1);
+    let l_d1 = logits1.slice(1, 5, 6, 1).reshape([13]);
     let p_d1 = l_d1.argmax(0)[0] as i64;
+    
+    // 2. Predict d10 using p_d1
+    data[6] = p_d1 as f32;
+    let X2 = data.reshape([1, 12]);
+    let logits2 = model.forward(X2);
+    let l_d10 = logits2.slice(1, 6, 7, 1).reshape([13]);
     let p_d10 = l_d10.argmax(0)[0] as i64;
+    
+    // 3. Predict d100 using p_d10
+    data[7] = p_d10 as f32;
+    let X3 = data.reshape([1, 12]);
+    let logits3 = model.forward(X3);
+    let l_d100 = logits3.slice(1, 7, 8, 1).reshape([13]);
     let p_d100 = l_d100.argmax(0)[0] as i64;
     
     let pred_sum = p_d100 * 100 + p_d10 * 10 + p_d1;
