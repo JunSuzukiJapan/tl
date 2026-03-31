@@ -57,7 +57,8 @@ unsafe_send_sync!(
     TrilBackward,
     SliceBackward,
     SqueezeBackward,
-    UnsqueezeBackward
+    UnsqueezeBackward,
+    ContiguousBackward
 );
 
 /// TensorRef ヘルパー
@@ -1006,6 +1007,19 @@ pub struct UnsqueezeBackward {
 impl GradFn for UnsqueezeBackward {
     fn backward(&self, grad_output: &CudaTensor) -> BackendResult<Vec<CudaTensor>> {
         Ok(vec![grad_output.reshape_impl(&self.input_shape)?])
+    }
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.input.clone()]
+    }
+}
+
+/// contiguous の勾配: identity (値のコピーなので勾配はそのまま通す)
+pub struct ContiguousBackward {
+    pub input: TensorRef,
+}
+impl GradFn for ContiguousBackward {
+    fn backward(&self, grad_output: &CudaTensor) -> BackendResult<Vec<CudaTensor>> {
+        Ok(vec![grad_output.shallow_clone()])
     }
     fn inputs(&self) -> Vec<TensorRef> {
         vec![self.input.clone()]

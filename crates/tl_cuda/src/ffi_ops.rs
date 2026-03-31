@@ -789,7 +789,17 @@ pub fn tl_cuda_transpose(t: *mut OpaqueTensor, dim0: usize, dim1: usize) -> *mut
 }
 #[no_mangle]
 pub fn tl_cuda_contiguous(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
-    unsafe { make_result(get(t).contiguous_impl()) }
+    unsafe {
+        let mut result = match get(t).contiguous_impl() {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("CUDA FFI Error: {}", e);
+                return std::ptr::null_mut();
+            }
+        };
+        set_grad_unary(&mut result, t, |tr| Box::new(ContiguousBackward { input: tr }));
+        make_tensor(result)
+    }
 }
 #[no_mangle]
 pub fn tl_cuda_narrow(
