@@ -110,7 +110,9 @@ pub fn tl_cuda_new_i64(data: *const i64, rank: usize, shape: *const usize) -> *m
     let shape_slice = unsafe { std::slice::from_raw_parts(shape, rank) };
     let elem_count: usize = shape_slice.iter().product();
     let data_slice = unsafe { std::slice::from_raw_parts(data, elem_count) };
-    make_tensor(CudaTensor::from_slice(data_slice, shape_slice, DType::I64))
+    // TL は全値を f32 で保持するため、i64 → f32 に変換して格納 (Metal と同じ)
+    let f32_data: Vec<f32> = data_slice.iter().map(|&v| v as f32).collect();
+    make_tensor(CudaTensor::from_slice(&f32_data, shape_slice, DType::F32))
 }
 
 #[no_mangle]
@@ -208,7 +210,9 @@ pub fn tl_cuda_from_i64_array(data: *const i64, len: i64) -> *mut OpaqueTensor {
     }
     let len = len as usize;
     let s = unsafe { std::slice::from_raw_parts(data, len) };
-    make_tensor(CudaTensor::from_slice(s, &[len], DType::I64))
+    // TL は全値を f32 で保持するため、i64 → f32 に変換して格納 (Metal と同じ)
+    let f32_data: Vec<f32> = s.iter().map(|&v| v as f32).collect();
+    make_tensor(CudaTensor::from_slice(&f32_data, &[len], DType::F32))
 }
 
 #[no_mangle]

@@ -876,8 +876,9 @@ fn test_embedding_backward() {
 // =====================================================================
 #[test]
 fn test_one_hot_impl() {
-    let idx_data: Vec<i64> = vec![0, 2, 1];
-    let idx = CudaTensor::from_slice(&idx_data, &[3], DType::I64);
+    // TL は全値を f32 で保持するため、インデックスも f32
+    let idx_data: Vec<f32> = vec![0.0, 2.0, 1.0];
+    let idx = CudaTensor::from_slice(&idx_data, &[3], DType::F32);
 
     let one_hot = idx.one_hot_impl(4).unwrap(); // 4 classes
     assert_eq!(one_hot.shape(), &[3, 4]);
@@ -909,8 +910,9 @@ fn test_scatter_add_impl() {
     let grad_data: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
     let grad = CudaTensor::from_slice(&grad_data, &[3, 2], DType::F32);
 
-    let idx_data: Vec<i64> = vec![1, 0, 1];
-    let idx = CudaTensor::from_slice(&idx_data, &[3], DType::I64);
+    // TL は全値を f32 で保持するため、インデックスも f32
+    let idx_data: Vec<f32> = vec![1.0, 0.0, 1.0];
+    let idx = CudaTensor::from_slice(&idx_data, &[3], DType::F32);
 
     let result = CudaTensor::scatter_add_impl(&grad, &idx, 3, 2).unwrap();
     assert_eq!(result.shape(), &[3, 2]);
