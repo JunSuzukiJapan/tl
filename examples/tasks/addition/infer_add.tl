@@ -60,7 +60,7 @@ impl CausalSelfAttention {
         let k = self.k_proj.forward(x); 
         let v = self.v_proj.forward(x); 
         let kt = k.transpose(1, 2);
-        let scores = q.matmul(kt) * 0.08838;
+        let scores = q.matmul(kt) * 0.125;
         
         let ones = scores * 0.0 + 1.0;
         let causal_mask = ones.tril(0); 
@@ -156,30 +156,24 @@ fn inference(model: GPT, i: i64, j: i64) {
     let v_j_d1 = j_d1 as f32;
     let v_j_d10 = j_d10 as f32;
     
-    let mut data = [
+    let data = [
         v_i_d1, v_i_d10, 10.0, 
         v_j_d1, v_j_d10, 11.0, 
         12.0, 12.0, 12.0, 
         12.0, 12.0, 12.0
     ];
     
-    // Autoregressive Generation
-    // Predict d1 at pos=5
-    let X1 = data.reshape([1, 12]);
-    let L1 = model.forward(X1);
-    let p_d1 = L1.slice(1, 5, 6, 1).reshape([13]).argmax(0)[0] as i64;
-    data[6] = p_d1 as f32;
+    let X = data.reshape([1, 12]);
+    let logits = model.forward(X);
     
-    // Predict d10 at pos=6
-    let X2 = data.reshape([1, 12]);
-    let L2 = model.forward(X2);
-    let p_d10 = L2.slice(1, 6, 7, 1).reshape([13]).argmax(0)[0] as i64;
-    data[7] = p_d10 as f32;
+    // We expect sum_d1 at pos=6, sum_d10 at pos=7, sum_d100 at pos=8
+    let l_d1 = logits.slice(1, 5, 6, 1).reshape([13]);
+    let l_d10 = logits.slice(1, 6, 7, 1).reshape([13]);
+    let l_d100 = logits.slice(1, 7, 8, 1).reshape([13]);
     
-    // Predict d100 at pos=7
-    let X3 = data.reshape([1, 12]);
-    let L3 = model.forward(X3);
-    let p_d100 = L3.slice(1, 7, 8, 1).reshape([13]).argmax(0)[0] as i64;
+    let p_d1 = l_d1.argmax(0)[0] as i64;
+    let p_d10 = l_d10.argmax(0)[0] as i64;
+    let p_d100 = l_d100.argmax(0)[0] as i64;
     
     let pred_sum = p_d100 * 100 + p_d10 * 10 + p_d1;
     
@@ -197,9 +191,7 @@ fn inference(model: GPT, i: i64, j: i64) {
 
 fn main() {
     print("Loading model...");
-    let vocab_size = 13;
-    let d_model = 128; 
-    let model = GPT::new(vocab_size, d_model);
+    let mut model = GPT::new(13, 128);
     Param::load(model, "model_add.safetensors");
     print("Model loaded successfully.");
 

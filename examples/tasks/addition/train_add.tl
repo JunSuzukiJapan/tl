@@ -24,7 +24,7 @@ impl Linear {
     } 
     fn step(self, step_n: i64, lr: f32) -> Linear { 
         let mut s = self; 
-        s.W.adam_step(s.W.grad(), s.mW, s.vW, step_n, lr, 0.9, 0.999, 1e-8, 1.0);
+        s.W.adam_step(s.W.grad(), s.mW, s.vW, step_n, lr, 0.9, 0.999, 1e-8, 0.0);
         s.b.adam_step(s.b.grad(), s.mb, s.vb, step_n, lr, 0.9, 0.999, 1e-8, 0.0);
         s
     }
@@ -72,7 +72,7 @@ impl CausalSelfAttention {
         let k = self.k_proj.forward(x); 
         let v = self.v_proj.forward(x); 
         let kt = k.transpose(1, 2);
-        let scores = q.matmul(kt) * 0.08838;
+        let scores = q.matmul(kt) * 0.125;
         
         let ones = scores * 0.0 + 1.0;
         let causal_mask = ones.tril(0); 
@@ -114,7 +114,12 @@ impl MLP {
 struct Block { l1: LayerNorm, a: CausalSelfAttention, l2: LayerNorm, m: MLP }
 impl Block { 
     fn new(d: i64) -> Block { 
-        Block(LayerNorm::new(d), CausalSelfAttention::new(d), LayerNorm::new(d), MLP::new(d)) 
+        Block(
+            LayerNorm::new(d),           // l1
+            CausalSelfAttention::new(d), // a
+            LayerNorm::new(d),           // l2
+            MLP::new(d)                  // m
+        ) 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
         let x = x + self.a.forward(self.l1.forward(x)); 
@@ -122,8 +127,8 @@ impl Block {
     } 
     fn step(self, step_n: i64, lr: f32) -> Block { 
         let mut s = self; 
-        s.l1 = s.l1.step(step_n, lr); 
         s.a = s.a.step(step_n, lr); 
+        s.l1 = s.l1.step(step_n, lr); 
         s.l2 = s.l2.step(step_n, lr); 
         s.m = s.m.step(step_n, lr); 
         s 
@@ -147,49 +152,42 @@ impl Embedding {
     }
     fn step(self, step_n: i64, lr: f32) -> Embedding {
         let mut s = self;
-        s.w.adam_step(s.w.grad(), s.mw, s.vw, step_n, lr, 0.9, 0.999, 1e-8, 1.0);
+        s.w.adam_step(s.w.grad(), s.mw, s.vw, step_n, lr, 0.9, 0.999, 1e-8, 0.0);
         s
     }
 }
 
 // 2-Layer GPT
-struct GPT { 
-    w: Embedding, wp: Embedding, 
-    b1: Block, b2: Block, 
-    l: LayerNorm, h: Linear 
-}
+struct GPT { w: Embedding, wp: Embedding, b1: Block, b2: Block, l: LayerNorm, h: Linear }
 impl GPT { 
     fn new(v: i64, d: i64) -> GPT { 
         GPT(
-            Embedding::new(v, d), 
-            Embedding::new(12, d), 
-            Block::new(d), 
-            Block::new(d), 
-            LayerNorm::new(d), 
-            Linear::new(d, v)
+            Embedding::new(v, d),  // w
+            Embedding::new(12, d), // wp
+            Block::new(d),         // b1
+            Block::new(d),         // b2
+            LayerNorm::new(d),     // l
+            Linear::new(d, v)      // h
         ) 
     } 
     fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> { 
         let pos_data = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0];
         let pos = pos_data.reshape([1, 12]);
-        
         let tok_emb = self.w.forward(i);
         let pos_emb = self.wp.forward(pos);
         let x = tok_emb + pos_emb;
-        
         let x = self.b1.forward(x);
-        let x = Param::checkpoint(self.b2.forward, x);
-        
-        self.h.forward(self.l.forward(x))  
+        let x = self.b2.forward(x);
+        self.h.forward(self.l.forward(x)) 
     } 
     fn step(self, step_n: i64, lr: f32) -> GPT { 
         let mut s = self; 
-        s.w = s.w.step(step_n, lr); 
-        s.wp = s.wp.step(step_n, lr); 
         s.b1 = s.b1.step(step_n, lr); 
         s.b2 = s.b2.step(step_n, lr); 
-        s.l = s.l.step(step_n, lr); 
         s.h = s.h.step(step_n, lr); 
+        s.l = s.l.step(step_n, lr); 
+        s.w = s.w.step(step_n, lr); 
+        s.wp = s.wp.step(step_n, lr); 
         s 
     } 
 }
@@ -198,30 +196,30 @@ impl GPT {
 // Training
 // ---------------
 
+fn get_random_digit() -> i64 {
+    let r = Tensor::randn([1], true)[0];
+    if r < -1.28 { return 0; }
+    if r >= -1.28 && r < -0.84 { return 1; }
+    if r >= -0.84 && r < -0.52 { return 2; }
+    if r >= -0.52 && r < -0.25 { return 3; }
+    if r >= -0.25 && r < 0.0   { return 4; }
+    if r >= 0.0   && r < 0.25  { return 5; }
+    if r >= 0.25  && r < 0.52  { return 6; }
+    if r >= 0.52  && r < 0.84  { return 7; }
+    if r >= 0.84  && r < 1.28  { return 8; }
+    return 9;
+}
+
 struct TrainState {
     global_step: i64,
     model: GPT
 }
 
-fn train_epoch(state: TrainState, lr: f32, epoch: i64) -> TrainState {
+fn train_epoch(state: TrainState, lr: f32, steps: i64) -> TrainState {
     let mut st = state;
-    let steps = 10000;
-    let mut trained_samples = 0;
-    
     for s in range(0, steps) {
-        // We evaluate all 10000 patterns per epoch.
-        // We shuffle them to ensure SGD gets uniform mini-batches.
-        let a = s * 5003 + epoch * 4231;
-        let idx = a - ((a / 10000) * 10000); 
-        
-        let i = idx / 100;
-        let j = idx - (i * 100);
-        
-        // 50/50 Train-Validation Split based on deterministic pseudo-random hash
-        // The Grokking paper specifies evaluating whether a model generalizes to unseen data!
-        // We use a simple hash to decide if this specific (i, j) pair is in the training set.
-        let hash = (i * 137 + j * 19) % 100;
-        let is_train = hash < 50;
+        let i = get_random_digit() * 10 + get_random_digit();
+        let j = get_random_digit() * 10 + get_random_digit();
         
         let sum = i + j;
         let i_d10 = i / 10;
@@ -258,28 +256,22 @@ fn train_epoch(state: TrainState, lr: f32, epoch: i64) -> TrainState {
         let X = data.reshape([1, 12]);
         let Y = target.reshape([1, 12]);
         
-        // We only backpropagate on the train set
-        if is_train {
-            let logits = st.model.forward(X);
-            let logits_flat = logits.reshape([12, 13]);
-            let Y_flat = Y.reshape([12]);
-            let loss = logits_flat.cross_entropy(Y_flat);
-            let scaled_loss = loss * 0.01;
-            
-            scaled_loss.backward();
-            trained_samples = trained_samples + 1;
-            
-            // Accumulate gradients roughly every 100 trainable samples
-            if trained_samples % 100 == 99 {
-                st.model = st.model.step(st.global_step, lr);
-                Tensor::clear_grads();
-                st.global_step = st.global_step + 1;
-            }
-            
-            if trained_samples % 1000 == 0 {
-                 print("    Step:"); print(trained_samples);
-                 print("    Loss:"); loss.print();
-            }
+        let logits = st.model.forward(X);
+        let logits_flat = logits.reshape([12, 13]);
+        let Y_flat = Y.reshape([12]);
+        let loss = logits_flat.cross_entropy(Y_flat);
+        
+        loss.backward();
+        
+        if s % 8 == 7 {
+            st.model = st.model.step(st.global_step, lr);
+            Tensor::clear_grads();
+            st.global_step = st.global_step + 1;
+        }
+        
+        if s % 50 == 0 {
+             print("    Step:"); print(s);
+             print("    Loss:"); loss.print();
         }
     }
     return st;
@@ -288,23 +280,18 @@ fn train_epoch(state: TrainState, lr: f32, epoch: i64) -> TrainState {
 fn main() {
     let vocab_size = 13;
     let d_model = 128; 
-    let d_model = 128;
     let mut state = TrainState(1, GPT::new(vocab_size, d_model));
+    
+    let lr = 0.001;
+    let epochs = 1500;
 
-    let lr = 0.0005;
-    let epochs = 2000;
-
-    print("Training 2-digit addition on DETERMINISTIC EXHAUSTIVE inputs (10000/epoch, 2-layer GPT, Adam, d_model=128)");
+    print("Training 2-digit addition on RANDOM inputs (2-layer GPT, Adam, d_model=128)");
 
     for epoch in range(0, epochs) {
         print("Epoch:"); print(epoch);
-        state = train_epoch(state, lr, epoch);
-
-        if epoch % 5 == 0 {
-            Param::save(state.model, "model_add.safetensors");
-            print("Model saved.");
-        }
+        state = train_epoch(state, lr, 160); // 160 steps inside each epoch, total 240,000 steps
     }
+    
     print("Training Complete!");
     Param::save(state.model, "model_add.safetensors");
 }
