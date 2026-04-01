@@ -326,6 +326,21 @@ SKIP_PATH_SUFFIXES = {
     "examples/apps/tinyllama/debug_chatbot.tl",
 }
 
+# CUDA (VRAM 8GB以下など) の環境でOOMを防ぐためにスキップする重いテスト
+# Metal利用時 (Macのユニファイドメモリ等) はスキップしない
+CUDA_HEAVY_FILES = {
+    "train_heavy.tl",
+    "infer_heavy.tl",
+    "train_paper.tl",
+    "infer_paper.tl",
+    "train_recall.tl",
+    "infer_recall.tl",
+    "train_add.tl",
+    "infer_add.tl",
+    "reverse_train.tl",
+    "reverse_infer.tl",
+}
+
 
 # 長時間実行が予想されるファイル（長めのタイムアウト）
 # 注: autograd 使用ファイルは SKIP_FILES に移動済み
@@ -353,6 +368,10 @@ def should_skip(filepath: Path, include_training: bool = False) -> Tuple[bool, s
     name = filepath.name
     if name in SKIP_FILES:
         return True, f"スキップ対象: {name}"
+    
+    # CUDA環境 (VRAM 8GBなど) 制限回避用
+    if GPU_BACKEND == "cuda" and name in CUDA_HEAVY_FILES:
+        return True, f"SKIP: CUDA (VRAM制限) のためスキップ: {name}"
     # 学習・推論ファイルは --include-training がないとスキップ
     if name in TRAINING_FILES and not include_training:
         return True, f"学習/推論ファイル (--include-training で有効化)"

@@ -1463,7 +1463,11 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                         if *cleanup_mode != super::CLEANUP_NONE {
                             // Restore Free Logic for RefCounting
-                            self.emit_recursive_free(*_var_val, &val_ty, *cleanup_mode)?;
+                            let llvm_ty = self.get_llvm_type(&val_ty)?;
+                            let old_val = self.builder
+                                .build_load(llvm_ty, _var_val.into_pointer_value(), "old_let_val")
+                                .map_err(|e| e.to_string())?;
+                            self.emit_recursive_free(old_val, &val_ty, *cleanup_mode)?;
                         }
 
                         let ptr = self.variables.last().unwrap()[name].0.into_pointer_value();
@@ -4021,7 +4025,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                              "arr_elem_ptr"
                          ).map_err(|e| e.to_string())?
                      };
-                     Ok((Some(elem_ptr), *elem_ty.clone(), super::CLEANUP_NONE, base_name))
+                     Ok((Some(elem_ptr), *elem_ty.clone(), super::CLEANUP_FULL, base_name))
                  } else {
                      // Tensor or Struct indexing -> Not an addressable LValue in the LLVM sense (requires set call)
                      // Return None to signal caller to handle emit_tensor_set/struct_set

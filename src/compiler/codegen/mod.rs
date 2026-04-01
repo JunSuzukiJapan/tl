@@ -319,8 +319,6 @@ impl<'ctx> CodeGenerator<'ctx> {
              for (v, _, cleanup) in scope.iter_mut() {
                  if v.is_pointer_value() && v.into_pointer_value() == ptr {
                      *cleanup = CLEANUP_NONE;
-                     // We don't return here because there might be duplicates? 
-                     // Usually duplicates refer to same value. Safer to mark all.
                  }
              }
          }
@@ -1870,6 +1868,18 @@ impl<'ctx> CodeGenerator<'ctx> {
                 if let StmtKind::Expr(expr) = &stmt.inner {
                     let (val, ty) = self.compile_expr(expr)?;
 
+                    // FIX: Logic parity with StmtKind::Return
+                    // Ensure the returned value is NOT cleaned up by emit_all_scopes_cleanup.
+                    if let ExprKind::Variable(name) = &expr.inner {
+                        for scope in self.variables.iter_mut().rev() {
+                            if let Some((_, _, cleanup)) = scope.get_mut(name) {
+                                *cleanup = CLEANUP_NONE;
+                                break;
+                            }
+                        }
+                    }
+                    self.mark_temp_no_cleanup(val);
+
                     if uses_sret {
                          // SRET Logic
                          if let Some(dest) = self.current_sret_dest {
@@ -1911,21 +1921,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     } else {
                         // IMPORTANT: Unregister return value (same as StmtKind::Return)
                         // Use tl_tensor_prepare_return if available
-                        
-                        // FIX: Logic parity with compile_function implicit return
-                        if let ExprKind::Variable(name) = &expr.inner {
-                            for scope in self.variables.iter_mut().rev() {
-                                if let Some((_, _, cleanup)) = scope.get_mut(name) {
-                                    *cleanup = CLEANUP_NONE;
-                                    // Unregister handled in match block below
-                                    break;
-                                }
-                            }
-                        }
-                        // テンポラリを cleanup 対象外にする。
-                        // Variable の場合は emit_retain + add_temp がないためテンポラリに登録されず no-op。
-                        // R-value の場合は戻り値テンソルが cleanup で解放されないよう保護する。
-                        self.mark_temp_no_cleanup(val);
+
 
                         let mut final_val = val; 
                         match &ty {
