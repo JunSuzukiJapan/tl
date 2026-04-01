@@ -445,6 +445,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                                   let f_ptr = self.builder.build_struct_gep(variant_struct_ty, payload_ptr, idx as u32, "field_ptr").map_err(|e| e.to_string())?;
                                   let f_val = self.builder.build_load(self.context.ptr_type(inkwell::AddressSpace::default()), f_ptr, "field_val").map_err(|e| e.to_string())?;
                                   self.emit_recursive_retain(f_val, f_ty)?;
+                             } else if matches!(f_ty, Type::Array(_, _)) {
+                                  let f_ptr = self.builder.build_struct_gep(variant_struct_ty, payload_ptr, idx as u32, "field_ptr").map_err(|e| e.to_string())?;
+                                  self.emit_recursive_retain(f_ptr.into(), f_ty)?;
                              }
                          }
                     }
@@ -491,6 +494,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 let f_ptr = self.builder.build_struct_gep(st_llvm_ty, ptr, i as u32, "field_ptr").map_err(|e| e.to_string())?;
                                 let f_val = self.builder.build_load(self.context.ptr_type(inkwell::AddressSpace::default()), f_ptr, "field_val").map_err(|e| e.to_string())?;
                                 self.emit_recursive_retain(f_val, f_ty)?;
+                           } else if matches!(f_ty, Type::Array(_, _)) {
+                                let f_ptr = self.builder.build_struct_gep(st_llvm_ty, ptr, i as u32, "field_ptr").map_err(|e| e.to_string())?;
+                                self.emit_recursive_retain(f_ptr.into(), f_ty)?;
                            }
                       }
                  } else {
@@ -531,8 +537,28 @@ impl<'ctx> CodeGenerator<'ctx> {
                         let f_ptr = self.builder.build_struct_gep(tuple_ty, ptr, i as u32, "tuple_elem_ptr").map_err(|e| e.to_string())?;
                         let f_val = self.builder.build_load(self.context.ptr_type(inkwell::AddressSpace::default()), f_ptr, "elem_val").map_err(|e| e.to_string())?;
                         self.emit_recursive_retain(f_val, elem_ty)?;
+                    } else if matches!(elem_ty, Type::Array(_, _)) {
+                        let f_ptr = self.builder.build_struct_gep(tuple_ty, ptr, i as u32, "tuple_elem_ptr").map_err(|e| e.to_string())?;
+                        self.emit_recursive_retain(f_ptr.into(), elem_ty)?;
                     }
                 }
+            }
+            Type::Array(inner, size) => {
+                 let arr_ptr = val.into_pointer_value();
+                 let llvm_arr_ty = self.get_llvm_type(&Type::Array(inner.clone(), *size)).map_err(|e| e.to_string())?;
+                 for i in 0..(*size) {
+                     let elem_ptr = self.builder.build_struct_gep(llvm_arr_ty, arr_ptr, i as u32, "elem").map_err(|e| e.to_string())?;
+                     match &**inner {
+                         Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::Struct(_, _) | Type::Enum(_, _) | Type::Tuple(_) | Type::String(_) => {
+                             let elem_val = self.builder.build_load(self.context.ptr_type(inkwell::AddressSpace::default()), elem_ptr, "elem_load").map_err(|e| e.to_string())?;
+                             self.emit_recursive_retain(elem_val, inner)?;
+                         }
+                         Type::Array(_, _) => {
+                             self.emit_recursive_retain(elem_ptr.into(), inner)?;
+                         }
+                         _ => {}
+                     }
+                 }
             }
             _ => {}
         }
@@ -998,13 +1024,19 @@ impl<'ctx> CodeGenerator<'ctx> {
                                     ptr, i as u32, "field_gep"
                                 ).map_err(|e| e.to_string())?;
                                 
-                                let _f_val = self.builder.build_load(
+                                let f_val = self.builder.build_load(
                                     self.context.ptr_type(inkwell::AddressSpace::default()),
                                     f_ptr, "field_load"
                                 ).map_err(|e| e.to_string())?;
                                 
-                                // TEST HYPOTHESIS: double free of Tensor Arcs
-                                // self.emit_recursive_free(f_val, f_ty, super::CLEANUP_FULL)?;
+                                self.emit_recursive_free(f_val, f_ty, super::CLEANUP_FULL)?;
+                            }
+                            Type::Array(_, _) => {
+                                let f_ptr = self.builder.build_struct_gep(
+                                    *self.struct_types.get(&mangled_name).unwrap(), // Safe: checked existence
+                                    ptr, i as u32, "field_gep"
+                                ).map_err(|e| e.to_string())?;
+                                self.emit_recursive_free(f_ptr.into(), f_ty, super::CLEANUP_FULL)?;
                             }
                             _ => {}
                         }
@@ -1014,11 +1046,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // D. Free Wrapper Memory
                 // Skip for Vec (stack value semantics)
                 if name != "Vec" {
-                    let _mem_free_fn = self.module.get_function("tl_mem_free")
+                    let mem_free_fn = self.module.get_function("tl_mem_free")
                          .ok_or("tl_mem_free not found")?;
-                    
-                    // self.emit_log_free(val)?;
-                    // self.builder.build_call(mem_free_fn, &[cast_void.into()], "").map_err(|e| e.to_string())?;
+                    let void_ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                    let cast_void = self.builder.build_pointer_cast(ptr, void_ptr_ty, "cast_void").unwrap();
+                    self.builder.build_call(mem_free_fn, &[cast_void.into()], "").map_err(|e| e.to_string())?;
                 }
                 self.builder.build_unconditional_branch(merge_block)
                     .map_err(|e| e.to_string())?;
@@ -1058,6 +1090,25 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                   self.builder.position_at_end(merge_block);
                   return Ok(());
+            }
+
+            Type::Array(inner, size) => {
+                 let arr_ptr = val.into_pointer_value();
+                 let llvm_arr_ty = self.get_llvm_type(&Type::Array(inner.clone(), *size)).map_err(|e| e.to_string())?;
+                 for i in 0..(*size) {
+                     let elem_ptr = self.builder.build_struct_gep(llvm_arr_ty, arr_ptr, i as u32, "elem").map_err(|e| e.to_string())?;
+                     match &**inner {
+                         Type::Tensor(_, _) | Type::Struct(_, _) | Type::Enum(_, _) | Type::Tuple(_) => {
+                             let elem_val = self.builder.build_load(self.context.ptr_type(inkwell::AddressSpace::default()), elem_ptr, "elem_load").map_err(|e| e.to_string())?;
+                             self.emit_recursive_free(elem_val, inner, mode)?;
+                         }
+                         Type::Array(_, _) => {
+                             self.emit_recursive_free(elem_ptr.into(), inner, mode)?;
+                         }
+                         _ => {}
+                     }
+                 }
+                 return Ok(());
             }
 
             Type::Tuple(elem_types) => {
@@ -3339,12 +3390,52 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
     }
     /// Deep clone a value (Tensor or Struct containing Tensors)
+    pub(crate) fn emit_deep_clone_array_inline(
+        &mut self,
+        src_ptr: inkwell::values::PointerValue<'ctx>,
+        dst_ptr: inkwell::values::PointerValue<'ctx>,
+        inner_ty: &Type,
+        size: usize,
+    ) -> Result<(), String> {
+        let llvm_arr_ty = self.get_llvm_type(&Type::Array(Box::new(inner_ty.clone()), size)).map_err(|e| e.to_string())?;
+        for i in 0..size {
+             let src_elem = self.builder.build_struct_gep(llvm_arr_ty, src_ptr, i as u32, "src_elem").map_err(|e| e.to_string())?;
+             let dst_elem = self.builder.build_struct_gep(llvm_arr_ty, dst_ptr, i as u32, "dst_elem").map_err(|e| e.to_string())?;
+             
+             match inner_ty {
+                 Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::GradTensor(_, _) | Type::Struct(_, _) | Type::Enum(_, _) | Type::Tuple(_) | Type::String(_) => {
+                     let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                     let loaded = self.builder.build_load(ptr_ty, src_elem, "elem_val").map_err(|e| e.to_string())?;
+                     let cloned = self.emit_deep_clone(loaded, inner_ty)?;
+                     self.builder.build_store(dst_elem, cloned).map_err(|e| e.to_string())?;
+                 }
+                 Type::Array(inner_inner, inner_size) => {
+                     self.emit_deep_clone_array_inline(src_elem, dst_elem, inner_inner, *inner_size)?;
+                 }
+                 _ => {
+                     let llvm_inner_ty = self.get_llvm_type(inner_ty).map_err(|e| e.to_string())?;
+                     let loaded = self.builder.build_load(llvm_inner_ty, src_elem, "elem_val").map_err(|e| e.to_string())?;
+                     self.builder.build_store(dst_elem, loaded).map_err(|e| e.to_string())?;
+                 }
+             }
+        }
+        Ok(())
+    }
+
     pub(crate) fn emit_deep_clone(
         &mut self,
         val: inkwell::values::BasicValueEnum<'ctx>,
         ty: &Type,
     ) -> Result<inkwell::values::BasicValueEnum<'ctx>, String> {
         match ty {
+            Type::Array(inner, size) => {
+                 let current_block = self.builder.get_insert_block().unwrap();
+                 let func = current_block.get_parent().unwrap();
+                 let new_arr_ptr = self.create_entry_block_alloca(func, "clone_arr", ty)?;
+                 let src_ptr = val.into_pointer_value();
+                 self.emit_deep_clone_array_inline(src_ptr, new_arr_ptr, inner, *size)?;
+                 Ok(new_arr_ptr.into())
+            }
             Type::Tensor(_, _) | Type::GradTensor(_, _) => {
                 // Shared Ownership: Acquire reference, return same pointer
                 let acquire_fn = self
@@ -3521,6 +3612,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .map_err(|e| e.to_string())?;
 
                     let store_val = match field_ty {
+                        Type::Array(inner_ty, size) => {
+                            self.emit_deep_clone_array_inline(src_field_ptr, dst_field_ptr, inner_ty, *size)?;
+                            continue;
+                        }
                         Type::Tensor(_, _)
                         | Type::TensorShaped(_, _)
                         | Type::GradTensor(_, _)
@@ -3604,11 +3699,20 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .unwrap();
 
                 for (i, ty) in ts.iter().enumerate() {
-                    // Load field from src
                     let field_gep = self
                         .builder
                         .build_struct_gep(tuple_struct_type, src_cast, i as u32, "src_field_gep")
                         .map_err(|e| e.to_string())?;
+                    let dst_gep = self
+                        .builder
+                        .build_struct_gep(tuple_struct_type, tuple_ptr, i as u32, "dst_field_gep")
+                        .map_err(|e| e.to_string())?;
+
+                    if let Type::Array(inner_ty, size) = ty {
+                        self.emit_deep_clone_array_inline(field_gep, dst_gep, inner_ty, *size)?;
+                        continue;
+                    }
+
                     let field_llvm_ty = self.get_llvm_type(ty)?;
                     let field_val = self
                         .builder
@@ -3619,10 +3723,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                     let cloned_val = self.emit_deep_clone(field_val, ty)?;
 
                     // Store into dst
-                    let dst_gep = self
-                        .builder
-                        .build_struct_gep(tuple_struct_type, tuple_ptr, i as u32, "dst_field_gep")
-                        .map_err(|e| e.to_string())?;
                     self.builder
                         .build_store(dst_gep, cloned_val)
                         .map_err(|e| e.to_string())?;
@@ -3776,6 +3876,16 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .builder
                         .build_struct_gep(variant_struct_ty, src_variant_ptr, idx as u32, "src_f")
                         .map_err(|e| e.to_string())?;
+                    let dst_field_ptr = self
+                        .builder
+                        .build_struct_gep(variant_struct_ty, dst_variant_ptr, idx as u32, "dst_f")
+                        .map_err(|e| e.to_string())?;
+
+                    if let Type::Array(inner_ty, size) = f_ty {
+                        self.emit_deep_clone_array_inline(src_field_ptr, dst_field_ptr, inner_ty, *size)?;
+                        continue;
+                    }
+
                     let val = self
                         .builder
                         .build_load(field_types[idx], src_field_ptr, "val")
@@ -3784,10 +3894,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                     // Recursive Deep Clone
                     let cloned_val = self.emit_deep_clone(val, f_ty)?;
 
-                    let dst_field_ptr = self
-                        .builder
-                        .build_struct_gep(variant_struct_ty, dst_variant_ptr, idx as u32, "dst_f")
-                        .map_err(|e| e.to_string())?;
                     let _ = self.builder.build_store(dst_field_ptr, cloned_val);
                 }
             }

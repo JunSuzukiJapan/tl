@@ -68,10 +68,10 @@ pub extern "C" fn tl_mem_get_buffer(_index: i64) -> *mut c_void {
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_mem_free(ptr: *mut c_void) {
     if !ptr.is_null() {
-        // V6.0 検証: tl_mem_free を noop にして segfault が消えるか確認
-        // unsafe {
-        //     libc::free(ptr);
-        // }
+        // V6.0 検証終了: tl_mem_free を有効化 (リーク防止)
+        unsafe {
+            libc::free(ptr);
+        }
     }
 }
 

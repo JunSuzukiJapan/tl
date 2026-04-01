@@ -192,11 +192,11 @@ fn train_step(model: GPT2, lr: f32, i: i64, j: i64) -> GPT2 {
     
     loss.backward();
     let updated_model = model.step(lr);
-    // Tensor::clear_grads();
+    Tensor::clear_grads();
     updated_model
 }
 
-fn train_epoch(model: GPT2, lr: f32, epoch: i64) {
+fn train_epoch(model: GPT2, lr: f32, epoch: i64) -> GPT2 {
     let total_steps = 10;
     let stride = 137;
     let offset = epoch * 79; 
@@ -206,10 +206,38 @@ fn train_epoch(model: GPT2, lr: f32, epoch: i64) {
         let idx = raw - ((raw / 10000) * 10000);
         let i = idx / 100;
         let j = idx - ((idx / 100) * 100);
+        
+        let sum = i + j;
+        let i_d10 = i / 10;
+        let i_d1 = i - (i_d10 * 10);
+        let j_d10 = j / 10;
+        let j_d1 = j - (j_d10 * 10);
+        let s_d100 = sum / 100;
+        let rem = sum - (s_d100 * 100);
+        let s_d10 = rem / 10;
+        let s_d1 = rem - (s_d10 * 10);
+        let v_i_d1 = i_d1 as f32; let v_i_d10 = i_d10 as f32;
+        let v_j_d1 = j_d1 as f32; let v_j_d10 = j_d10 as f32;
+        let v_s_d1 = s_d1 as f32; let v_s_d10 = s_d10 as f32; let v_s_d100 = s_d100 as f32;
+        
+        let data = [v_i_d1, v_i_d10, 10.0, v_j_d1, v_j_d10, 11.0, v_s_d1, v_s_d10, v_s_d100, 12.0, 12.0, 12.0];
+        let target = [v_i_d10, 10.0, v_j_d1, v_j_d10, 11.0, v_s_d1, v_s_d10, v_s_d100, 12.0, 12.0, 12.0, 12.0];
+        let X = data.reshape([1, 12]);
+        let Y = target.reshape([1, 12]);
+        let logits = model.forward(X);
+        let logits_flat = logits.reshape([12, 13]);
+        let Y_flat = Y.reshape([12]);
+        let loss = logits_flat.cross_entropy(Y_flat);
+        
+        if s == 0 {
+            print("Loss:"); print(loss.item());
+        }
+
         model = train_step(model, lr, i, j);
     }
     
     print("Epoch:"); print(epoch);
+    model
 }
 
 fn main() {
@@ -225,12 +253,12 @@ fn main() {
     }
     
     let lr = 0.001;
-    let epochs = 20;
+    let epochs = 200;
 
-    print("Paper-based Training: 1-layer GPT, d_model=64, lr=0.001");
+    print("Paper-based Training: 2-layer GPT, d_model=256, lr=0.001");
 
     for epoch in range(0, epochs) {
-        train_epoch(model, lr, epoch);
+        model = train_epoch(model, lr, epoch);
         print("returned");
         // if epoch - ((epoch / 5) * 5) == 4 {
         //     Param::save(model, "model_paper.safetensors");
