@@ -777,6 +777,15 @@ impl IDevice for CudaDeviceImpl {
         Ok(())
     }
     fn clear_grads(&self) -> BackendResult<()> {
+        // 学習ループの各ステップ終了時にストリームを同期し、
+        // 古い計算グラフの解放完了を待機する
+        crate::stream::sync_stream();
+
+        // 未使用のプールバッファを強制パージし、メモリ断片化と OOM を防ぐ
+        if let Ok(mut pool) = crate::buffer_pool::BUFFER_POOL.lock() {
+            pool.free_buffers.clear();
+        }
+
         Ok(())
     }
 
