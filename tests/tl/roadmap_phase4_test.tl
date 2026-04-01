@@ -52,7 +52,7 @@ fn main() {
 
     // --- 4.6 linear ---
     let input = Tensor::full([1, 3], 1.0);
-    let weight = Tensor::full([2, 3], 0.5);
+    let weight = Tensor::full([3, 2], 0.5);
     let bias = Tensor::full([2], 0.1);
     let lin = input.linear(weight, bias);
     print("linear:");

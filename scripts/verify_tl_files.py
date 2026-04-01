@@ -9,9 +9,10 @@ tests/ と examples/ 内の .tl ファイルを実行し、動作を確認しま
 
 ⚠️⚠️⚠️ 絶対禁止事項 ⚠️⚠️⚠️
   このスクリプトに並列実行（--parallel, ThreadPoolExecutor, multiprocessing 等）を
-  追加してはならない。Metal GPU バックエンドのプロセスを並列実行すると GPU リソースが
-  競合し、WindowServer のウォッチドッグタイムアウトを引き起こして Mac 全体がクラッシュ
-  する。この問題は 2026年2月に複数回のシステムクラッシュで確認済み。
+  追加してはならない。GPU バックエンドのプロセスを並列実行すると GPU リソースが
+  競合し、システムクラッシュを引き起こす可能性がある。
+  - Metal (macOS): WindowServer のウォッチドッグタイムアウトで Mac 全体がクラッシュ
+  - CUDA (Linux): GPU メモリ不足やドライバ障害の原因になる
   テストは必ず逐次（シリアル）実行すること。
 ⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️
 """
@@ -25,10 +26,30 @@ import signal
 import atexit
 import argparse
 import tempfile
+import platform
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Optional, List, Tuple, Set
 from enum import Enum
+
+# ── GPU バックエンド自動検出 ────────────────────────────────
+def detect_gpu_backend() -> str:
+    """プラットフォームに応じた GPU バックエンドを検出する。
+    Returns: 'metal', 'cuda', or 'cpu'
+    """
+    if platform.system() == "Darwin":
+        return "metal"
+    elif platform.system() == "Linux":
+        # nvidia-smi が使えれば CUDA
+        try:
+            subprocess.check_output(["nvidia-smi"], stderr=subprocess.DEVNULL)
+            return "cuda"
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            return "cpu"
+    else:
+        return "cpu"
+
+GPU_BACKEND = detect_gpu_backend()
 
 # ── 子プロセス追跡 & クリーンアップ ──────────────────────────
 _active_procs: Set[subprocess.Popen] = set()
@@ -74,6 +95,26 @@ class TestResult:
 
 
 @dataclass
+class GpuMemSnapshot:
+    """GPU メモリの使用状況スナップショット (Metal / CUDA 共通)"""
+    backend: str           # 'metal', 'cuda', or 'cpu'
+    total_gib: float       # GPU 総メモリ (GiB)
+    used_gib: float        # 使用中メモリ (GiB)
+    free_gib: float        # 空きメモリ (GiB)
+
+    @property
+    def cached_gib(self) -> float:
+        """使用中メモリ（Metal の cached_gib に相当）"""
+        return self.used_gib
+
+    @property
+    def reclaimable_gib(self) -> float:
+        """回収可能メモリ（Metal の reclaimable_gib に相当）"""
+        return self.free_gib
+
+
+# ── macOS (vm_stat) ─────────────────────────────────────
+@dataclass
 class VmSnapshot:
     page_size: int
     file_backed_pages: int
@@ -89,8 +130,8 @@ class VmSnapshot:
         return ((self.free_pages + self.speculative_pages) * self.page_size) / (1024 ** 3)
 
 
-def get_vm_snapshot() -> Optional[VmSnapshot]:
-    """vm_stat から最低限のメモリ指標を取得する。失敗時は None。"""
+def _get_vm_snapshot_metal() -> Optional[VmSnapshot]:
+    """vm_stat から最低限のメモリ指標を取得する (macOS 専用)。失敗時は None。"""
     try:
         out = subprocess.check_output(["vm_stat"], text=True)
     except Exception:
@@ -113,6 +154,57 @@ def get_vm_snapshot() -> Optional[VmSnapshot]:
     )
 
 
+# ── CUDA (nvidia-smi) ───────────────────────────────────
+def _get_gpu_snapshot_cuda() -> Optional[GpuMemSnapshot]:
+    """nvidia-smi から GPU メモリ使用状況を取得する。失敗時は None。"""
+    try:
+        out = subprocess.check_output(
+            ["nvidia-smi", "--query-gpu=memory.total,memory.used,memory.free",
+             "--format=csv,noheader,nounits"],
+            text=True, stderr=subprocess.DEVNULL
+        )
+    except Exception:
+        return None
+
+    # 最初の GPU のみ使用
+    line = out.strip().split("\n")[0]
+    parts = [p.strip() for p in line.split(",")]
+    if len(parts) < 3:
+        return None
+
+    try:
+        total_mib = float(parts[0])
+        used_mib = float(parts[1])
+        free_mib = float(parts[2])
+    except ValueError:
+        return None
+
+    return GpuMemSnapshot(
+        backend="cuda",
+        total_gib=total_mib / 1024,
+        used_gib=used_mib / 1024,
+        free_gib=free_mib / 1024,
+    )
+
+
+def get_gpu_snapshot() -> Optional[GpuMemSnapshot]:
+    """現在のプラットフォームに応じた GPU メモリスナップショットを取得する。"""
+    if GPU_BACKEND == "cuda":
+        return _get_gpu_snapshot_cuda()
+    elif GPU_BACKEND == "metal":
+        vm = _get_vm_snapshot_metal()
+        if vm is None:
+            return None
+        return GpuMemSnapshot(
+            backend="metal",
+            total_gib=vm.cached_gib + vm.reclaimable_gib,  # 概算
+            used_gib=vm.cached_gib,
+            free_gib=vm.reclaimable_gib,
+        )
+    else:
+        return None  # CPU モードではメモリ監視なし
+
+
 def wait_for_safe_memory_window(
     max_cached_gib: float,
     min_reclaimable_gib: float,
@@ -121,36 +213,36 @@ def wait_for_safe_memory_window(
     verbose: bool = False
 ) -> Tuple[bool, str]:
     """
-    高負荷時の暴走防止:
-    - file cache が上限超え
-    - reclaimable (free+speculative) が下限未満
+    高負荷時の暴走防止 (Metal / CUDA 共通):
+    - GPU メモリ使用量が上限超え
+    - 空きメモリが下限未満
     の間は待機し、timeout 超過で False を返す。
     """
     deadline = time.time() + timeout_sec
     while True:
-        snap = get_vm_snapshot()
+        snap = get_gpu_snapshot()
         if snap is None:
-            # 監視不能なら実行を止めない（既存互換）
-            return True, "vm_stat unavailable"
+            # 監視不能なら実行を止めない（CPU モードまたはツール未対応）
+            return True, f"GPU memory monitoring unavailable ({GPU_BACKEND})"
 
         cache_ok = snap.cached_gib <= max_cached_gib
         reclaim_ok = snap.reclaimable_gib >= min_reclaimable_gib
         if cache_ok and reclaim_ok:
             return True, (
-                f"cached={snap.cached_gib:.1f}GiB, "
-                f"reclaimable={snap.reclaimable_gib:.1f}GiB"
+                f"[{snap.backend}] used={snap.cached_gib:.1f}GiB, "
+                f"free={snap.reclaimable_gib:.1f}GiB"
             )
 
         if time.time() >= deadline:
             return False, (
-                f"cached={snap.cached_gib:.1f}GiB>{max_cached_gib:.1f}GiB "
-                f"or reclaimable={snap.reclaimable_gib:.1f}GiB<{min_reclaimable_gib:.1f}GiB"
+                f"[{snap.backend}] used={snap.cached_gib:.1f}GiB>{max_cached_gib:.1f}GiB "
+                f"or free={snap.reclaimable_gib:.1f}GiB<{min_reclaimable_gib:.1f}GiB"
             )
 
         if verbose:
             print(
-                f"\n⏸️ メモリ待機: cached={snap.cached_gib:.1f}GiB "
-                f"(limit {max_cached_gib:.1f}), reclaimable={snap.reclaimable_gib:.1f}GiB "
+                f"\n⏸️ GPU メモリ待機 [{snap.backend}]: used={snap.cached_gib:.1f}GiB "
+                f"(limit {max_cached_gib:.1f}), free={snap.reclaimable_gib:.1f}GiB "
                 f"(min {min_reclaimable_gib:.1f})"
             )
         time.sleep(poll_sec)
@@ -699,7 +791,7 @@ def main():
     parser.add_argument("--timeout", "-t", type=int, default=30, help="タイムアウト秒数 (デフォルト: 30)")
     parser.add_argument("--filter", "-f", type=str, help="ファイルパターンでフィルタ")
     # ⚠️ --parallel 引数は意図的に削除済み。絶対に再追加しないこと。
-    # Metal GPU プロセスの並列実行は Mac 全体のクラッシュを引き起こす。
+    # GPU (Metal/CUDA) プロセスの並列実行はシステムクラッシュを引き起こす。
     parser.add_argument("--static", action="store_true", help="静的コンパイルモードで実行 (JIT回避)")
     parser.add_argument("--clean", action="store_true", help="古いバイナリを削除して終了")
     parser.add_argument("--no-build", action="store_true", help="自動ビルドをスキップ (既存バイナリをそのまま使用)")
@@ -784,13 +876,15 @@ def main():
             except Exception as e:
                 print(f"⚠️ Warning: Failed to symlink runtime library: {e}")
     
+    backend_emoji = {"cuda": "🟢", "metal": "🍎", "cpu": "💻"}.get(GPU_BACKEND, "❓")
     print("🔍 TL ファイル検証エージェント")
+    print(f"{backend_emoji} GPU バックエンド: {GPU_BACKEND.upper()}")
     print(f"📁 検索ディレクトリ: {', '.join(str(d) for d in directories)}")
     print(f"⏱️ タイムアウト: {args.timeout}秒")
     print(f"🛡️ 安全策: クールダウン {args.cooldown}秒 / クラッシュ後 {args.crash_cooldown}秒 / 連続{args.max_crashes}回で緊急停止")
     print(
-        f"🧠 メモリガード: cached<= {args.max_cached_gib:.1f}GiB, "
-        f"reclaimable>= {args.min_reclaimable_gib:.1f}GiB "
+        f"🧠 メモリガード: used<= {args.max_cached_gib:.1f}GiB, "
+        f"free>= {args.min_reclaimable_gib:.1f}GiB "
         f"(待機上限 {args.memory_wait_timeout}s)"
     )
     print("")
@@ -813,7 +907,7 @@ def main():
             return True
         return False
     
-    # ⚠️ 並列実行コードは意図的に削除済み。Metal GPU リソース競合で Mac がクラッシュするため。
+    # ⚠️ 並列実行コードは意図的に削除済み。GPU (Metal/CUDA) リソース競合でクラッシュするため。
     # テストは必ず逐次実行する（下記ブロック）。
 
     # セーフティ設定
@@ -839,7 +933,7 @@ def main():
             emergency_stopped = True
             break
         
-        # セーフティポーズ (Metal ドライバのリソース回収待ち)
+        # セーフティポーズ (GPU ドライバのリソース回収待ち)
         if args.safe_mode and i > 1 and (i - 1) % safety_pause_interval == 0:
             print(f"\n☕ [Safety Pause] システムの安定化を待機中 ({safety_pause_duration}s)... ", end="", flush=True)
             time.sleep(safety_pause_duration)
