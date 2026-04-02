@@ -94,6 +94,7 @@ impl CpuTensor<f32> {
     pub fn softmax(&self, axis: i32) -> tl_backend::BackendResult<Self> { self.softmax_impl(axis) }
     pub fn embedding(&self, indices: &Self) -> tl_backend::BackendResult<Self> { self.embedding_impl(indices) }
     pub fn tril(&self, diagonal: i32) -> tl_backend::BackendResult<Self> { self.tril_impl(diagonal) }
+    pub fn masked_fill_scalar(&self, mask: &Self, value: f64) -> tl_backend::BackendResult<Self> { self.masked_fill_scalar_impl(mask, value) }
     pub fn cross_entropy(&self, target: &Self) -> tl_backend::BackendResult<Self> { self.cross_entropy_impl(target) }
     pub fn repeat_interleave(&self, repeats: usize, axis: usize) -> tl_backend::BackendResult<Self> { self.repeat_interleave_impl(repeats, axis) }
     pub fn index_select(&self, axis: usize, indices: &Self) -> tl_backend::BackendResult<Self> { self.index_select_impl(axis, indices) }

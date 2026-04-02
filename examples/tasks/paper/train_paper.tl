@@ -63,7 +63,9 @@ impl CausalSelfAttention {
         // Original: matmul(softmax(tril(matmul(q, transpose(k, 1, 2))*0.0625, 0), 2), v)
         let k_t = k.transpose(1, 2);
         let qk = q.matmul(k_t) * 0.0625;
-        let masked = qk.tril(0);
+        let ones = Tensor::ones_like(qk);
+        let upper_tri = ones - ones.tril(0);
+        let masked = qk.masked_fill(upper_tri, -f32::INFINITY);
         let attn = masked.softmax(2);
         let y = attn.matmul(v);
         self.p_proj.forward(y) 

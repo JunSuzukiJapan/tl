@@ -1762,6 +1762,29 @@ pub extern "C" fn tl_cpu_tensor_tril(t: *mut OpaqueTensor, diagonal: i64) -> *mu
     }
 }
 
+pub extern "C" fn tl_cpu_tensor_masked_fill_scalar(
+    t: *mut OpaqueTensor,
+    mask: *mut OpaqueTensor,
+    value: f64,
+) -> *mut OpaqueTensor {
+    if t.is_null() || mask.is_null() {
+        return std::ptr::null_mut();
+    }
+    let tensor = unsafe { &*t };
+    let mask_t = unsafe { &*mask };
+    match tensor.masked_fill_scalar_impl(mask_t, value) {
+        Ok(res) => {
+            let ptr = make_tensor(res);
+            // Ignore autograd for masked_fill_scalar for now (can be added if needed)
+            ptr
+        }
+        Err(e) => {
+            eprintln!("Runtime Error in masked_fill_scalar: {}", e);
+            std::ptr::null_mut()
+        }
+    }
+}
+
 pub extern "C" fn tl_cpu_tensor_sum_dim(
     t: *mut OpaqueTensor,
     dim: usize,

@@ -264,15 +264,15 @@ pub extern "C" fn tl_device_tensor_where_cond(
 ) -> *mut c_void {
     dispatch(|d| d.tensor_where_cond(cond, x, y))
 }
-/// @ffi_sig (Tensor*, Tensor*, f32) -> Tensor*
+/// @ffi_sig (Tensor*, Tensor*, f64) -> Tensor*
 /// mask > 0 の位置を value で置換
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_device_tensor_masked_fill(
+pub extern "C" fn tl_device_tensor_masked_fill_scalar(
     t: *mut c_void,
     mask: *mut c_void,
-    value: f32,
+    value: f64,
 ) -> *mut c_void {
-    dispatch(|d| d.tensor_masked_fill(t, mask, value))
+    dispatch(|d| d.tensor_masked_fill_scalar(t, mask, value))
 }
 /// @ffi_sig (Tensor*, i64, bool) -> Tensor*
 /// var with dim (reduce_generic pattern)

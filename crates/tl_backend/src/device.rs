@@ -77,12 +77,6 @@ pub trait IDevice {
         x: *mut c_void,
         y: *mut c_void,
     ) -> BackendResult<*mut c_void>;
-    fn tensor_masked_fill(
-        &self,
-        t: *mut c_void,
-        mask: *mut c_void,
-        value: f32,
-    ) -> BackendResult<*mut c_void>;
 
     // ========== テンソル→Vec変換 ==========
     fn tensor_to_vec_f32(&self, t: *mut c_void) -> BackendResult<(*mut f32, usize)>;
@@ -349,6 +343,7 @@ pub trait IDevice {
     fn tensor_argmin(&self, t: *mut c_void, dim: i64, keep_dim: bool)
         -> BackendResult<*mut c_void>;
     fn tensor_tril(&self, t: *mut c_void, diagonal: i64) -> BackendResult<*mut c_void>;
+    fn tensor_masked_fill_scalar(&self, t: *mut c_void, mask: *mut c_void, value: f64) -> BackendResult<*mut c_void>;
     fn tensor_clamp(&self, t: *mut c_void, min: f64, max: f64) -> BackendResult<*mut c_void>;
     fn tensor_sample(&self, t: *mut c_void, temp: f32, top_p: f32) -> BackendResult<*mut c_void>;
 

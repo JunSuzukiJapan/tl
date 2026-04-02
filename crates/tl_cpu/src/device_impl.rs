@@ -144,21 +144,6 @@ impl IDevice for CpuDevice {
         Ok(std::sync::Arc::into_raw(arc) as *mut c_void)
     }
 
-    fn tensor_masked_fill(
-        &self,
-        tensor: *mut c_void,
-        mask: *mut c_void,
-        value: f32,
-    ) -> BackendResult<*mut c_void> {
-        use crate::tensor::CpuTensor as CT;
-        let (tt, tm) = unsafe { (&*t(tensor), &*t(mask)) };
-        let numel: usize = tt.shape().iter().product();
-        let value_tensor = CT::from_slice(&vec![value; numel], tt.shape(), crate::DType::F32);
-        let result = CT::where_cond(tm, &value_tensor, tt)?;
-        let arc = std::sync::Arc::new(std::cell::UnsafeCell::new(result));
-        Ok(std::sync::Arc::into_raw(arc) as *mut c_void)
-    }
-
     fn tensor_to_vec_f32(&self, tensor: *mut c_void) -> BackendResult<(*mut f32, usize)> {
         let tt = unsafe { &*t(tensor) };
         let vec: Vec<f32> = tt.to_vec::<f32>();
@@ -1467,6 +1452,10 @@ impl IDevice for CpuDevice {
     #[inline]
     fn tensor_tril(&self, a: *mut c_void, diagonal: i64) -> BackendResult<*mut c_void> {
         check(ffi::tl_cpu_tensor_tril(t(a), diagonal))
+    }
+    #[inline]
+    fn tensor_masked_fill_scalar(&self, a: *mut c_void, mask: *mut c_void, value: f64) -> BackendResult<*mut c_void> {
+        check(ffi::tl_cpu_tensor_masked_fill_scalar(t(a), t(mask), value))
     }
     #[inline]
     fn tensor_clamp(&self, a: *mut c_void, min: f64, max: f64) -> BackendResult<*mut c_void> {

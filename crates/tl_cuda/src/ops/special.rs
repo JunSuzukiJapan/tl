@@ -444,8 +444,14 @@ impl CudaTensor {
 
     // ========== Phase A: masked_fill / fill_ ==========
 
-    /// masked_fill — GPU カーネル
-    pub fn masked_fill_impl(&self, mask: &CudaTensor, value: f32) -> BackendResult<CudaTensor> {
+    /// masked_fill_scalar — GPU カーネル
+    pub fn masked_fill_scalar_impl(&self, mask: &CudaTensor, value: f64) -> BackendResult<CudaTensor> {
+        if self.shape() != mask.shape() {
+            return Err(BackendError::ShapeMismatch(format!(
+                "masked_fill_scalar strict shape match required: mask {:?} vs self {:?}",
+                mask.shape(), self.shape()
+            )));
+        }
         let n = self.elem_count();
         let output = CudaTensor::uninit(self.shape(), DType::F32);
         let stream = crate::stream::get_stream().raw();
@@ -455,7 +461,7 @@ impl CudaTensor {
                 mask.buffer.ptr() as *const f32,
                 output.buffer.ptr() as *mut f32,
                 n as i32,
-                value,
+                value as f32,
                 stream,
             );
         }

@@ -3139,6 +3139,7 @@ impl SemanticAnalyzer {
             ExprKind::CharLiteral(_) => Ok(Type::Char("Char".to_string())),
             ExprKind::Symbol(_) => Ok(Type::Entity),
             ExprKind::LogicVar(_) => Ok(Type::Entity),
+            ExprKind::StaticConstAccess(ty, _) => Ok(ty.clone()),
             ExprKind::Wildcard => Ok(Type::Entity), // Wildcard treated as Entity type? Or generic?
             ExprKind::Tuple(exprs) => {
                 let mut types = Vec::new();

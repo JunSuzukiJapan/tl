@@ -1928,15 +1928,15 @@ fn compile_tensor_masked_fill<'ctx>(
     if args.len() < 2 { return Err("masked_fill requires (mask, value) arguments".into()); }
     let mask_val = args[0].0;
     let value_val = args[1].0;
-    // Convert value to f32 if needed
-    let f32_type = codegen.context.f32_type();
-    let f32_val = match args[1].1 {
-        Type::F32 => value_val.into_float_value(),
-        Type::F64 => codegen.builder.build_float_trunc(value_val.into_float_value(), f32_type, "ftrunc").map_err(|e| e.to_string())?,
+    // Convert value to f64 if needed
+    let f64_type = codegen.context.f64_type();
+    let f64_val = match args[1].1 {
+        Type::F64 => value_val.into_float_value(),
+        Type::F32 => codegen.builder.build_float_ext(value_val.into_float_value(), f64_type, "fext").map_err(|e| e.to_string())?,
         _ => return Err("masked_fill value must be f32 or f64".into()),
     };
-    let f = codegen.module.get_function("tl_tensor_masked_fill").ok_or("tl_tensor_masked_fill not found")?;
-    let call = codegen.builder.build_call(f, &[obj.into(), mask_val.into(), f32_val.into()], "mfill_res").map_err(|e| e.to_string())?;
+    let f = codegen.module.get_function("tl_tensor_masked_fill_scalar").ok_or("tl_tensor_masked_fill_scalar not found")?;
+    let call = codegen.builder.build_call(f, &[obj.into(), mask_val.into(), f64_val.into()], "mfill_res").map_err(|e| e.to_string())?;
     let v = codegen.check_tensor_result(call, "masked_fill_error")?;
     Ok((v, obj_ty))
 }

@@ -426,16 +426,19 @@ fn parse_block(input: Input) -> IResult<Input, Expr, ParserError> {
 
 
 fn parse_path_based_atom(input: Input, allow_struct: bool) -> IResult<Input, Expr, ParserError> {
-    // 1. Try Primitive Type first: i64::method()
+    // 1. Try Primitive Type first: i64::method() or f64::INFINITY
     if let Ok((rest, ty)) = parse_primitive_type(input) {
         // Primitive type found. Expect :: method
         if let Ok((rest2, _)) = expect_token(Token::DoubleColon)(rest) {
-            let (rest3, method) = identifier(rest2)?;
+            let (rest3, method_or_const) = identifier(rest2)?;
             // Check for Static Method Call: i64::method(...)
             if let Ok((rest4, _)) = expect_token(Token::LParen)(rest3) {
                 let (rest5, args) = separated_list0(expect_token(Token::Comma), parse_expr)(rest4)?;
                 let (rest6, _) = expect_token(Token::RParen)(rest5)?;
-                return Ok((rest6, Spanned::new(ExprKind::StaticMethodCall(ty, method, args), crate::compiler::error::Span::default())));
+                return Ok((rest6, Spanned::new(ExprKind::StaticMethodCall(ty, method_or_const, args), crate::compiler::error::Span::default())));
+            } else {
+                // Otherwise, it's a static constant access: f64::INFINITY
+                return Ok((rest3, Spanned::new(ExprKind::StaticConstAccess(ty, method_or_const), crate::compiler::error::Span::default())));
             }
         }
         // If just primitive without ::, it's not a path atom we handle here (e.g. just "i64" is not expr).

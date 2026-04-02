@@ -268,6 +268,7 @@ impl LivenessAnalyzer {
             | ExprKind::CharLiteral(_)
             | ExprKind::Symbol(_)
             | ExprKind::LogicVar(_)
+            | ExprKind::StaticConstAccess(_, _)
             | ExprKind::Wildcard => {}
 
             // Handle StaticMethodCall separately if needed, passing to FnCall logic?

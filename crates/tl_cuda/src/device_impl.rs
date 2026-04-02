@@ -126,14 +126,14 @@ impl IDevice for CudaDeviceImpl {
         let result = crate::tensor::CudaTensor::where_cond_impl(tc, tx, ty)?;
         Ok(v(ffi_ops::make_tensor(result)))
     }
-    fn tensor_masked_fill(
+    fn tensor_masked_fill_scalar(
         &self,
         t: *mut c_void,
         mask: *mut c_void,
-        value: f32,
+        value: f64,
     ) -> BackendResult<*mut c_void> {
         let (tt, tm) = unsafe { (&*p(t), &*p(mask)) };
-        Ok(v(ffi_ops::make_tensor(tt.masked_fill_impl(tm, value)?)))
+        Ok(v(ffi_ops::make_tensor(tt.masked_fill_scalar_impl(tm, value)?)))
     }
     fn tensor_to_vec_f32(&self, t: *mut c_void) -> BackendResult<(*mut f32, usize)> {
         let tt = unsafe { &*p(t) };
@@ -780,11 +780,6 @@ impl IDevice for CudaDeviceImpl {
         // 学習ループの各ステップ終了時にストリームを同期し、
         // 古い計算グラフの解放完了を待機する
         crate::stream::sync_stream();
-
-        // 未使用のプールバッファを強制パージし、メモリ断片化と OOM を防ぐ
-        if let Ok(mut pool) = crate::buffer_pool::BUFFER_POOL.lock() {
-            pool.free_buffers.clear();
-        }
 
         Ok(())
     }

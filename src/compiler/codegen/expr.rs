@@ -1768,6 +1768,19 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let i32_type = self.context.i32_type();
                 Ok((i32_type.const_int(*c as u32 as u64, false).into(), Type::Char("Char".to_string())))
             }
+            ExprKind::StaticConstAccess(ty, method_or_const) => {
+                match (ty, method_or_const.as_str()) {
+                    (Type::F64, "INFINITY") => Ok((self.context.f64_type().const_float(std::f64::INFINITY).into(), Type::F64)),
+                    (Type::F64, "NEG_INFINITY") => Ok((self.context.f64_type().const_float(std::f64::NEG_INFINITY).into(), Type::F64)),
+                    (Type::F32, "INFINITY") => Ok((self.context.f32_type().const_float(std::f64::INFINITY).into(), Type::F32)),
+                    (Type::F32, "NEG_INFINITY") => Ok((self.context.f32_type().const_float(std::f64::NEG_INFINITY).into(), Type::F32)),
+                    (Type::I64, "MAX") => Ok((self.context.i64_type().const_int(std::i64::MAX as u64, true).into(), Type::I64)),
+                    (Type::I64, "MIN") => Ok((self.context.i64_type().const_int(std::i64::MIN as u64, true).into(), Type::I64)),
+                    (Type::I32, "MAX") => Ok((self.context.i32_type().const_int(std::i32::MAX as u64, true).into(), Type::I32)),
+                    (Type::I32, "MIN") => Ok((self.context.i32_type().const_int(std::i32::MIN as u64, true).into(), Type::I32)),
+                    _ => Err(format!("Unsupported static constant access: {}::{}", ty.get_base_name(), method_or_const))
+                }
+            }
             ExprKind::StringLiteral(s) => self.compile_string_literal(s),
             ExprKind::Symbol(name) => {
                 let mut hasher = std::collections::hash_map::DefaultHasher::new();

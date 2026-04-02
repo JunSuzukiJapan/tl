@@ -39,7 +39,8 @@ impl CudaBufferPool {
 
     /// バッファをプールに返却
     pub fn release(&mut self, buffer: Arc<CudaBuffer>) {
-        const MAX_BUFFERS_PER_SIZE: usize = 4;
+        // バッファサイズごとの保持上限を大きくし、長期間の学習ループでのフラグメンテーションとOOMを防ぐ
+        const MAX_BUFFERS_PER_SIZE: usize = 1024;
 
         let size = buffer.size();
         let list = self.free_buffers.entry(size).or_default();

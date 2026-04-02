@@ -1136,6 +1136,23 @@ impl<T: TensorScalar> CpuTensor<T> {
         Ok(CpuTensor::<T> { data: result, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
     }
 
+    pub fn masked_fill_scalar_impl(&self, mask: &Self, value: f64) -> tl_backend::BackendResult<Self> {
+        if self.shape != mask.shape {
+            return Err(tl_backend::BackendError::ShapeMismatch(format!(
+                "masked_fill_scalar strict shape match required: mask {:?} vs self {:?}",
+                mask.shape, self.shape
+            )));
+        }
+        let mut result = self.data.clone();
+        let fill_val = T::from_f64(value);
+        for i in 0..result.len() {
+            if mask.data[i].to_f64() != 0.0 {
+                result[i] = fill_val;
+            }
+        }
+        Ok(CpuTensor::<T> { data: result, data_i64: None, shape: self.shape.clone(), dtype: self.dtype, autograd: None })
+    }
+
     pub fn cross_entropy_impl(&self, target: &Self) -> tl_backend::BackendResult<Self> {
         let batch = self.shape[0];
         let classes = self.shape[1];

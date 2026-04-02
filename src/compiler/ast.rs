@@ -491,6 +491,7 @@ pub enum ExprKind {
     FnCall(String, Vec<Expr>),
     MethodCall(Box<Expr>, String, Vec<Expr>),
     StaticMethodCall(Type, String, Vec<Expr>), // Type::method(args)
+    StaticConstAccess(Type, String),           // Type::CONSTANT (e.g. f64::INFINITY)
 
     // Cast: expr as Type
     As(Box<Expr>, Type),

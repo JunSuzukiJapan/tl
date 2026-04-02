@@ -153,17 +153,17 @@ impl IDevice for MetalDeviceImpl {
         Ok(ffi_ops::make_tensor(result) as *mut c_void)
     }
 
-    fn tensor_masked_fill(
+    fn tensor_masked_fill_scalar(
         &self,
         tensor: *mut c_void,
         mask: *mut c_void,
-        value: f32,
+        value: f64,
     ) -> BackendResult<*mut c_void> {
         let (tt, tm) = unsafe { (&*t(tensor), &*t(mask)) };
         let numel: usize = tt.shape().iter().product();
         let value_tensor =
-            MetalTensor::from_slice(&vec![value; numel], tt.shape(), crate::DType::F32);
-        let result = MetalTensor::where_cond(tm, &value_tensor, tt)?;
+            MetalTensor::from_slice(&vec![value as f32; numel], tt.shape(), crate::DType::F32);
+        let result = MetalTensor::where_cond_impl(tm, &value_tensor, tt)?;
         Ok(ffi_ops::make_tensor(result) as *mut c_void)
     }
 
