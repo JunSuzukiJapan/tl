@@ -339,9 +339,17 @@ impl<'ctx> CodeGenerator<'ctx> {
         ty: &Type,
     ) -> Result<(), String> {
         match ty {
-            Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::GradTensor(_, _) => {
-                 let acquire_fn = self.module.get_function("tl_tensor_acquire")
-                    .ok_or("tl_tensor_acquire not found")?;
+            Type::Tensor(inner, _) | Type::TensorShaped(inner, _) | Type::GradTensor(inner, _) => {
+                let is_qtensor = matches!(&**inner, Type::I8 | Type::U8);
+                let retain_fn_name = if is_qtensor { "tl_qtensor_retain" } else { "tl_tensor_acquire" };
+                let acquire_fn = self.module.get_function(retain_fn_name)
+                    .or_else(|| {
+                         let void_ty = self.context.void_type();
+                         let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                         let ft = ptr_ty.fn_type(&[ptr_ty.into()], false);
+                         Some(self.module.add_function(retain_fn_name, ft, None))
+                    })
+                    .ok_or(format!("{} not found", retain_fn_name))?;
                 let ptr = val.into_pointer_value();
                 let void_ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
                 let cast_ptr = self.builder.build_pointer_cast(ptr, void_ptr_type, "cast_acq").map_err(|e| e.to_string())?;
@@ -823,18 +831,24 @@ impl<'ctx> CodeGenerator<'ctx> {
                     
                     self.builder.build_call(finalize_fn, &[val.into()], "").map_err(|e| e.to_string())?;
                 } else {
-                    // Call tl_tensor_release_safe (safe data-clear method)
+                    let is_qtensor = match ty {
+                        Type::Tensor(inner, _) | Type::TensorShaped(inner, _) => matches!(&**inner, Type::I8 | Type::U8),
+                        _ => false,
+                    };
+                    
+                    let free_fn_name = if is_qtensor { "tl_qtensor_release_safe" } else { "tl_tensor_release_safe" };
+                        
                     let free_fn = self
                         .module
-                        .get_function("tl_tensor_release_safe")
+                        .get_function(free_fn_name)
                         .or_else(|| {
                              // Declare if missing
                              let void_ty = self.context.void_type();
                              let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
                              let ft = void_ty.fn_type(&[ptr_ty.into()], false);
-                             Some(self.module.add_function("tl_tensor_release_safe", ft, None))
+                             Some(self.module.add_function(free_fn_name, ft, None))
                         })
-                        .ok_or("tl_tensor_release_safe not found")?;
+                        .ok_or(format!("{} not found", free_fn_name))?;
 
                     self.builder
                         .build_call(free_fn, &[val.into()], "")

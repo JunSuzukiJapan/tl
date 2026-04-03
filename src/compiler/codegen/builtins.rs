@@ -378,6 +378,12 @@ pub fn declare_runtime_functions<'ctx>(
     // tl_tensor_release_safe(t: *mut) -> void
     add_fn("tl_tensor_release_safe", free_type);
 
+    // tl_qtensor_retain(t: *mut) -> *mut
+    add_fn("tl_qtensor_retain", clone_type);
+
+    // tl_qtensor_release_safe(t: *mut) -> void
+    add_fn("tl_qtensor_release_safe", free_type);
+
     // tl_tensor_promote(t: *mut) -> void
     add_fn("tl_tensor_promote", free_type);
 
@@ -1730,6 +1736,8 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_tensor_acquire") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_acquire as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
     if let Some(f) = module.get_function("tl_tensor_release_safe") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_release_safe as *const () as usize); }
+    if let Some(f) = module.get_function("tl_qtensor_retain") { execution_engine.add_global_mapping(&f, runtime::system::tl_qtensor_retain as *const () as usize); }
+    if let Some(f) = module.get_function("tl_qtensor_release_safe") { execution_engine.add_global_mapping(&f, runtime::system::tl_qtensor_release_safe as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi
     if let Some(f) = module.get_function("tl_tensor_add_scalar") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_add_scalar as *const () as usize); }
     // [IDevice] map_tensor_fn! → device_ffi

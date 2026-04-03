@@ -144,7 +144,30 @@ pub extern "C" fn tl_qtensor_free(ptr: usize) {
         return;
     }
     unsafe {
-        let _ = Box::from_raw(ptr as *mut crate::quantized::QTensor);
+        let _ = std::sync::Arc::from_raw(ptr as *mut crate::quantized::QTensor);
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_qtensor_retain(ptr: *mut crate::quantized::QTensor) -> *mut crate::quantized::QTensor {
+    if ptr.is_null() {
+        return ptr;
+    }
+    unsafe {
+        let arc = std::sync::Arc::from_raw(ptr);
+        let cloned = std::sync::Arc::clone(&arc);
+        let _ = std::sync::Arc::into_raw(arc);
+        std::sync::Arc::into_raw(cloned) as *mut crate::quantized::QTensor
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_qtensor_release_safe(ptr: *mut crate::quantized::QTensor) {
+    if ptr.is_null() {
+        return;
+    }
+    unsafe {
+        let _ = std::sync::Arc::from_raw(ptr);
     }
 }
 

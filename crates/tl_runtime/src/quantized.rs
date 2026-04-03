@@ -121,7 +121,9 @@ impl QTensor {
             // CPU fallback: perform dequantization and cache the F32 tensor
             if let Ok(mut cache_guard) = self.cache.lock() {
                  if let Some(ptr_val) = *cache_guard {
-                     return Ok(ptr_val as *mut crate::OpaqueTensor);
+                     let p = ptr_val as *mut crate::OpaqueTensor;
+                     tl_cpu::ffi::tl_cpu_tensor_acquire(p as *mut tl_cpu::CpuTensor<f32>);
+                     return Ok(p);
                  }
                  
                  let f32_data = self.dequantize_to_f32()?;
@@ -130,6 +132,7 @@ impl QTensor {
                     tl_cpu::ffi::tl_cpu_tensor_new(
                         f32_data.as_ptr(), shape.len(), shape.as_ptr()
                     ) as *mut crate::OpaqueTensor;
+                 tl_cpu::ffi::tl_cpu_tensor_acquire(tensor_ptr as *mut tl_cpu::CpuTensor<f32>);
                  *cache_guard = Some(tensor_ptr as usize);
                  return Ok(tensor_ptr);
             }
@@ -148,12 +151,15 @@ impl QTensor {
         
         // キャッシュヒット: 既に dequantized F32 テンソルがある
         if let Some(ptr_val) = *cache_guard {
-            return Ok(ptr_val as *mut crate::OpaqueTensor);
+            let p = ptr_val as *mut crate::OpaqueTensor;
+            crate::device_ffi::tl_device_tensor_acquire(p as *mut std::ffi::c_void);
+            return Ok(p);
         }
         
         // キャッシュミス: CPU dequantize → GPU 転送 → キャッシュ
         let f32_data = self.dequantize_to_f32()?;
         let ptr = crate::device_ffi::create_runtime_tensor_f32(&f32_data, &self.shape);
+        crate::device_ffi::tl_device_tensor_acquire(ptr);
         *cache_guard = Some(ptr as usize);
         Ok(ptr as *mut _)
     }
