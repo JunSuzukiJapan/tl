@@ -1287,6 +1287,15 @@ impl<'ctx> CodeGenerator<'ctx> {
                 self.builder.position_at_end(entry);
 
                 // FIX: Must setup function frame for methods too!
+                self.variables.clear();
+                self.variables.push(std::collections::HashMap::new());
+                self.temporaries.clear();
+                self.temporaries.push(Vec::new());
+                self.variable_liveness.clear();
+                self.variable_liveness.push(std::collections::HashMap::new());
+                self.loop_stack.clear();
+                self.current_time = method.args.len();
+
                 // Liveness Analysis
                 self.function_analysis = Some(crate::compiler::liveness::LivenessAnalyzer::analyze(method));
                 let num_slots = self.function_analysis.as_ref().map(|a| a.num_slots).unwrap_or(0);
@@ -1353,6 +1362,16 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .last_mut()
                             .unwrap()
                             .insert(arg_name.clone(), (alloca.into(), resolved_ty, CLEANUP_NONE));
+                            
+                        let arg_time = i + 1; // 1-indexed like visit_function
+                        let last_use = if let Some(analysis) = &self.function_analysis {
+                            analysis.last_use_times.get(&arg_time).copied().unwrap_or(0)
+                        } else { 0 };
+                        
+                        self.variable_liveness
+                            .last_mut()
+                            .unwrap()
+                            .insert(arg_name.clone(), last_use);
                     }
                 }
 
@@ -1726,6 +1745,9 @@ impl<'ctx> CodeGenerator<'ctx> {
         self.variable_liveness.clear();
         self.variable_liveness.push(std::collections::HashMap::new());
         self.loop_stack.clear();
+        
+        // Reset time for liveness synchronization
+        self.current_time = func.args.len();
 
         // Initialize entry block
         let entry = self.context.append_basic_block(function, "entry");
@@ -1770,7 +1792,9 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
 
         // Register arguments (skip sret param if present)
+        let mut arg_time = 0;
         for (i, arg) in function.get_param_iter().skip(param_offset).enumerate() {
+            arg_time += 1;
             let (arg_name, arg_type) = &func.args[i];
             let alloca = self.create_entry_block_alloca(function, arg_name, arg_type)?;
 
@@ -1797,12 +1821,20 @@ impl<'ctx> CodeGenerator<'ctx> {
 
             // Insert into current scope with should_free=FALSE
             // Arguments are BORROWED. Function must NOT free them on exit.
-            if arg_name == "self" {
-            }
             self.variables
                 .last_mut()
                 .unwrap()
                 .insert(arg_name.clone(), (alloca.into(), arg_type.clone(), CLEANUP_NONE));
+                
+            let last_use = if let Some(analysis) = &self.function_analysis {
+                analysis.last_use_times.get(&arg_time).copied().unwrap_or(0)
+            } else { 0 };
+            
+            eprintln!("[LIVENESS] Registering param: {}, time={}, last_use={}", arg_name, arg_time, last_use);
+            self.variable_liveness
+                .last_mut()
+                .unwrap()
+                .insert(arg_name.clone(), last_use);
         }
 
         // Initialize Arena in main if needed

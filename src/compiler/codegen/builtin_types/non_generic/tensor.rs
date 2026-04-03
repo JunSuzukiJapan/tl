@@ -1344,7 +1344,10 @@ fn compile_from_vec_u8_impl<'ctx>(
     let shape_raw = args[1].0;
     let shape_ty = args[1].1.clone();
     
-    let (shape_data_ptr, rank_val) = if matches!(shape_ty, Type::Tensor(_, _)) {
+    println!("DEBUG: from_vec_u8_impl shape_ty = {:?}", shape_ty);
+    
+    let (shape_data_ptr, rank_val, is_f32) = if matches!(shape_ty, Type::Tensor(_, _)) || matches!(shape_ty, Type::Array(_, _)) {
+        
         let data_fn = codegen.module.get_function("tl_tensor_data").ok_or("tl_tensor_data not found")?;
         let data_call = codegen.builder.build_call(data_fn, &[shape_raw.into()], "shape_data").map_err(|e| e.to_string())?;
         let data_ptr = match data_call.try_as_basic_value() {
@@ -1359,7 +1362,7 @@ fn compile_from_vec_u8_impl<'ctx>(
             _ => return Err("Invalid return from tensor numel".into()),
         };
         
-        (data_ptr, numel)
+        (data_ptr, numel, true)
     } else {
          let as_ptr_fn = codegen.module.get_function("tl_vec_i64_as_ptr").ok_or("tl_vec_i64_as_ptr not found")?;
          let ptr_call = codegen.builder.build_call(as_ptr_fn, &[shape_raw.into()], "vec_ptr").map_err(|e| e.to_string())?;
@@ -1375,7 +1378,7 @@ fn compile_from_vec_u8_impl<'ctx>(
              _ => return Err("Invalid return from vec len".into()),
          };
          
-         (data_ptr, rank)
+         (data_ptr, rank, false)
     };
     
     let offset_val = if has_offset {
@@ -1393,7 +1396,7 @@ fn compile_from_vec_u8_impl<'ctx>(
         return Err("Vec must be passed by pointer".into());
     };
     
-    let fn_name = if matches!(shape_ty, Type::Tensor(_, _)) {
+    let fn_name = if is_f32 {
         "tl_tensor_from_vec_u8_f32_shape"
     } else {
         "tl_tensor_from_vec_u8"

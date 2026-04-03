@@ -1672,12 +1672,12 @@ impl<'ctx> CodeGenerator<'ctx> {
     pub(crate) fn is_last_use(&self, name: &str) -> bool {
         for scope in self.variable_liveness.iter().rev() {
             if let Some(&last_use) = scope.get(name) {
-                // If current_time has reached the last_use time, it's a move.
-                // Note: last_use is 0 if it was never used or not found in analysis.
-                if last_use == 0 { return false; }
-                return self.current_time >= last_use;
+                let res = last_use != 0 && self.current_time >= last_use;
+                eprintln!("[LIVENESS] is_last_use({}): current_time={}, last_use={} -> {}", name, self.current_time, last_use, res);
+                return res;
             }
         }
+        eprintln!("[LIVENESS] is_last_use({}): NOT FOUND IN SCOPE", name);
         false
     }
 
@@ -3159,7 +3159,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                     Type::Path(segments, _) => segments.last().map(|s| s.as_str()).unwrap_or("Unknown"),
                     _ => return Err(format!("Cannot call static method on type {:?}", type_ty)),
                 };
-                self.compile_static_method_call(struct_name, method_name, args, &type_ty)
+                let res = self.compile_static_method_call(struct_name, method_name, args, &type_ty)?;
+                self.add_temp(res.0, res.1.clone());
+                Ok(res)
             }
             ExprKind::BinOp(lhs, op, rhs) => {
                 let left = self.compile_expr(lhs)?;
@@ -6092,6 +6094,21 @@ impl<'ctx> CodeGenerator<'ctx> {
     }
 
 
+    pub(crate) fn create_entry_block_alloca_manual(
+        &self,
+        function: FunctionValue<'ctx>,
+        name: &str,
+        llvm_ty: &inkwell::types::BasicTypeEnum<'ctx>,
+    ) -> Result<inkwell::values::PointerValue<'ctx>, String> {
+        let builder = self.context.create_builder();
+        let entry = function.get_first_basic_block().unwrap();
+        match entry.get_first_instruction() {
+            Some(first_instr) => builder.position_before(&first_instr),
+            None => builder.position_at_end(entry),
+        }
+        Ok(builder.build_alloca(*llvm_ty, name).unwrap())
+    }
+
     pub(crate) fn create_entry_block_alloca(
         &self,
         function: FunctionValue<'ctx>,
@@ -6647,31 +6664,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                  .or_else(|| self.enum_types.get(&simple_lookup_name))
                  .ok_or_else(|| format!("Struct type {} not found for SRET allocation (tried {})", simple_lookup_name, simple_lookup_name))?;
              
-             let size = struct_type.size_of().ok_or("Cannot determine size for SRET struct")?;
-             
-             // 2. Malloc
-             let malloc_fn = self.module.get_function("malloc").ok_or("malloc not found")?;
-             let size_i64 = self.builder.build_int_z_extend(size, self.context.i64_type(), "size_i64").unwrap();
-             let call_malloc = self.builder.build_call(malloc_fn, &[size_i64.into()], "sret_malloc").map_err(|e| e.to_string())?;
-             
-             let raw_ptr = match call_malloc.try_as_basic_value() {
-                 inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
-                 _ => return Err("malloc returned void".into()),
-             };
-             
-             // 3. Register (Initialize RefCount=1, Header)
-             // Use generic name or strict name?
-             let struct_name_str = match &ret_ty {
-                 Type::Struct(n, _) => n.as_str(),
-                 _ => "AnonymousStruct",
-             };
-             let name_global = self.builder.build_global_string_ptr(struct_name_str, "struct_name").unwrap();
-             let register_fn = self.module.get_function("tl_mem_register_struct_named").ok_or("tl_mem_register_struct_named not found")?;
-             
-             let cast_ptr = self.builder.build_pointer_cast(raw_ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "cast_ptr").unwrap();
-             let _ = self.builder.build_call(register_fn, &[cast_ptr.into(), name_global.as_pointer_value().into()], "");
-
-             sret_ptr = Some(cast_ptr);
+             let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
+             let alloca = self.create_entry_block_alloca_manual(self.builder.get_insert_block().unwrap().get_parent().unwrap(), "sret_ptr", &ptr_type.into()).map_err(|e| e.to_string())?;
+             sret_ptr = Some(alloca);
         }
 
         let mut compiled_args_vals = Vec::with_capacity(args.len() + 1);

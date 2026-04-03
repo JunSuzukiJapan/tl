@@ -132,6 +132,10 @@ impl CudaTensor {
                 Err(e) => {
                     eprintln!("CUDA OOM at size {}. Printing Pool Stats:", size);
                     pool_print_stats();
+                    let make = crate::ffi_ops::FFI_COUNTERS.make.load(std::sync::atomic::Ordering::Relaxed);
+                    let release = crate::ffi_ops::FFI_COUNTERS.release.load(std::sync::atomic::Ordering::Relaxed);
+                    let acquire = crate::ffi_ops::FFI_COUNTERS.acquire.load(std::sync::atomic::Ordering::Relaxed);
+                    eprintln!("FFI_COUNTERS: make={}, release={}, acquire={}, live={}", make, release, acquire, make + acquire - release);
                     panic!("CUDA buffer allocation failed: {}", e);
                 }
             }

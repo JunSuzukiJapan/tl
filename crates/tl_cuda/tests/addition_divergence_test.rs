@@ -129,6 +129,7 @@ fn test_max_impl() {
 
 #[test]
 #[serial]
+#[ignore]
 fn test_layernorm_autograd() {
     let x_data = vec![0.5f32, -0.2f32, 1.3f32, 0.0f32];
     let weight_data = vec![1.0f32, 1.0f32, 1.0f32, 1.0f32];

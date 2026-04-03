@@ -59,7 +59,8 @@ impl LivenessAnalyzer {
     fn visit_function(&mut self, func: &FunctionDef) {
         // Arguments are defined at time 0
         for (arg_name, _) in &func.args {
-            self.define_var(arg_name, 0);
+            self.current_time += 1;
+            self.define_var(arg_name, self.current_time);
         }
 
         for stmt in &func.body {

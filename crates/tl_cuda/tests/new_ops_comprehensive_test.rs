@@ -161,7 +161,7 @@ fn test_dot() {
 fn test_masked_fill() {
     let x = CudaTensor::from_slice(&[1.0f32, 2.0, 3.0, 4.0], &[4], DType::F32);
     let mask = CudaTensor::from_slice(&[1.0f32, 0.0, 1.0, 0.0], &[4], DType::F32);
-    let r = x.masked_fill_impl(&mask, -999.0).unwrap();
+    let r = x.masked_fill_scalar_impl(&mask, -999.0_f64).unwrap();
     approx_eq(&r.to_vec::<f32>(), &[-999.0, 2.0, -999.0, 4.0], 1e-6);
 }
 
