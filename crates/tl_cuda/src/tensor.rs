@@ -1,7 +1,7 @@
 //! CUDA テンソル
 
 use crate::autograd::GradFn;
-use crate::buffer_pool::{pool_acquire, pool_release};
+use crate::buffer_pool::{pool_acquire, pool_release, pool_print_stats};
 use crate::cuda_sys::{self, cudaMemcpyKind, CUDA_SUCCESS};
 use crate::device::{get_device, CudaDevice};
 use crate::{shape_to_bytes, DType};
@@ -127,7 +127,14 @@ impl CudaTensor {
         // プールから取得を試みる
         let buffer = pool_acquire(size).unwrap_or_else(|| {
             // プールになければ新規確保
-            Arc::new(CudaBuffer::new(size).expect("CUDA buffer allocation failed"))
+            match CudaBuffer::new(size) {
+                Ok(b) => Arc::new(b),
+                Err(e) => {
+                    eprintln!("CUDA OOM at size {}. Printing Pool Stats:", size);
+                    pool_print_stats();
+                    panic!("CUDA buffer allocation failed: {}", e);
+                }
+            }
         });
 
         CudaTensor {
@@ -427,7 +434,14 @@ impl CudaTensor {
     pub fn from_buffer_shared(shape: Vec<usize>, dtype: DType) -> Self {
         let device = get_device();
         let size = shape_to_bytes(&shape, dtype);
-        let buffer = Arc::new(CudaBuffer::new(size).expect("CUDA buffer allocation failed"));
+        let buffer = match CudaBuffer::new(size) {
+            Ok(b) => Arc::new(b),
+            Err(e) => {
+                eprintln!("CUDA OOM at size {}. Printing Pool Stats:", size);
+                pool_print_stats();
+                panic!("CUDA buffer allocation failed: {}", e);
+            }
+        };
         CudaTensor {
             buffer,
             shape,

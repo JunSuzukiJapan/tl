@@ -79,17 +79,14 @@ fn load_mnist_images(path: String) -> Tensor<f32, 2> {
     println("  Count: {} Shape: {} x {}", count, rows, cols);
     
     let dim = rows * cols;
+    let shape = [count, dim];
     
-    // Load pixel data into tensor (pixel data starts at offset 16)
-    let mut result: Tensor<f32, 2> = Tensor::zeros([count, 784], false);
+    // Use Tensor::from_vec_u8_offset to convert byte data to tensor directly
+    // Pixel data starts at offset 16
+    let result_raw = Tensor::from_vec_u8_offset(vec, shape, 16);
     
-    let total_pixels = count * 784;
-    for i in range(0, total_pixels) {
-        let byte_val = vec.get(16 + i).unwrap();
-        let row = i / 784;
-        let col = i - (row * 784);
-        result[row, col] = (byte_val as f32) / 255.0;
-    }
+    // Normalize to 0.0 - 1.0
+    let result = result_raw / 255.0;
     
     result
 }
@@ -109,11 +106,7 @@ fn load_mnist_labels(path: String) -> Tensor<f32, 1> {
     println("  Count: {}", count);
     
     // Read labels manually from offset 8
-    let mut result: Tensor<f32, 1> = Tensor::zeros([count], false);
-    for i in range(0, count) {
-        let label = vec.get(8 + i).unwrap() as f32;
-        result[i] = label;
-    }
+    let result = Tensor::from_vec_u8_offset(vec, [count], 8);
     
     result
 }

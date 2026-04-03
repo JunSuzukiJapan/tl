@@ -1,0 +1,27 @@
+--- crates/tl_cpu/src/ffi.rs
++++ crates/tl_cpu/src/ffi.rs
+@@ -140,6 +140,24 @@
+     make_tensor(CpuTensor::from_slice(&f32_data, &shape, DType::F32))
+ }
+ 
++pub extern "C" fn tl_cpu_tensor_from_vec_u8_tensor_shape(
++    data: *mut std::ffi::c_void,
++    offset: i64,
++    shape_tensor: *mut OpaqueTensor,
++) -> *mut OpaqueTensor {
++    if data.is_null() {
++        return std::ptr::null_mut();
++    }
++    let shape_tensor_ref = unsafe { &*shape_tensor };
++    let shape_f32 = shape_tensor_ref.as_slice().unwrap();
++    let shape: Vec<usize> = shape_f32.iter().map(|&x| x as usize).collect();
++    let numel: usize = shape.iter().product();
++    let offset = offset as usize;
++    let data_ptr = data as *const u8;
++    let data_slice = unsafe { std::slice::from_raw_parts(data_ptr.add(offset), numel) };
++    let f32_data: Vec<f32> = data_slice.iter().map(|&x| x as f32).collect();
++    make_tensor(CpuTensor::from_slice(&f32_data, &shape, DType::F32))
++}
+ 
+ 
+ 

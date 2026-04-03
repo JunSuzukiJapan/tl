@@ -52,6 +52,7 @@ pub trait IDevice {
     ) -> BackendResult<*mut c_void>;
     fn tensor_new_causal_mask(&self, size: usize) -> BackendResult<*mut c_void>;
     fn tensor_from_vec_u8(&self, data: *mut c_void, offset: i64, shape_ptr: *const i64, rank: i64) -> BackendResult<*mut c_void>;
+    fn tensor_from_vec_u8_f32_shape(&self, data: *mut c_void, offset: i64, shape_ptr: *const f32, rank: i64) -> BackendResult<*mut c_void>;
     fn tensor_from_u8_labels(&self, data: *const u8, len: i64) -> BackendResult<*mut c_void>;
     fn tensor_full(
         &self,

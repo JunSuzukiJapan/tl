@@ -5,8 +5,8 @@ use mnist_common::*;
 fn main() {
     print("=== MNIST Inference (MLP) ===");
     
-    let test_x = load_mnist_images("data/t10k-images-idx3-ubyte");
-    let test_y = load_mnist_labels("data/t10k-labels-idx1-ubyte");
+    let test_x = load_mnist_images("examples/tasks/mnist/data/t10k-images-idx3-ubyte");
+    let test_y = load_mnist_labels("examples/tasks/mnist/data/t10k-labels-idx1-ubyte");
     
     // Initialize model structure (must match training)
     let model = MLP::new(784, 256, 10);

@@ -920,6 +920,17 @@ pub fn declare_runtime_functions<'ctx>(
     let from_vec_f32_type = void_ptr.fn_type(&[void_ptr.into(), void_ptr.into()], false);
     add_fn("tl_tensor_from_vec_f32", from_vec_f32_type);
 
+    // tl_tensor_from_vec_u8(data: void*, offset: i64, shape_ptr: void*, rank: i64) -> Tensor*
+    let from_vec_u8_type = void_ptr.fn_type(&[void_ptr.into(), i64_type.into(), void_ptr.into(), i64_type.into()], false);
+    add_fn("tl_tensor_from_vec_u8", from_vec_u8_type);
+    
+    // tl_tensor_from_vec_u8_f32_shape(data: void*, offset: i64, shape_ptr: void*, rank: i64) -> Tensor*
+    add_fn("tl_tensor_from_vec_u8_f32_shape", from_vec_u8_type);
+    
+    // tl_tensor_from_u8_labels(data: i8*, len: i64) -> Tensor*
+    let from_u8_labels_type = void_ptr.fn_type(&[i8_ptr.into(), i64_type.into()], false);
+    add_fn("tl_tensor_from_u8_labels", from_u8_labels_type);
+
     // tl_tensor_to_vec_f32(t: Tensor*) -> Vec<f32>*
     let to_vec_f32_type = void_ptr.fn_type(&[void_ptr.into()], false);
     add_fn("tl_tensor_to_vec_f32", to_vec_f32_type);
@@ -2540,6 +2551,9 @@ pub fn declare_runtime_functions<'ctx>(
     // [IDevice] device_ffi 統一マッピング
     if let Some(f) = module.get_function("tl_tensor_from_vec_u8") {
         execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_from_vec_u8 as *const () as usize);
+    }
+    if let Some(f) = module.get_function("tl_tensor_from_vec_u8_f32_shape") {
+        execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_from_vec_u8_f32_shape as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_tensor_from_u8_labels") {
         execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_from_u8_labels as *const () as usize);

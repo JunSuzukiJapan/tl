@@ -98,3 +98,13 @@ pub fn pool_release(buffer: Arc<CudaBuffer>) {
         pool.release(buffer);
     }
 }
+
+pub fn pool_print_stats() {
+    if let Ok(pool) = BUFFER_POOL.lock() {
+        pool.dump_stats();
+        eprintln!("Free buffer sizes:");
+        for (size, list) in pool.free_buffers.iter() {
+            eprintln!("  Size {}: {} buffers", size, list.len());
+        }
+    }
+}

@@ -177,6 +177,11 @@ pub extern "C" fn tl_device_tensor_new_causal_mask(size: usize) -> *mut c_void {
 pub extern "C" fn tl_device_tensor_from_vec_u8(data: *mut c_void, offset: i64, shape_ptr: *const i64, rank: i64) -> *mut c_void {
     dispatch(|d| d.tensor_from_vec_u8(data, offset, shape_ptr, rank))
 }
+/// @ffi_sig (void*, i64, f32*, i64) -> Tensor*
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_device_tensor_from_vec_u8_f32_shape(data: *mut c_void, offset: i64, shape_ptr: *const f32, rank: i64) -> *mut c_void {
+    dispatch(|d| d.tensor_from_vec_u8_f32_shape(data, offset, shape_ptr, rank))
+}
 /// @ffi_sig (u8*, i64) -> Tensor*
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_device_tensor_from_u8_labels(data: *const u8, len: i64) -> *mut c_void {

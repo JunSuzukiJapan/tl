@@ -4835,16 +4835,53 @@ impl<'ctx> CodeGenerator<'ctx> {
         let mut sret_ptr = None;
 
         if uses_sret {
-             // NEW: Allocate Temp Buffer on Stack (DPS) to match C ABI
-             let current_block = self.builder.get_insert_block().unwrap();
-             let current_func = current_block.get_parent().unwrap();
-             let alloca = self.create_entry_block_alloca(current_func, "sret_temp_static", &ret_ty)?;
+             // NEW: Heap Allocation (malloc + register) -> Correct for RefCounted Structs/SRET
+             let (struct_name, generics) = match &ret_ty {
+                 Type::Struct(n, g) | Type::Enum(n, g) => (n, g),
+                 _ => return Err("SRET used on non-aggregate type".into()),
+             };
              
-             let cast_ptr = self.builder.build_pointer_cast(
-                 alloca,
-                 self.context.ptr_type(inkwell::AddressSpace::default()),
-                 "cast_sret_ptr",
-             ).unwrap();
+             let mangled_name = if generics.is_empty() {
+                 struct_name.to_string()
+             } else {
+                 // Use base name to avoid double-mangling (e.g. Entry[i64][i64] -> Entry[i64][i64][i64][i64])
+                 let base = mangle_base_name(struct_name);
+                 self.mangle_type_name(base, generics)
+             };
+             
+             // Simple name lookup (as done in compile_struct_init)
+             let simple_lookup_name = mangled_name.clone();
+
+             // Ensure type is monomorphized and registered
+             let _ = self.get_or_monomorphize_type(&ret_ty).map_err(|e| e.to_string())?;
+
+             let struct_type = self.struct_types.get(&simple_lookup_name)
+                 .or_else(|| self.enum_types.get(&simple_lookup_name))
+                 .ok_or_else(|| format!("Struct type {} not found for SRET allocation", simple_lookup_name))?;
+             
+             let size = struct_type.size_of().ok_or("Cannot determine size for SRET struct")?;
+             
+             // 2. Malloc
+             let malloc_fn = self.module.get_function("malloc").ok_or("malloc not found")?;
+             let size_i64 = self.builder.build_int_z_extend(size, self.context.i64_type(), "size_i64").unwrap();
+             let call_malloc = self.builder.build_call(malloc_fn, &[size_i64.into()], "sret_malloc").map_err(|e| e.to_string())?;
+             
+             let raw_ptr = match call_malloc.try_as_basic_value() {
+                 inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
+                 _ => return Err("malloc returned void".into()),
+             };
+             
+             // 3. Register (Initialize RefCount=1, Header)
+             let struct_name_str = match &ret_ty {
+                 Type::Struct(n, _) => n.as_str(),
+                 _ => "AnonymousStruct",
+             };
+             let name_global = self.builder.build_global_string_ptr(struct_name_str, "struct_name").unwrap();
+             let register_fn = self.module.get_function("tl_mem_register_struct_named").ok_or("tl_mem_register_struct_named not found")?;
+             
+             let cast_ptr = self.builder.build_pointer_cast(raw_ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "cast_ptr").unwrap();
+             let _ = self.builder.build_call(register_fn, &[cast_ptr.into(), name_global.as_pointer_value().into()], "");
+
              sret_ptr = Some(cast_ptr);
         }
 
@@ -8415,11 +8452,48 @@ impl<'ctx> CodeGenerator<'ctx> {
              if let Some(d) = dest {
                  dest_val = Some(d);
              } else {
-                 // Allocate Temp Buffer on Stack (DPS)
-                 let current_block = self.builder.get_insert_block().unwrap();
-                 let current_func = current_block.get_parent().unwrap();
-                 let alloca = self.create_entry_block_alloca(current_func, "sret_temp", &ret_type)?;
-                 dest_val = Some(alloca.into());
+                 // NEW: Heap Allocation (malloc + register) -> Correct for RefCounted Structs/SRET
+                 let (struct_name, generics) = match &ret_type {
+                     Type::Struct(n, g) | Type::Enum(n, g) => (n, g),
+                     _ => return Err("SRET used on non-aggregate type".into()),
+                 };
+                 
+                 let mangled_name = if generics.is_empty() {
+                     struct_name.to_string()
+                 } else {
+                     let base = mangle_base_name(struct_name);
+                     self.mangle_type_name(base, generics)
+                 };
+                 
+                 let simple_lookup_name = mangled_name.clone();
+                 let _ = self.get_or_monomorphize_type(&ret_type).map_err(|e| e.to_string())?;
+    
+                 let struct_type = self.struct_types.get(&simple_lookup_name)
+                     .or_else(|| self.enum_types.get(&simple_lookup_name))
+                     .ok_or_else(|| format!("Struct type {} not found for SRET allocation", simple_lookup_name))?;
+                 
+                 let size = struct_type.size_of().ok_or("Cannot determine size for SRET struct")?;
+                 
+                 let malloc_fn = self.module.get_function("malloc").ok_or("malloc not found")?;
+                 let size_i64 = self.builder.build_int_z_extend(size, self.context.i64_type(), "size_i64").unwrap();
+                 let call_malloc = self.builder.build_call(malloc_fn, &[size_i64.into()], "sret_malloc").map_err(|e| e.to_string())?;
+                 
+                 let raw_ptr = match call_malloc.try_as_basic_value() {
+                     inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
+                     _ => return Err("malloc returned void".into()),
+                 };
+                 
+                 let struct_name_str = match &ret_type {
+                     Type::Struct(n, _) => n.as_str(),
+                     _ => "AnonymousStruct",
+                 };
+                 let name_global = self.builder.build_global_string_ptr(struct_name_str, "struct_name").unwrap();
+                 let register_fn = self.module.get_function("tl_mem_register_struct_named").ok_or("tl_mem_register_struct_named not found")?;
+                 
+                 let cast_ptr = self.builder.build_pointer_cast(raw_ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "cast_ptr").unwrap();
+                 let _ = self.builder.build_call(register_fn, &[cast_ptr.into(), name_global.as_pointer_value().into()], "");
+    
+                 dest_val = Some(cast_ptr.into());
              }
              
              if let Some(d) = dest_val {
