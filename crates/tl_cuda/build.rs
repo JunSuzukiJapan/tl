@@ -68,7 +68,7 @@ fn main() {
             .compile("tl_cuda_autograd_kernels");
 
         println!(
-            "cargo:warning=CUDA kernels compiled as fat binary (sm_{}) with {}",
+            "CUDA kernels compiled as fat binary (sm_{}) with {}",
             target_archs.join(", sm_"),
             nvcc_path
         );

@@ -6660,7 +6660,7 @@ impl<'ctx> CodeGenerator<'ctx> {
              // Ensure type is monomorphized and registered (handles both struct and enum generics)
              let _ = self.get_or_monomorphize_type(&ret_ty).map_err(|e| e.to_string())?;
 
-             let struct_type = self.struct_types.get(&simple_lookup_name)
+             let _ = self.struct_types.get(&simple_lookup_name)
                  .or_else(|| self.enum_types.get(&simple_lookup_name))
                  .ok_or_else(|| format!("Struct type {} not found for SRET allocation (tried {})", simple_lookup_name, simple_lookup_name))?;
              

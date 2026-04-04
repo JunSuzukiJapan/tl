@@ -1389,7 +1389,7 @@ fn compile_from_vec_u8_impl<'ctx>(
     
     let vec_data_ptr = if vec_val.is_pointer_value() {
         let ptr_val = vec_val.into_pointer_value();
-        let ptr_ty = codegen.context.i8_type().ptr_type(inkwell::AddressSpace::default());
+        let ptr_ty = codegen.context.ptr_type(inkwell::AddressSpace::default());
         let data_load = codegen.builder.build_load(ptr_ty, ptr_val, "vec_data_ptr").map_err(|e| e.to_string())?;
         data_load.into_pointer_value()
     } else {

@@ -344,7 +344,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let retain_fn_name = if is_qtensor { "tl_qtensor_retain" } else { "tl_tensor_acquire" };
                 let acquire_fn = self.module.get_function(retain_fn_name)
                     .or_else(|| {
-                         let void_ty = self.context.void_type();
                          let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
                          let ft = ptr_ty.fn_type(&[ptr_ty.into()], false);
                          Some(self.module.add_function(retain_fn_name, ft, None))
