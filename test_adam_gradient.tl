@@ -14,9 +14,13 @@ fn main() {
     let v = Tensor::randn([10, 10], true)*0.0;
     let loss = w_train.matmul(x).sum();
     loss.backward();
-    println("", "Grad Before:");
-    print_tensor(w_train.grad(), true);
+    println("Weight Before:");
+    w_train.print();
+    println("Grad Before:");
+    w_train.grad().print();
     tl_adam_step(w_train, w_train.grad(), m, v, 1, 0.001, 0.9, 0.999, 1e-8, 0.0);
-    println("", "Grad After:");
-    print_tensor(w_train.grad(), true);
+    println("Weight After:");
+    w_train.print();
+    println("Grad After:");
+    w_train.grad().print();
 }

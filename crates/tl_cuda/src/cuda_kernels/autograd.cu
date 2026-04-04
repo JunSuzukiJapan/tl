@@ -96,7 +96,11 @@ __global__ void cross_entropy_f32_kernel(const float *logits,
       sum_exp += expf(row[j] - max_val);
     }
     int target_idx = (int)targets[i];
-    losses[i] = (max_val + logf(sum_exp)) - row[target_idx];
+    if (target_idx >= 0 && target_idx < c) {
+      losses[i] = (max_val + logf(sum_exp)) - row[target_idx];
+    } else {
+      losses[i] = 0.0f;
+    }
   }
 }
 
@@ -523,7 +527,11 @@ __global__ void cross_entropy_kernel(const float *logits,
       sum_exp += expf(row[j] - max_val);
     }
     int target_idx = (int)targets[i];
-    losses[i] = (max_val + logf(sum_exp)) - row[target_idx];
+    if (target_idx >= 0 && target_idx < c) {
+      losses[i] = (max_val + logf(sum_exp)) - row[target_idx];
+    } else {
+      losses[i] = 0.0f;
+    }
   }
 }
 

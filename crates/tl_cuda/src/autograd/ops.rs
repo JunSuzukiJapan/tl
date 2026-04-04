@@ -728,7 +728,7 @@ impl LayerNormBackward {
 }
 impl GradFn for LayerNormBackward {
     fn backward(&self, grad_output: &CudaTensor) -> BackendResult<Vec<CudaTensor>> {
-        eprintln!("[DEBUG] LayerNorm backward called!");
+
         let input = unsafe { &*self.input.get() };
         let compute_weight_grad = self.weight.is_some() || self.bias.is_some();
         let gamma_ref = if let Some(ref w) = self.weight {

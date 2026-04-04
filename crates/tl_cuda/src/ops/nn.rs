@@ -525,8 +525,8 @@ impl CudaTensor {
         let mut grad_beta = None;
         
         if compute_weight_grad {
-            grad_gamma = Some(CudaTensor::uninit(&[norm_size], DType::F32));
-            grad_beta = Some(CudaTensor::uninit(&[norm_size], DType::F32));
+            grad_gamma = Some(CudaTensor::zeros(&[norm_size], DType::F32));
+            grad_beta = Some(CudaTensor::zeros(&[norm_size], DType::F32));
         }
 
         let gamma_ptr = if let Some(g) = gamma {
