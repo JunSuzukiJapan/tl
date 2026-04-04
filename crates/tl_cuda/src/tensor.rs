@@ -252,7 +252,7 @@ impl CudaTensor {
                 let mut rng = rand::thread_rng();
                 let data: Vec<f32> = (0..count)
                     .map(|_| {
-                        let u1: f32 = rng.gen();
+                        let u1: f32 = 1.0 - rng.gen::<f32>();
                         let u2: f32 = rng.gen();
                         (-2.0 * u1.ln()).sqrt() * (2.0 * std::f32::consts::PI * u2).cos()
                     })
@@ -263,7 +263,7 @@ impl CudaTensor {
                 let mut rng = rand::thread_rng();
                 let data: Vec<f64> = (0..count)
                     .map(|_| {
-                        let u1: f64 = rng.gen();
+                        let u1: f64 = 1.0 - rng.gen::<f64>();
                         let u2: f64 = rng.gen();
                         (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos()
                     })

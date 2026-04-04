@@ -127,7 +127,7 @@ impl<T: TensorScalar> CpuTensor<T> {
         let mut rng = rand::thread_rng();
         let data: Vec<T> = (0..count)
             .map(|_| {
-                let u1 = T::gen_uniform(&mut rng);
+                let u1 = T::from_f64(1.0) - T::gen_uniform(&mut rng);
                 let u2 = T::gen_uniform(&mut rng);
                 let two = T::from_f64(2.0);
                 (T::zero() - two * u1.ln()).sqrt() * (two * T::pi() * u2).cos()

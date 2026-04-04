@@ -243,7 +243,7 @@ impl MetalTensor {
                 let count = tensor.elem_count();
                 unsafe {
                     for i in 0..count {
-                        let u1: f32 = rng.gen();
+                        let u1: f32 = 1.0 - rng.gen::<f32>();
                         let u2: f32 = rng.gen();
                         let z = (-2.0 * u1.ln()).sqrt() * (2.0 * std::f32::consts::PI * u2).cos();
                         *ptr.add(i) = z;
