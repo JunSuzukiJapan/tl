@@ -25,6 +25,44 @@ extern "C" {
         pad_w: i32,
         stream: cudaStream_t,
     );
+    fn launch_conv2d_backward_input_kernel(
+        grad_output: *const f32,
+        weight: *const f32,
+        grad_input: *mut f32,
+        n: i32,
+        c_in: i32,
+        h_in: i32,
+        w_in: i32,
+        c_out: i32,
+        kh: i32,
+        kw: i32,
+        h_out: i32,
+        w_out: i32,
+        stride_h: i32,
+        stride_w: i32,
+        pad_h: i32,
+        pad_w: i32,
+        stream: cudaStream_t,
+    );
+    fn launch_conv2d_backward_weight_kernel(
+        grad_output: *const f32,
+        input: *const f32,
+        grad_weight: *mut f32,
+        n: i32,
+        c_in: i32,
+        h_in: i32,
+        w_in: i32,
+        c_out: i32,
+        kh: i32,
+        kw: i32,
+        h_out: i32,
+        w_out: i32,
+        stride_h: i32,
+        stride_w: i32,
+        pad_h: i32,
+        pad_w: i32,
+        stream: cudaStream_t,
+    );
     fn launch_batch_norm_kernel(
         input: *const f32,
         gamma: *const f32,
@@ -38,11 +76,38 @@ extern "C" {
         eps: f32,
         stream: cudaStream_t,
     );
+    fn launch_batch_norm_backward_kernel(
+        grad_output: *const f32,
+        input: *const f32,
+        gamma: *const f32,
+        mean: *const f32,
+        var: *const f32,
+        grad_input: *mut f32,
+        grad_gamma: *mut f32,
+        grad_beta: *mut f32,
+        n: i32,
+        c: i32,
+        spatial: i32,
+        eps: f32,
+        stream: cudaStream_t,
+    );
     fn launch_layer_norm_kernel(
         input: *const f32,
         gamma: *const f32,
         beta: *const f32,
         output: *mut f32,
+        outer: i32,
+        norm_size: i32,
+        eps: f32,
+        stream: cudaStream_t,
+    );
+    fn launch_layer_norm_backward_kernel(
+        grad_output: *const f32,
+        input: *const f32,
+        gamma: *const f32,
+        grad_input: *mut f32,
+        grad_gamma: *mut f32,
+        grad_beta: *mut f32,
         outer: i32,
         norm_size: i32,
         eps: f32,
@@ -81,6 +146,14 @@ extern "C" {
     fn launch_dropout_kernel(
         input: *const f32,
         output: *mut f32,
+        n: i32,
+        p: f32,
+        scale: f32,
+        stream: cudaStream_t,
+    );
+    fn launch_dropout_backward_kernel(
+        grad_output: *const f32,
+        grad_input: *mut f32,
         n: i32,
         p: f32,
         scale: f32,
@@ -240,6 +313,92 @@ impl CudaTensor {
         Ok(output)
     }
 
+    pub fn conv2d_backward_input_impl(
+        &self,
+        grad_output: &CudaTensor,
+        weight: &CudaTensor,
+        stride: [usize; 2],
+        padding: [usize; 2],
+    ) -> BackendResult<CudaTensor> {
+        let input_shape = self.shape();
+        let weight_shape = weight.shape();
+        let grad_output_shape = grad_output.shape();
+
+        let (n, c_in, h_in, w_in) = (input_shape[0], input_shape[1], input_shape[2], input_shape[3]);
+        let (c_out, _, kh, kw) = (weight_shape[0], weight_shape[1], weight_shape[2], weight_shape[3]);
+        let (h_out, w_out) = (grad_output_shape[2], grad_output_shape[3]);
+
+        let grad_input = CudaTensor::uninit(input_shape, DType::F32);
+
+        let stream = crate::stream::get_stream().raw();
+        unsafe {
+            launch_conv2d_backward_input_kernel(
+                grad_output.buffer.ptr() as *const f32,
+                weight.buffer.ptr() as *const f32,
+                grad_input.buffer.ptr() as *mut f32,
+                n as i32,
+                c_in as i32,
+                h_in as i32,
+                w_in as i32,
+                c_out as i32,
+                kh as i32,
+                kw as i32,
+                h_out as i32,
+                w_out as i32,
+                stride[0] as i32,
+                stride[1] as i32,
+                padding[0] as i32,
+                padding[1] as i32,
+                stream,
+            );
+        }
+        crate::stream::sync_stream();
+        Ok(grad_input)
+    }
+
+    pub fn conv2d_backward_weight_impl(
+        &self,
+        grad_output: &CudaTensor,
+        weight: &CudaTensor,
+        stride: [usize; 2],
+        padding: [usize; 2],
+    ) -> BackendResult<CudaTensor> {
+        let input_shape = self.shape();
+        let weight_shape = weight.shape();
+        let grad_output_shape = grad_output.shape();
+
+        let (n, c_in, h_in, w_in) = (input_shape[0], input_shape[1], input_shape[2], input_shape[3]);
+        let (c_out, _, kh, kw) = (weight_shape[0], weight_shape[1], weight_shape[2], weight_shape[3]);
+        let (h_out, w_out) = (grad_output_shape[2], grad_output_shape[3]);
+
+        let grad_weight = CudaTensor::uninit(weight_shape, DType::F32);
+
+        let stream = crate::stream::get_stream().raw();
+        unsafe {
+            launch_conv2d_backward_weight_kernel(
+                grad_output.buffer.ptr() as *const f32,
+                self.buffer.ptr() as *const f32,
+                grad_weight.buffer.ptr() as *mut f32,
+                n as i32,
+                c_in as i32,
+                h_in as i32,
+                w_in as i32,
+                c_out as i32,
+                kh as i32,
+                kw as i32,
+                h_out as i32,
+                w_out as i32,
+                stride[0] as i32,
+                stride[1] as i32,
+                padding[0] as i32,
+                padding[1] as i32,
+                stream,
+            );
+        }
+        crate::stream::sync_stream();
+        Ok(grad_weight)
+    }
+
     /// Batch Normalization — GPU カーネル
     pub fn batch_norm_impl(
         &self,
@@ -280,6 +439,45 @@ impl CudaTensor {
         Ok(output)
     }
 
+    pub fn batch_norm_backward_impl(
+        &self,
+        grad_output: &CudaTensor,
+        gamma: &CudaTensor,
+        running_mean: &CudaTensor,
+        running_var: &CudaTensor,
+        eps: f32,
+    ) -> BackendResult<(CudaTensor, CudaTensor, CudaTensor)> {
+        let shape = self.shape();
+        let n = shape[0];
+        let c = shape[1];
+        let spatial: usize = shape[2..].iter().product::<usize>().max(1);
+
+        let grad_input = CudaTensor::uninit(shape, DType::F32);
+        let grad_gamma = CudaTensor::zeros(&[c], DType::F32);
+        let grad_beta = CudaTensor::zeros(&[c], DType::F32);
+
+        let stream = crate::stream::get_stream().raw();
+        unsafe {
+            launch_batch_norm_backward_kernel(
+                grad_output.buffer.ptr() as *const f32,
+                self.buffer.ptr() as *const f32,
+                gamma.buffer.ptr() as *const f32,
+                running_mean.buffer.ptr() as *const f32,
+                running_var.buffer.ptr() as *const f32,
+                grad_input.buffer.ptr() as *mut f32,
+                grad_gamma.buffer.ptr() as *mut f32,
+                grad_beta.buffer.ptr() as *mut f32,
+                n as i32,
+                c as i32,
+                spatial as i32,
+                eps,
+                stream,
+            );
+        }
+        crate::stream::sync_stream();
+        Ok((grad_input, grad_gamma, grad_beta))
+    }
+
     /// Layer Normalization — GPU カーネル
     pub fn layer_norm_impl(
         &self,
@@ -307,6 +505,65 @@ impl CudaTensor {
         }
         crate::stream::sync_stream();
         Ok(output)
+    }
+
+    /// Layer Normalization Backward — GPU カーネル
+    pub fn layer_norm_backward_impl(
+        &self,
+        grad_output: &CudaTensor,
+        gamma: Option<&CudaTensor>,
+        compute_weight_grad: bool,
+        eps: f32,
+    ) -> BackendResult<(CudaTensor, Option<CudaTensor>, Option<CudaTensor>)> {
+        let shape = self.shape();
+        let norm_size = *shape.last().unwrap();
+        let outer = self.elem_count() / norm_size;
+
+        let grad_input = CudaTensor::uninit(shape, DType::F32);
+        
+        let mut grad_gamma = None;
+        let mut grad_beta = None;
+        
+        if compute_weight_grad {
+            grad_gamma = Some(CudaTensor::uninit(&[norm_size], DType::F32));
+            grad_beta = Some(CudaTensor::uninit(&[norm_size], DType::F32));
+        }
+
+        let gamma_ptr = if let Some(g) = gamma {
+            g.buffer.ptr() as *const f32
+        } else {
+            std::ptr::null()
+        };
+        
+        let grad_gamma_ptr = if let Some(ref gg) = grad_gamma {
+            gg.buffer.ptr() as *mut f32
+        } else {
+            std::ptr::null_mut()
+        };
+        
+        let grad_beta_ptr = if let Some(ref gb) = grad_beta {
+            gb.buffer.ptr() as *mut f32
+        } else {
+            std::ptr::null_mut()
+        };
+
+        let stream = crate::stream::get_stream().raw();
+        unsafe {
+            launch_layer_norm_backward_kernel(
+                grad_output.buffer.ptr() as *const f32,
+                self.buffer.ptr() as *const f32,
+                gamma_ptr,
+                grad_input.buffer.ptr() as *mut f32,
+                grad_gamma_ptr,
+                grad_beta_ptr,
+                outer as i32,
+                norm_size as i32,
+                eps,
+                stream,
+            );
+        }
+        crate::stream::sync_stream();
+        Ok((grad_input, grad_gamma, grad_beta))
     }
 
     /// Max Pooling 2D — GPU カーネル
@@ -404,6 +661,25 @@ impl CudaTensor {
         }
         crate::stream::sync_stream();
         Ok(output)
+    }
+
+    /// Dropout Backward — GPU カーネル
+    pub fn dropout_backward_impl(&self, grad_output: &CudaTensor, p: f32, scale: f32) -> BackendResult<CudaTensor> {
+        let n = self.elem_count();
+        let grad_input = CudaTensor::uninit(self.shape(), DType::F32);
+        let stream = crate::stream::get_stream().raw();
+        unsafe {
+            launch_dropout_backward_kernel(
+                grad_output.buffer.ptr() as *const f32,
+                grad_input.buffer.ptr() as *mut f32,
+                n as i32,
+                p,
+                scale,
+                stream,
+            );
+        }
+        crate::stream::sync_stream();
+        Ok(grad_input)
     }
 
     // ========== Phase C: 新規 NN 層 ==========

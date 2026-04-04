@@ -538,6 +538,14 @@ __global__ void cross_entropy_backward_kernel(const float *logits,
   if (i < batch_size) {
     const float *row = logits + i * num_classes;
     float *grad_row = grad_out + i * num_classes;
+    int target_idx = (int)targets[i];
+
+    if (target_idx < 0 || target_idx >= num_classes) {
+      for (int j = 0; j < num_classes; j++) {
+        grad_row[j] = 0.0f;
+      }
+      return;
+    }
 
     // max_val for numerical stability
     float max_val = -3.402823466e+38f;
@@ -553,8 +561,6 @@ __global__ void cross_entropy_backward_kernel(const float *logits,
       sum_exp += e;
     }
 
-    // softmax probabilities and (prob - 1) if target
-    int target_idx = (int)targets[i];
     float scale = 1.0f / (float)batch_size;
     for (int j = 0; j < num_classes; j++) {
       float prob = grad_row[j] / sum_exp;
@@ -822,6 +828,74 @@ __global__ void conv2d_kernel(const float *input, const float *weight,
   }
 }
 
+__global__ void conv2d_backward_input_kernel(
+    const float *grad_output, const float *weight, float *grad_input,
+    int n, int c_in, int h_in, int w_in, int c_out, int kh, int kw, int h_out,
+    int w_out, int stride_h, int stride_w, int pad_h, int pad_w) {
+  int tid = blockIdx.x * blockDim.x + threadIdx.x;
+  int total = n * c_in * h_in * w_in;
+  if (tid < total) {
+    int batch = tid / (c_in * h_in * w_in);
+    int rem = tid % (c_in * h_in * w_in);
+    int ci = rem / (h_in * w_in);
+    rem = rem % (h_in * w_in);
+    int ih = rem / w_in;
+    int iw = rem % w_in;
+
+    float sum = 0.0f;
+    for (int co = 0; co < c_out; co++) {
+      for (int khi = 0; khi < kh; khi++) {
+        for (int kwi = 0; kwi < kw; kwi++) {
+          int oh_val = ih + pad_h - khi;
+          int ow_val = iw + pad_w - kwi;
+          if (oh_val >= 0 && ow_val >= 0 && oh_val % stride_h == 0 && ow_val % stride_w == 0) {
+              int oh = oh_val / stride_h;
+              int ow = ow_val / stride_w;
+              if (oh >= 0 && oh < h_out && ow >= 0 && ow < w_out) {
+                 int gout_idx = batch * c_out * h_out * w_out + co * h_out * w_out + oh * w_out + ow;
+                 int w_idx = co * c_in * kh * kw + ci * kh * kw + khi * kw + kwi;
+                 sum += grad_output[gout_idx] * weight[w_idx];
+              }
+          }
+        }
+      }
+    }
+    grad_input[tid] = sum;
+  }
+}
+
+__global__ void conv2d_backward_weight_kernel(
+    const float *grad_output, const float *input, float *grad_weight,
+    int n, int c_in, int h_in, int w_in, int c_out, int kh, int kw, int h_out,
+    int w_out, int stride_h, int stride_w, int pad_h, int pad_w) {
+  int tid = blockIdx.x * blockDim.x + threadIdx.x;
+  int total = c_out * c_in * kh * kw;
+  if (tid < total) {
+    int co = tid / (c_in * kh * kw);
+    int rem = tid % (c_in * kh * kw);
+    int ci = rem / (kh * kw);
+    rem = rem % (kh * kw);
+    int khi = rem / kw;
+    int kwi = rem % kw;
+
+    float sum = 0.0f;
+    for (int batch = 0; batch < n; batch++) {
+      for (int oh = 0; oh < h_out; oh++) {
+        for (int ow = 0; ow < w_out; ow++) {
+           int ih = oh * stride_h + khi - pad_h;
+           int iw = ow * stride_w + kwi - pad_w;
+           if (ih >= 0 && ih < h_in && iw >= 0 && iw < w_in) {
+               int in_idx = batch * c_in * h_in * w_in + ci * h_in * w_in + ih * w_in + iw;
+               int gout_idx = batch * c_out * h_out * w_out + co * h_out * w_out + oh * w_out + ow;
+               sum += grad_output[gout_idx] * input[in_idx];
+           }
+        }
+      }
+    }
+    grad_weight[tid] = sum;
+  }
+}
+
 // =====================================================================
 // batch_norm カーネル
 // input[N,C,...], gamma[C], beta[C], mean[C], var[C]
@@ -836,6 +910,33 @@ __global__ void batch_norm_kernel(const float *input, const float *gamma,
     int ch = (tid / spatial) % c;
     float inv_std = rsqrtf(var[ch] + eps);
     output[tid] = gamma[ch] * (input[tid] - mean[ch]) * inv_std + beta[ch];
+  }
+}
+
+__global__ void batch_norm_backward_kernel(
+    const float *grad_output, const float *input, const float *gamma,
+    const float *mean, const float *var, float *grad_input, float *grad_gamma,
+    float *grad_beta, int n, int c, int spatial, float eps) {
+  int tid = blockIdx.x * blockDim.x + threadIdx.x;
+  int total = n * c * spatial;
+  if (tid < total) {
+    int ch = (tid / spatial) % c;
+    float inv_std = rsqrtf(var[ch] + eps);
+    float dy = grad_output[tid];
+    
+    if (grad_input != nullptr) {
+        grad_input[tid] = dy * gamma[ch] * inv_std;
+    }
+    
+    if (grad_gamma != nullptr || grad_beta != nullptr) {
+        float x_hat = (input[tid] - mean[ch]) * inv_std;
+        if (grad_gamma != nullptr) {
+            atomicAdd(&grad_gamma[ch], dy * x_hat);
+        }
+        if (grad_beta != nullptr) {
+            atomicAdd(&grad_beta[ch], dy);
+        }
+    }
   }
 }
 
@@ -864,6 +965,58 @@ __global__ void layer_norm_kernel(const float *input, const float *gamma,
     for (int i = 0; i < norm_size; i++) {
       output[offset + i] =
           gamma[i] * (input[offset + i] - mean) * inv_std + beta[i];
+    }
+  }
+}
+
+__global__ void layer_norm_backward_kernel(
+    const float* grad_output, const float* input, const float* gamma,
+    float* grad_input, float* grad_gamma, float* grad_beta, 
+    int outer, int norm_size, float eps) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < outer) {
+    int offset = i * norm_size;
+    float mean = 0.0f;
+    for (int j = 0; j < norm_size; j++) { mean += input[offset + j]; }
+    mean /= (float)norm_size;
+    
+    float var = 0.0f;
+    for (int j = 0; j < norm_size; j++) {
+      float diff = input[offset + j] - mean;
+      var += diff * diff;
+    }
+    var /= (float)norm_size;
+    float invstd = rsqrtf(var + eps);
+
+    float sum_dx_hat = 0.0f;
+    float sum_dx_hat_diff = 0.0f;
+    for (int j = 0; j < norm_size; j++) {
+      float dy = grad_output[offset + j];
+      float g = (gamma != nullptr) ? gamma[j] : 1.0f;
+      float dx_hat = dy * g;
+      float diff = input[offset + j] - mean;
+      sum_dx_hat += dx_hat;
+      sum_dx_hat_diff += dx_hat * diff;
+      
+      // Accumulate weight and bias gradients atomically
+      if (grad_gamma != nullptr) {
+          float x_hat = diff * invstd;
+          atomicAdd(&grad_gamma[j], dy * x_hat);
+      }
+      if (grad_beta != nullptr) {
+          atomicAdd(&grad_beta[j], dy);
+      }
+    }
+    float dvar = sum_dx_hat_diff * -0.5f * invstd * invstd * invstd;
+    float dmean = sum_dx_hat * -invstd;
+
+    for (int j = 0; j < norm_size; j++) {
+      float dy = grad_output[offset + j];
+      float g = (gamma != nullptr) ? gamma[j] : 1.0f;
+      float dx_hat = dy * g;
+      float diff = input[offset + j] - mean;
+      float dx = dx_hat * invstd + dmean / (float)norm_size + dvar * 2.0f * diff / (float)norm_size;
+      grad_input[offset + j] = dx;
     }
   }
 }
@@ -934,10 +1087,19 @@ __global__ void dropout_kernel(const float *input, float *output, int n,
                                float p, float scale) {
   int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i < n) {
-    // simple hash-based pseudo-random
     unsigned int hash = (unsigned int)i * 2654435761u;
     float r = (float)(hash >> 16) / 65536.0f;
     output[i] = (r < p) ? 0.0f : input[i] * scale;
+  }
+}
+
+__global__ void dropout_backward_kernel(const float *grad_output, float *grad_input,
+                                        int n, float p, float scale) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < n) {
+    unsigned int hash = (unsigned int)i * 2654435761u;
+    float r = (float)(hash >> 16) / 65536.0f;
+    grad_input[i] = (r < p) ? 0.0f : grad_output[i] * scale;
   }
 }
 
@@ -1422,6 +1584,30 @@ void launch_conv2d_kernel(const float *input, const float *weight,
       stride_h, stride_w, pad_h, pad_w);
 }
 
+extern "C" void launch_conv2d_backward_input_kernel(
+    const float *grad_output, const float *weight, float *grad_input,
+    int n, int c_in, int h_in, int w_in, int c_out, int kh, int kw, int h_out,
+    int w_out, int stride_h, int stride_w, int pad_h, int pad_w, cudaStream_t stream) {
+  int total = n * c_in * h_in * w_in;
+  int threads = 256;
+  int blocks = (total + threads - 1) / threads;
+  conv2d_backward_input_kernel<<<blocks, threads, 0, stream>>>(
+      grad_output, weight, grad_input, n, c_in, h_in, w_in, c_out, kh, kw, h_out, w_out,
+      stride_h, stride_w, pad_h, pad_w);
+}
+
+extern "C" void launch_conv2d_backward_weight_kernel(
+    const float *grad_output, const float *input, float *grad_weight,
+    int n, int c_in, int h_in, int w_in, int c_out, int kh, int kw, int h_out,
+    int w_out, int stride_h, int stride_w, int pad_h, int pad_w, cudaStream_t stream) {
+  int total = c_out * c_in * kh * kw;
+  int threads = 256;
+  int blocks = (total + threads - 1) / threads;
+  conv2d_backward_weight_kernel<<<blocks, threads, 0, stream>>>(
+      grad_output, input, grad_weight, n, c_in, h_in, w_in, c_out, kh, kw, h_out, w_out,
+      stride_h, stride_w, pad_h, pad_w);
+}
+
 void launch_batch_norm_kernel(const float *input, const float *gamma,
                               const float *beta, const float *mean,
                               const float *var, float *output, int n, int c,
@@ -1433,13 +1619,39 @@ void launch_batch_norm_kernel(const float *input, const float *gamma,
       input, gamma, beta, mean, var, output, n, c, spatial, eps);
 }
 
-void launch_layer_norm_kernel(const float *input, const float *gamma,
-                              const float *beta, float *output, int outer,
-                              int norm_size, float eps, cudaStream_t stream) {
+extern "C" void launch_batch_norm_backward_kernel(
+    const float *grad_output, const float *input, const float *gamma,
+    const float *mean, const float *var, float *grad_input, float *grad_gamma,
+    float *grad_beta, int n, int c, int spatial, float eps, cudaStream_t stream) {
+  int total = n * c * spatial;
+  int threads = 256;
+  int blocks = (total + threads - 1) / threads;
+  batch_norm_backward_kernel<<<blocks, threads, 0, stream>>>(
+      grad_output, input, gamma, mean, var, grad_input, grad_gamma, grad_beta, n, c, spatial, eps);
+}
+
+extern "C" void launch_layer_norm_kernel(const float *input, const float *gamma,
+                                         const float *beta, float *output,
+                                         int outer, int norm_size, float eps,
+                                         cudaStream_t stream) {
   int threads = 256;
   int blocks = (outer + threads - 1) / threads;
   layer_norm_kernel<<<blocks, threads, 0, stream>>>(input, gamma, beta, output,
                                                     outer, norm_size, eps);
+}
+
+extern "C" void launch_layer_norm_backward_kernel(
+    const float *grad_output, const float *input, const float *gamma,
+    float *grad_input, float *grad_gamma, float *grad_beta, 
+    int outer, int norm_size, float eps, cudaStream_t stream) {
+    
+  if (grad_gamma != nullptr) cudaMemsetAsync(grad_gamma, 0, norm_size * sizeof(float), stream);
+  if (grad_beta != nullptr) cudaMemsetAsync(grad_beta, 0, norm_size * sizeof(float), stream);
+  
+  int threads = 256;
+  int blocks_outer = (outer + threads - 1) / threads;
+  layer_norm_backward_kernel<<<blocks_outer, threads, 0, stream>>>(
+      grad_output, input, gamma, grad_input, grad_gamma, grad_beta, outer, norm_size, eps);
 }
 
 void launch_max_pool2d_kernel(const float *input, float *output, int n, int c,
@@ -1464,11 +1676,18 @@ void launch_avg_pool2d_kernel(const float *input, float *output, int n, int c,
       input, output, n, c, h, w, h_out, w_out, kh, kw, stride_h, stride_w);
 }
 
-void launch_dropout_kernel(const float *input, float *output, int n, float p,
+extern "C" void launch_dropout_kernel(const float *input, float *output, int n, float p,
                            float scale, cudaStream_t stream) {
   int threads = 256;
   int blocks = (n + threads - 1) / threads;
   dropout_kernel<<<blocks, threads, 0, stream>>>(input, output, n, p, scale);
+}
+
+extern "C" void launch_dropout_backward_kernel(const float *grad_output, float *grad_input,
+                                               int n, float p, float scale, cudaStream_t stream) {
+  int threads = 256;
+  int blocks = (n + threads - 1) / threads;
+  dropout_backward_kernel<<<blocks, threads, 0, stream>>>(grad_output, grad_input, n, p, scale);
 }
 
 // --- argmax/argmin ---

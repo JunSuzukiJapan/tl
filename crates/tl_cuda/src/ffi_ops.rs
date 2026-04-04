@@ -895,7 +895,17 @@ pub fn tl_cuda_conv2d(
     _groups: usize,
 ) -> *mut OpaqueTensor {
     unsafe {
-        make_result(get(input).conv2d_impl(get(weight), (stride, stride), (padding, padding)))
+        let result_ptr = make_result(get(input).conv2d_impl(get(weight), (stride, stride), (padding, padding)));
+        if !result_ptr.is_null() && (get(input).requires_grad() || get(weight).requires_grad()) {
+            let in_ref = tensor_ref_from_ptr(input);
+            let w_ref = tensor_ref_from_ptr(weight);
+            let result = &mut *(result_ptr as *mut CudaTensor);
+            result.enable_grad();
+            result.set_grad_fn(Box::new(Conv2dBackward::new(
+                &get(input), &get(weight), [stride, stride], [padding, padding]
+            )));
+        }
+        result_ptr
     }
 }
 #[no_mangle]
@@ -910,13 +920,26 @@ pub fn tl_cuda_batch_norm(
     eps: f64,
 ) -> *mut OpaqueTensor {
     unsafe {
-        make_result(get(input).batch_norm_impl(
+        let result_ptr = make_result(get(input).batch_norm_impl(
             get(weight),
             get(bias),
             get(running_mean),
             get(running_var),
             eps as f32,
-        ))
+        ));
+        if !result_ptr.is_null() && (get(input).requires_grad() || get(weight).requires_grad() || (!bias.is_null() && get(bias).requires_grad())) {
+            let result = &mut *(result_ptr as *mut CudaTensor);
+            result.enable_grad();
+            result.set_grad_fn(Box::new(BatchNormBackward::new(
+                &get(input),
+                &get(weight),
+                &get(bias),
+                &get(running_mean),
+                &get(running_var),
+                eps as f32,
+            )));
+        }
+        result_ptr
     }
 }
 #[no_mangle]
@@ -929,6 +952,7 @@ pub fn tl_cuda_layer_norm(
     unsafe {
         let result_ptr = make_result(get(input).layer_norm_impl(get(weight), get(bias), eps as f32));
         if !result_ptr.is_null() && get(input).requires_grad() {
+            let in_ref = tensor_ref_from_ptr(input);
             let w_ref = if !weight.is_null() && get(weight).requires_grad() {
                 Some(tensor_ref_from_ptr(weight))
             } else {
@@ -942,7 +966,7 @@ pub fn tl_cuda_layer_norm(
             let result = &mut *(result_ptr as *mut CudaTensor);
             result.enable_grad();
             result.set_grad_fn(Box::new(LayerNormBackward::new(
-                get(input), w_ref, b_ref, eps as f32,
+                in_ref, w_ref, b_ref, eps as f32,
             )));
         }
         result_ptr
@@ -968,7 +992,16 @@ pub fn tl_cuda_avg_pool2d(
 }
 #[no_mangle]
 pub fn tl_cuda_dropout(input: *mut OpaqueTensor, p: f64, training: bool) -> *mut OpaqueTensor {
-    unsafe { make_result(get(input).dropout_impl(p as f32, training)) }
+    unsafe {
+        let result_ptr = make_result(get(input).dropout_impl(p as f32, training));
+        if !result_ptr.is_null() && get(input).requires_grad() && training && p > 0.0 {
+            let in_ref = tensor_ref_from_ptr(input);
+            let result = &mut *(result_ptr as *mut CudaTensor);
+            result.enable_grad();
+            result.set_grad_fn(Box::new(DropoutBackward::new(in_ref, p as f32, 1.0 / (1.0 - p as f32))));
+        }
+        result_ptr
+    }
 }
 #[no_mangle]
 pub fn tl_cuda_embedding(

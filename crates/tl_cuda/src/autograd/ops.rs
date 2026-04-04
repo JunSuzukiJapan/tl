@@ -61,11 +61,13 @@ unsafe_send_sync!(
     ContiguousBackward
 );
 
-/// TensorRef ヘルパー
-fn make_ref(t: &CudaTensor) -> TensorRef {
+// 共通ラッパー: CudaTensor から Graph 用ノード参照を生成・再利用する
+pub fn make_ref(t: &CudaTensor) -> TensorRef {
     Arc::new(UnsafeCell::new(t.shallow_clone()))
 }
 
+// TensorRef から可変参照を取得
+#[inline]
 fn get_ref(r: &TensorRef) -> &CudaTensor {
     unsafe { &*r.get() }
 }
@@ -720,31 +722,35 @@ pub struct LayerNormBackward {
     pub eps: f32,
 }
 impl LayerNormBackward {
-    pub fn new(t: &CudaTensor, w: Option<TensorRef>, b: Option<TensorRef>, eps: f32) -> Self {
-        Self { input: make_ref(t), weight: w, bias: b, eps }
+    pub fn new(input: TensorRef, w: Option<TensorRef>, b: Option<TensorRef>, eps: f32) -> Self {
+        Self { input, weight: w, bias: b, eps }
     }
 }
 impl GradFn for LayerNormBackward {
     fn backward(&self, grad_output: &CudaTensor) -> BackendResult<Vec<CudaTensor>> {
-        // 簡易: grad をそのまま通す (Metal 版と同一パターン)
-        let grad_input = grad_output.shallow_clone();
+        eprintln!("[DEBUG] LayerNorm backward called!");
+        let input = unsafe { &*self.input.get() };
+        let compute_weight_grad = self.weight.is_some() || self.bias.is_some();
+        let gamma_ref = if let Some(ref w) = self.weight {
+            Some(unsafe { &*w.get() })
+        } else {
+            None
+        };
         
+        let (grad_input, grad_gamma, grad_beta) = input.layer_norm_backward_impl(
+            grad_output,
+            gamma_ref,
+            compute_weight_grad,
+            self.eps,
+        )?;
+        
+        // Return 1, 2, or 3 gradients depending on how many inputs we have
         let mut grads = vec![grad_input];
-        
-        if let Some(ref _w_ref) = self.weight {
-            let go_shape = grad_output.shape();
-            if go_shape.len() >= 2 {
-                // [batch, seq, dim] → sum over [batch, seq] → [dim]
-                let mut g = grad_output.shallow_clone();
-                for _ in 0..(go_shape.len() - 1) {
-                    g = g.sum_impl(0)?;
-                }
-                grads.push(g.shallow_clone());  // grad_weight
-                grads.push(g);                  // grad_bias
-            } else {
-                grads.push(grad_output.shallow_clone());
-                grads.push(grad_output.shallow_clone());
-            }
+        if self.weight.is_some() {
+            grads.push(grad_gamma.unwrap());
+        }
+        if self.bias.is_some() {
+            grads.push(grad_beta.unwrap());
         }
         
         Ok(grads)
@@ -894,54 +900,108 @@ impl GradFn for PowScalarBackward {
 
 pub struct Conv2dBackward {
     pub input: TensorRef,
+    pub weight: TensorRef,
+    pub stride: [usize; 2],
+    pub padding: [usize; 2],
 }
 impl Conv2dBackward {
-    pub fn new(t: &CudaTensor) -> Self {
-        Self { input: make_ref(t) }
+    pub fn new(input: &CudaTensor, weight: &CudaTensor, stride: [usize; 2], padding: [usize; 2]) -> Self {
+        Self {
+            input: make_ref(input),
+            weight: make_ref(weight),
+            stride,
+            padding,
+        }
     }
 }
 impl GradFn for Conv2dBackward {
     fn backward(&self, grad_output: &CudaTensor) -> BackendResult<Vec<CudaTensor>> {
-        Ok(vec![grad_output.shallow_clone()])
+        let input = unsafe { &*self.input.get() };
+        let weight = unsafe { &*self.weight.get() };
+        let grad_input = input.conv2d_backward_input_impl(
+            grad_output,
+            weight,
+            self.stride,
+            self.padding,
+        )?;
+        let grad_weight = input.conv2d_backward_weight_impl(
+            grad_output,
+            weight,
+            self.stride,
+            self.padding,
+        )?;
+        Ok(vec![grad_input, grad_weight])
     }
     fn inputs(&self) -> Vec<TensorRef> {
-        vec![self.input.clone()]
+        vec![self.input.clone(), self.weight.clone()]
     }
 }
 
 pub struct BatchNormBackward {
     pub input: TensorRef,
+    pub gamma: TensorRef,
+    pub beta: TensorRef,
+    pub running_mean: TensorRef,
+    pub running_var: TensorRef,
+    pub eps: f32,
 }
 impl BatchNormBackward {
-    pub fn new(t: &CudaTensor) -> Self {
-        Self { input: make_ref(t) }
+    pub fn new(
+        input: &CudaTensor,
+        gamma: &CudaTensor,
+        beta: &CudaTensor,
+        running_mean: &CudaTensor,
+        running_var: &CudaTensor,
+        eps: f32,
+    ) -> Self {
+        Self {
+            input: make_ref(input),
+            gamma: make_ref(gamma),
+            beta: make_ref(beta),
+            running_mean: make_ref(running_mean),
+            running_var: make_ref(running_var),
+            eps,
+        }
     }
 }
 impl GradFn for BatchNormBackward {
     fn backward(&self, grad_output: &CudaTensor) -> BackendResult<Vec<CudaTensor>> {
-        Ok(vec![grad_output.shallow_clone()])
+        let input = unsafe { &*self.input.get() };
+        let gamma = unsafe { &*self.gamma.get() };
+        let running_mean = unsafe { &*self.running_mean.get() };
+        let running_var = unsafe { &*self.running_var.get() };
+
+        let (grad_input, grad_gamma, grad_beta) = input.batch_norm_backward_impl(
+            grad_output,
+            gamma,
+            running_mean,
+            running_var,
+            self.eps,
+        )?;
+        Ok(vec![grad_input, grad_gamma, grad_beta])
     }
     fn inputs(&self) -> Vec<TensorRef> {
-        vec![self.input.clone()]
+        vec![self.input.clone(), self.gamma.clone(), self.beta.clone()]
     }
 }
 
 pub struct DropoutBackward {
-    pub mask: TensorRef,
+    pub input: TensorRef,
+    pub p: f32,
+    pub scale: f32,
 }
 impl DropoutBackward {
-    pub fn new(mask: &CudaTensor) -> Self {
-        Self {
-            mask: make_ref(mask),
-        }
+    pub fn new(input: TensorRef, p: f32, scale: f32) -> Self {
+        Self { input, p, scale }
     }
 }
 impl GradFn for DropoutBackward {
     fn backward(&self, grad_output: &CudaTensor) -> BackendResult<Vec<CudaTensor>> {
-        Ok(vec![grad_output.shallow_clone()])
+        let input = unsafe { &*self.input.get() };
+        Ok(vec![input.dropout_backward_impl(grad_output, self.p, self.scale)?])
     }
     fn inputs(&self) -> Vec<TensorRef> {
-        vec![self.mask.clone()]
+        vec![self.input.clone()]
     }
 }
 
