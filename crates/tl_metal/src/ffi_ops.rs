@@ -902,7 +902,7 @@ pub fn tl_metal_set_f32_md(
     value: f32,
 ) -> *mut OpaqueTensor {
     if t.is_null() || indices.is_null() { return t; }
-    let tensor = unsafe { &*t };
+    let tensor = unsafe { &mut *t };
     let shape = tensor.shape();
     let idx_slice = unsafe { std::slice::from_raw_parts(indices, rank) };
     
@@ -934,7 +934,8 @@ pub fn tl_metal_set_f32_md(
             *ptr.add(linear_idx) = value;
         }
     }
-    make_tensor(res)
+    *tensor = res;
+    t
 }
 
 #[no_mangle]

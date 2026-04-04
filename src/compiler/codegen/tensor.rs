@@ -323,6 +323,44 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Body Computation
         self.builder.position_at_end(current_bb);
 
+        let conditions: Vec<&Expr> = clauses.iter().filter_map(|c| {
+            if let ComprehensionClause::Condition(cond) = c { Some(cond) } else { None }
+        }).collect();
+
+        if !conditions.is_empty() {
+            let mut final_cond = None;
+            for cond in conditions {
+                let (c_val, c_ty) = self.compile_expr(cond)?;
+                let c_bool = if let Type::Bool = c_ty {
+                    c_val.into_int_value()
+                } else {
+                    return Err(format!("Condition must be bool, found {:?}", c_ty));
+                };
+                final_cond = match final_cond {
+                    None => Some(c_bool),
+                    Some(prev) => Some(self.builder.build_and(prev, c_bool, "cond_and").unwrap()),
+                };
+            }
+            if let Some(cond_val) = final_cond {
+                let skip_bb = self.context.append_basic_block(parent_fn, "cond_fail_skip");
+                let body_eval_bb = self.context.append_basic_block(parent_fn, "body_eval");
+                self.builder.build_conditional_branch(cond_val, body_eval_bb, skip_bb).unwrap();
+                
+                // Add skip_bb to the INNERMOST loop's skip stack
+                if let Some(skips) = loop_skip_stack.last_mut() {
+                    skips.push(skip_bb);
+                } else {
+                    // No loops active, but we have a condition.
+                    // If condition fails, we should jump to end.
+                    // But for scalar comprehension, skip_stack is empty.
+                    // Let's just create a dummy end block if needed, but it's an edge case.
+                    return Err("Condition outside of any loop generator in tensor comprehension".into());
+                }
+                
+                self.builder.position_at_end(body_eval_bb);
+            }
+        }
+
         let (rhs_val, rhs_ty) = if let ExprKind::Block(_) = &final_body.inner {
             self.compile_expr(final_body)?
         } else {

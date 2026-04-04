@@ -368,7 +368,7 @@ pub fn tl_cuda_set_f32_md(
     value: f32,
 ) -> *mut OpaqueTensor {
     unsafe {
-        let tensor = get(t);
+        let tensor = get_mut(t);
         let idx_slice = std::slice::from_raw_parts(indices, rank);
         let shape = tensor.shape();
         let mut flat = 0usize;
@@ -379,7 +379,8 @@ pub fn tl_cuda_set_f32_md(
         }
         let mut data = tensor.to_vec::<f32>();
         data[flat] = value;
-        make_tensor(CudaTensor::from_slice(&data, shape, tensor.dtype()))
+        *tensor = CudaTensor::from_slice(&data, shape, tensor.dtype());
+        t
     }
 }
 
