@@ -248,6 +248,10 @@ fn main() {
     if File::exists("model_heavy.safetensors") {
         Param::load(state.model, "model_heavy.safetensors");
         print("Loaded parameters from model_heavy.safetensors");
+        if File::exists("model_heavy_step.txt") {
+            state.global_step = File::read("model_heavy_step.txt").to_i64();
+            print("Restored global_step to: "); print(state.global_step);
+        }
     }
     
     let lr = 0.0003;
@@ -262,10 +266,12 @@ fn main() {
         // 50エポック毎に中間保存
         if epoch % 50 == 49 {
             Param::save(state.model, "model_heavy.safetensors");
+            File::write("model_heavy_step.txt", state.global_step.to_string());
             print("Checkpoint saved.");
         }
     }
     
     print("Training Complete!");
     Param::save(state.model, "model_heavy.safetensors");
+    File::write("model_heavy_step.txt", state.global_step.to_string());
 }
