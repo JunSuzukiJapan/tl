@@ -902,19 +902,19 @@ fn compile_tensor_clamp<'ctx>(
     let fn_val = codegen.module.get_function("tl_tensor_clamp").ok_or("tl_tensor_clamp not found")?;
     
     let (min_val, min_ty) = &args[0];
-    let min_f32 = match min_ty {
-        Type::F32 => min_val.into_float_value(),
-        Type::F64 => codegen.builder.build_float_trunc(min_val.into_float_value(), codegen.context.f32_type(), "trunc").unwrap(),
+    let min_f64 = match min_ty {
+        Type::F64 => min_val.into_float_value(),
+        Type::F32 => codegen.builder.build_float_ext(min_val.into_float_value(), codegen.context.f64_type(), "ext").unwrap(),
         _ => return Err("min must be float".into()),
     };
     let (max_val, max_ty) = &args[1];
-    let max_f32 = match max_ty {
-        Type::F32 => max_val.into_float_value(),
-        Type::F64 => codegen.builder.build_float_trunc(max_val.into_float_value(), codegen.context.f32_type(), "trunc").unwrap(),
+    let max_f64 = match max_ty {
+        Type::F64 => max_val.into_float_value(),
+        Type::F32 => codegen.builder.build_float_ext(max_val.into_float_value(), codegen.context.f64_type(), "ext").unwrap(),
         _ => return Err("max must be float".into()),
     };
 
-    let call = codegen.builder.build_call(fn_val, &[obj.into(), min_f32.into(), max_f32.into()], "clamp_res").map_err(|e| e.to_string())?;
+    let call = codegen.builder.build_call(fn_val, &[obj.into(), min_f64.into(), max_f64.into()], "clamp_res").map_err(|e| e.to_string())?;
     let res = match call.try_as_basic_value() {
         ValueKind::Basic(v) => v,
         _ => return Err("Invalid return from clamp()".into()),

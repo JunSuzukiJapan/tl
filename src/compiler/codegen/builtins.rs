@@ -2872,8 +2872,8 @@ pub fn declare_runtime_functions<'ctx>(
     module.add_function("tl_tensor_avg_pool2d", pool2d_type, None);
     if let Some(f) = module.get_function("tl_tensor_avg_pool2d") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_avg_pool2d as *const () as usize); }
 
-    // tl_tensor_clamp(t: *mut, min: f32, max: f32) -> *mut
-    let clamp_type = void_ptr.fn_type(&[void_ptr.into(), f32_type.into(), f32_type.into()], false);
+    // tl_tensor_clamp(t: *mut, min: f64, max: f64) -> *mut
+    let clamp_type = void_ptr.fn_type(&[void_ptr.into(), f64_type.into(), f64_type.into()], false);
     module.add_function("tl_tensor_clamp", clamp_type, None);
     // [IDevice] map_tensor_fn! → device_ffi
     if let Some(f) = module.get_function("tl_tensor_clamp") { execution_engine.add_global_mapping(&f, runtime::device_ffi::tl_device_tensor_clamp as *const () as usize); }
