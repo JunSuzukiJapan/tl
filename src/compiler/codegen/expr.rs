@@ -6296,6 +6296,20 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
         }
 
+        // === Vec: enumerate, flatten, zip ===
+        if method == "enumerate" || method == "flatten" || method == "zip" {
+            let is_vec = match &obj_ty {
+                Type::Struct(name, _) => {
+                    let base = mangle_base_name(name);
+                    base == "Vec"
+                }
+                _ => false,
+            };
+            if is_vec {
+                return self.compile_vec_builtin_method(obj_val, &obj_ty, method, args);
+            }
+        }
+
         self.emit_method_call(obj, obj_val, obj_ty, method, args)
     }
 
@@ -7571,6 +7585,299 @@ impl<'ctx> CodeGenerator<'ctx> {
         let final_result = self.builder.build_load(ptr_type, result_alloca, "join_result").unwrap();
         Ok((final_result, string_type_tl))
     }
+
+    fn compile_vec_builtin_method(
+        &mut self,
+        vec_val: BasicValueEnum<'ctx>,
+        vec_ty: &Type,
+        method: &str,
+        args: &[Expr],
+    ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+        let i64_type = self.context.i64_type();
+        let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
+
+        let vec_type_name = vec_ty.codegen_name()
+            .ok_or_else(|| "Cannot get Vec codegen name".to_string())?;
+        let vec_struct_ty = *self.struct_types.get(&vec_type_name)
+            .ok_or_else(|| format!("Vec struct type {} not found", vec_type_name))?;
+        let vec_ptr = vec_val.into_pointer_value();
+
+        let data_ptr_field = self.builder.build_struct_gep(vec_struct_ty, vec_ptr, 0, "d_ptr").unwrap();
+        let data_ptr = self.builder.build_load(ptr_type, data_ptr_field, "d").unwrap();
+        let len_field = self.builder.build_struct_gep(vec_struct_ty, vec_ptr, 2, "l_ptr").unwrap();
+        let len = self.builder.build_load(i64_type, len_field, "l").unwrap().into_int_value();
+
+        let elem_ty = match vec_ty {
+            Type::Struct(_, params) if !params.is_empty() => params[0].clone(),
+            _ => Type::I64,
+        };
+        let elem_llvm_ty = self.get_llvm_type(&elem_ty)?;
+
+        let current_fn = self.builder.get_insert_block().unwrap().get_parent().unwrap();
+        let zero = i64_type.const_zero();
+
+        if method == "enumerate" {
+            let out_elem_ty = Type::Tuple(vec![Type::I64, elem_ty.clone()]);
+            let out_elem_llvm_ty = self.get_llvm_type(&out_elem_ty)?;
+            let out_vec_ty = Type::Struct("Vec".to_string(), vec![out_elem_ty.clone()]);
+            let _ = self.get_or_monomorphize_type(&out_vec_ty)?;
+
+            let res_ptr = self.builder.build_alloca(vec_struct_ty, "res").unwrap();
+
+            let malloc_fn = self.module.get_function("malloc").unwrap();
+            let buf_size = self.builder.build_int_mul(len, out_elem_llvm_ty.size_of().unwrap(), "bsz").unwrap();
+            let raw_buf_call = self.builder.build_call(malloc_fn, &[buf_size.into()], "buf").unwrap();
+            let raw_buf = match raw_buf_call.try_as_basic_value() {
+                inkwell::values::ValueKind::Basic(v) => v,
+                _ => return Err("malloc failed".into()),
+            };
+
+            let f0 = self.builder.build_struct_gep(vec_struct_ty, res_ptr, 0, "f0").unwrap();
+            self.builder.build_store(f0, raw_buf).unwrap();
+            let f1 = self.builder.build_struct_gep(vec_struct_ty, res_ptr, 1, "f1").unwrap();
+            self.builder.build_store(f1, len).unwrap();
+            let f2 = self.builder.build_struct_gep(vec_struct_ty, res_ptr, 2, "f2").unwrap();
+            self.builder.build_store(f2, len).unwrap();
+
+            let loop_bb = self.context.append_basic_block(current_fn, "lp");
+            let body_bb = self.context.append_basic_block(current_fn, "bd");
+            let done_bb = self.context.append_basic_block(current_fn, "dn");
+
+            let i_var = self.builder.build_alloca(i64_type, "i").unwrap();
+            self.builder.build_store(i_var, zero).unwrap();
+            self.builder.build_unconditional_branch(loop_bb).unwrap();
+
+            self.builder.position_at_end(loop_bb);
+            let i_val = self.builder.build_load(i64_type, i_var, "ival").unwrap().into_int_value();
+            let cond = self.builder.build_int_compare(inkwell::IntPredicate::SLT, i_val, len, "cnd").unwrap();
+            self.builder.build_conditional_branch(cond, body_bb, done_bb).unwrap();
+
+            self.builder.position_at_end(body_bb);
+            let in_addr = unsafe { self.builder.build_gep(elem_llvm_ty, data_ptr.into_pointer_value(), &[i_val], "ia").unwrap() };
+            let in_val = self.builder.build_load(elem_llvm_ty, in_addr, "iv").unwrap();
+
+            // Malloc tuple
+            let tuple_struct_ty = self.context.struct_type(&[i64_type.into(), elem_llvm_ty.into()], false);
+            let tuple_sz = self.builder.build_int_z_extend(tuple_struct_ty.size_of().unwrap(), i64_type, "tsz").unwrap();
+            let tuple_call = self.builder.build_call(malloc_fn, &[tuple_sz.into()], "mtup").unwrap();
+            let tuple_ptr = match tuple_call.try_as_basic_value() {
+                inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
+                _ => return Err("malloc failed".into()),
+            };
+
+            let t0 = self.builder.build_struct_gep(tuple_struct_ty, tuple_ptr, 0, "t0").unwrap();
+            self.builder.build_store(t0, i_val).unwrap();
+            let t1 = self.builder.build_struct_gep(tuple_struct_ty, tuple_ptr, 1, "t1").unwrap();
+            self.builder.build_store(t1, in_val).unwrap();
+
+            let out_addr = unsafe { self.builder.build_gep(out_elem_llvm_ty, raw_buf.into_pointer_value(), &[i_val], "oa").unwrap() };
+            self.builder.build_store(out_addr, tuple_ptr).unwrap();
+
+            self.emit_retain(in_val, &elem_ty)?;
+
+            let nxt = self.builder.build_int_add(i_val, i64_type.const_int(1, false), "nxt").unwrap();
+            self.builder.build_store(i_var, nxt).unwrap();
+            self.builder.build_unconditional_branch(loop_bb).unwrap();
+
+            self.builder.position_at_end(done_bb);
+            return Ok((res_ptr.into(), out_vec_ty));
+        }
+
+        if method == "zip" {
+            let (other_val, other_ty) = self.compile_expr(&args[0])?;
+            let other_elem_ty = match &other_ty {
+                Type::Struct(_, p) if !p.is_empty() => p[0].clone(),
+                _ => Type::I64,
+            };
+            let other_elem_llvm_ty = self.get_llvm_type(&other_elem_ty)?;
+            let other_vec_name = other_ty.codegen_name().unwrap();
+            let other_vec_struct_ty = *self.struct_types.get(&other_vec_name).unwrap();
+            
+            let o_ptr = other_val.into_pointer_value();
+            let o_data_field = self.builder.build_struct_gep(other_vec_struct_ty, o_ptr, 0, "od").unwrap();
+            let o_data = self.builder.build_load(ptr_type, o_data_field, "odt").unwrap();
+            let o_len_field = self.builder.build_struct_gep(other_vec_struct_ty, o_ptr, 2, "ol").unwrap();
+            let o_len = self.builder.build_load(i64_type, o_len_field, "oln").unwrap().into_int_value();
+
+            let out_elem_ty = Type::Tuple(vec![elem_ty.clone(), other_elem_ty.clone()]);
+            let out_elem_llvm_ty = self.get_llvm_type(&out_elem_ty)?;
+            let out_vec_ty = Type::Struct("Vec".to_string(), vec![out_elem_ty.clone()]);
+            let _ = self.get_or_monomorphize_type(&out_vec_ty)?;
+
+            let min_len = self.builder.build_select(
+                self.builder.build_int_compare(inkwell::IntPredicate::SLT, len, o_len, "cmp").unwrap(),
+                len, o_len, "min"
+            ).unwrap().into_int_value();
+
+            let res_ptr = self.builder.build_alloca(vec_struct_ty, "res").unwrap();
+            let malloc_fn = self.module.get_function("malloc").unwrap();
+            let buf_sz = self.builder.build_int_mul(min_len, out_elem_llvm_ty.size_of().unwrap(), "bsz").unwrap();
+            let raw_buf_call = self.builder.build_call(malloc_fn, &[buf_sz.into()], "buf").unwrap();
+            let raw_buf = match raw_buf_call.try_as_basic_value() {
+                inkwell::values::ValueKind::Basic(v) => v,
+                _ => return Err("malloc failed".into()),
+            };
+
+            let f0 = self.builder.build_struct_gep(vec_struct_ty, res_ptr, 0, "f0").unwrap();
+            self.builder.build_store(f0, raw_buf).unwrap();
+            let f1 = self.builder.build_struct_gep(vec_struct_ty, res_ptr, 1, "f1").unwrap();
+            self.builder.build_store(f1, min_len).unwrap();
+            let f2 = self.builder.build_struct_gep(vec_struct_ty, res_ptr, 2, "f2").unwrap();
+            self.builder.build_store(f2, min_len).unwrap();
+
+            let loop_bb = self.context.append_basic_block(current_fn, "lp");
+            let body_bb = self.context.append_basic_block(current_fn, "bd");
+            let done_bb = self.context.append_basic_block(current_fn, "dn");
+
+            let i_var = self.builder.build_alloca(i64_type, "i").unwrap();
+            self.builder.build_store(i_var, zero).unwrap();
+            self.builder.build_unconditional_branch(loop_bb).unwrap();
+
+            self.builder.position_at_end(loop_bb);
+            let i_val = self.builder.build_load(i64_type, i_var, "iv").unwrap().into_int_value();
+            let cond = self.builder.build_int_compare(inkwell::IntPredicate::SLT, i_val, min_len, "cnd").unwrap();
+            self.builder.build_conditional_branch(cond, body_bb, done_bb).unwrap();
+
+            self.builder.position_at_end(body_bb);
+            let in1 = self.builder.build_load(elem_llvm_ty, unsafe { self.builder.build_gep(elem_llvm_ty, data_ptr.into_pointer_value(), &[i_val], "ia1").unwrap() }, "v1").unwrap();
+            let in2 = self.builder.build_load(other_elem_llvm_ty, unsafe { self.builder.build_gep(other_elem_llvm_ty, o_data.into_pointer_value(), &[i_val], "ia2").unwrap() }, "v2").unwrap();
+
+            // Malloc tuple
+            let tuple_struct_ty = self.context.struct_type(&[elem_llvm_ty.into(), other_elem_llvm_ty.into()], false);
+            let tuple_sz = self.builder.build_int_z_extend(tuple_struct_ty.size_of().unwrap(), i64_type, "tsz").unwrap();
+            let tuple_call = self.builder.build_call(malloc_fn, &[tuple_sz.into()], "mtup").unwrap();
+            let tuple_ptr = match tuple_call.try_as_basic_value() {
+                inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
+                _ => return Err("malloc failed".into()),
+            };
+
+            let t0 = self.builder.build_struct_gep(tuple_struct_ty, tuple_ptr, 0, "t0").unwrap();
+            self.builder.build_store(t0, in1).unwrap();
+            let t1 = self.builder.build_struct_gep(tuple_struct_ty, tuple_ptr, 1, "t1").unwrap();
+            self.builder.build_store(t1, in2).unwrap();
+
+            let out_addr = unsafe { self.builder.build_gep(out_elem_llvm_ty, raw_buf.into_pointer_value(), &[i_val], "oa").unwrap() };
+            self.builder.build_store(out_addr, tuple_ptr).unwrap();
+
+            self.emit_retain(in1, &elem_ty)?;
+            self.emit_retain(in2, &other_elem_ty)?;
+
+            let nxt = self.builder.build_int_add(i_val, i64_type.const_int(1, false), "nxt").unwrap();
+            self.builder.build_store(i_var, nxt).unwrap();
+            self.builder.build_unconditional_branch(loop_bb).unwrap();
+
+            self.builder.position_at_end(done_bb);
+            return Ok((res_ptr.into(), out_vec_ty));
+        }
+
+        if method == "flatten" {
+            let inner_elem_ty = match &elem_ty {
+                Type::Struct(_, p) if !p.is_empty() => p[0].clone(),
+                _ => Type::I64,
+            };
+            let inner_elem_llvm_ty = self.get_llvm_type(&inner_elem_ty)?;
+            let out_vec_ty = Type::Struct("Vec".to_string(), vec![inner_elem_ty.clone()]);
+            let _ = self.get_or_monomorphize_type(&out_vec_ty)?;
+
+            let elem_vec_name = elem_ty.codegen_name().unwrap();
+            let elem_vec_struct_ty = *self.struct_types.get(&elem_vec_name).unwrap();
+
+            let tot_var = self.builder.build_alloca(i64_type, "tot").unwrap();
+            self.builder.build_store(tot_var, zero).unwrap();
+
+            // Pass 1
+            let p1_lp = self.context.append_basic_block(current_fn, "p1lp");
+            let p1_bd = self.context.append_basic_block(current_fn, "p1bd");
+            let p1_dn = self.context.append_basic_block(current_fn, "p1dn");
+
+            let i_var = self.builder.build_alloca(i64_type, "i").unwrap();
+            self.builder.build_store(i_var, zero).unwrap();
+            self.builder.build_unconditional_branch(p1_lp).unwrap();
+
+            self.builder.position_at_end(p1_lp);
+            let i_val = self.builder.build_load(i64_type, i_var, "iv").unwrap().into_int_value();
+            let cond = self.builder.build_int_compare(inkwell::IntPredicate::SLT, i_val, len, "cnd").unwrap();
+            self.builder.build_conditional_branch(cond, p1_bd, p1_dn).unwrap();
+
+            self.builder.position_at_end(p1_bd);
+            let sub_vec = self.builder.build_load(elem_llvm_ty, unsafe { self.builder.build_gep(elem_llvm_ty, data_ptr.into_pointer_value(), &[i_val], "sa").unwrap() }, "sv").unwrap().into_pointer_value();
+            let sub_len = self.builder.build_load(i64_type, self.builder.build_struct_gep(elem_vec_struct_ty, sub_vec, 2, "slf").unwrap(), "sln").unwrap().into_int_value();
+            let ctot = self.builder.build_load(i64_type, tot_var, "ct").unwrap().into_int_value();
+            self.builder.build_store(tot_var, self.builder.build_int_add(ctot, sub_len, "nt").unwrap()).unwrap();
+            
+            self.builder.build_store(i_var, self.builder.build_int_add(i_val, i64_type.const_int(1, false), "nxt").unwrap()).unwrap();
+            self.builder.build_unconditional_branch(p1_lp).unwrap();
+
+            // Pass 2
+            self.builder.position_at_end(p1_dn);
+            let tot_val = self.builder.build_load(i64_type, tot_var, "tv").unwrap().into_int_value();
+            let res_ptr = self.builder.build_alloca(vec_struct_ty, "res").unwrap();
+            let malloc_fn = self.module.get_function("malloc").unwrap();
+            let buf_sz = self.builder.build_int_mul(tot_val, inner_elem_llvm_ty.size_of().unwrap(), "bsz").unwrap();
+            let raw_buf_call = self.builder.build_call(malloc_fn, &[buf_sz.into()], "buf").unwrap();
+            let raw_buf = match raw_buf_call.try_as_basic_value() {
+                inkwell::values::ValueKind::Basic(v) => v,
+                _ => return Err("malloc failed".into()),
+            };
+
+            self.builder.build_store(self.builder.build_struct_gep(vec_struct_ty, res_ptr, 0, "f0").unwrap(), raw_buf).unwrap();
+            self.builder.build_store(self.builder.build_struct_gep(vec_struct_ty, res_ptr, 1, "f1").unwrap(), tot_val).unwrap();
+            self.builder.build_store(self.builder.build_struct_gep(vec_struct_ty, res_ptr, 2, "f2").unwrap(), tot_val).unwrap();
+
+            let p2_lp = self.context.append_basic_block(current_fn, "p2lp");
+            let p2_bd = self.context.append_basic_block(current_fn, "p2bd");
+            let p2_dn = self.context.append_basic_block(current_fn, "p2dn");
+            
+            self.builder.build_store(i_var, zero).unwrap();
+            let out_idx = self.builder.build_alloca(i64_type, "oidx").unwrap();
+            self.builder.build_store(out_idx, zero).unwrap();
+            self.builder.build_unconditional_branch(p2_lp).unwrap();
+
+            self.builder.position_at_end(p2_lp);
+            let i_val2 = self.builder.build_load(i64_type, i_var, "iv2").unwrap().into_int_value();
+            let cond2 = self.builder.build_int_compare(inkwell::IntPredicate::SLT, i_val2, len, "cnd2").unwrap();
+            self.builder.build_conditional_branch(cond2, p2_bd, p2_dn).unwrap();
+
+            self.builder.position_at_end(p2_bd);
+            let sub_vec2 = self.builder.build_load(elem_llvm_ty, unsafe { self.builder.build_gep(elem_llvm_ty, data_ptr.into_pointer_value(), &[i_val2], "sa2").unwrap() }, "sv2").unwrap().into_pointer_value();
+            let sub_dat = self.builder.build_load(ptr_type, self.builder.build_struct_gep(elem_vec_struct_ty, sub_vec2, 0, "sdf").unwrap(), "sd").unwrap();
+            let sub_ln = self.builder.build_load(i64_type, self.builder.build_struct_gep(elem_vec_struct_ty, sub_vec2, 2, "slf2").unwrap(), "sln2").unwrap().into_int_value();
+
+            let in_lp = self.context.append_basic_block(current_fn, "ilp");
+            let in_bd = self.context.append_basic_block(current_fn, "ibd");
+            let in_dn = self.context.append_basic_block(current_fn, "idn");
+
+            let j_var = self.builder.build_alloca(i64_type, "j").unwrap();
+            self.builder.build_store(j_var, zero).unwrap();
+            self.builder.build_unconditional_branch(in_lp).unwrap();
+
+            self.builder.position_at_end(in_lp);
+            let j_val = self.builder.build_load(i64_type, j_var, "jv").unwrap().into_int_value();
+            let cond3 = self.builder.build_int_compare(inkwell::IntPredicate::SLT, j_val, sub_ln, "cnd3").unwrap();
+            self.builder.build_conditional_branch(cond3, in_bd, in_dn).unwrap();
+
+            self.builder.position_at_end(in_bd);
+            let e_val = self.builder.build_load(inner_elem_llvm_ty, unsafe { self.builder.build_gep(inner_elem_llvm_ty, sub_dat.into_pointer_value(), &[j_val], "ea").unwrap() }, "ev").unwrap();
+            let cur_oidx = self.builder.build_load(i64_type, out_idx, "co").unwrap().into_int_value();
+            self.builder.build_store(unsafe { self.builder.build_gep(inner_elem_llvm_ty, raw_buf.into_pointer_value(), &[cur_oidx], "ofa").unwrap() }, e_val).unwrap();
+
+            self.emit_retain(e_val, &inner_elem_ty)?;
+
+            self.builder.build_store(out_idx, self.builder.build_int_add(cur_oidx, i64_type.const_int(1, false), "no").unwrap()).unwrap();
+            self.builder.build_store(j_var, self.builder.build_int_add(j_val, i64_type.const_int(1, false), "nj").unwrap()).unwrap();
+            self.builder.build_unconditional_branch(in_lp).unwrap();
+
+            self.builder.position_at_end(in_dn);
+            self.builder.build_store(i_var, self.builder.build_int_add(i_val2, i64_type.const_int(1, false), "ni2").unwrap()).unwrap();
+            self.builder.build_unconditional_branch(p2_lp).unwrap();
+
+            self.builder.position_at_end(p2_dn);
+            return Ok((res_ptr.into(), out_vec_ty));
+        }
+
+        Err(format!("Unknown built-in method {}", method))
+    }
+
 
 
     /// Option.map/and_then/unwrap_or_else のインラインIR生成

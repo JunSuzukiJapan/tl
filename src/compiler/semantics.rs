@@ -6743,6 +6743,47 @@ impl SemanticAnalyzer {
                     }
                 }
 
+                // === Vec methods: enumerate, flatten, zip ===
+                if method_name == "enumerate" || method_name == "flatten" || method_name == "zip" {
+                    let is_vec = match &obj_type {
+                        Type::Struct(name, _) if name.starts_with("Vec") => true,
+                        _ => obj_type.get_base_name() == "Vec",
+                    };
+                    if is_vec {
+                        let elem_ty = match &obj_type {
+                            Type::Struct(_, type_args) => type_args.first().cloned().unwrap_or(Type::I64),
+                            _ => Type::I64,
+                        };
+                        match method_name.as_str() {
+                            "enumerate" => {
+                                if args.len() == 0 {
+                                    return Ok(Type::Struct("Vec".to_string(), vec![Type::Tuple(vec![Type::I64, elem_ty])]));
+                                }
+                            }
+                            "flatten" => {
+                                if args.len() == 0 {
+                                    let inner_elem_ty = match &elem_ty {
+                                        Type::Struct(name, type_args) if name == "Vec" => type_args.first().cloned().unwrap_or(Type::I64),
+                                        _ => Type::I64,
+                                    };
+                                    return Ok(Type::Struct("Vec".to_string(), vec![inner_elem_ty]));
+                                }
+                            }
+                            "zip" => {
+                                if args.len() == 1 {
+                                    let arg_ty = self.check_expr(&mut args[0])?;
+                                    let arg_elem_ty = match &arg_ty {
+                                        Type::Struct(name, type_args) if name == "Vec" => type_args.first().cloned().unwrap_or(Type::I64),
+                                        _ => Type::I64,
+                                    };
+                                    return Ok(Type::Struct("Vec".to_string(), vec![Type::Tuple(vec![elem_ty, arg_elem_ty])]));
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+
                 // === Option closure methods: map, and_then, unwrap_or_else ===
                 if (method_name == "map" || method_name == "and_then" || method_name == "unwrap_or_else")
                     && args.len() == 1
