@@ -40,23 +40,23 @@
 - [x] `ones()` の I64/I32 dtype サポート (`crates/tl_cuda/src/tensor.rs`)
   - F32, I64, I32 対応済み
 
-- [ ] `ones()` / `randn()` の F64 dtype サポート
-  - 現在: `DType` enum に F64 が未定義
+- [x] `ones()` / `randn()` の F64 dtype サポート
+  - 現在: 追加および実装済み
   - 対応: `tl_backend`, `tl_cuda`, `tl_metal` に `DType::F64` を追加し、CUDA で実装
 
 ### graph.rs
 
-- [ ] `CudaGraph::replay()` の実装 (`crates/tl_cuda/src/graph.rs`)
-  - 現在: `GpuGraph` trait の `replay()` が `unimplemented!`
+- [x] `CudaGraph::replay()` の実装 (`crates/tl_cuda/src/graph.rs`)
+  - 現在: 実装済み
   - 対応: `cudaGraphExec_t` ラッパーとして実装
 
 ---
 
 ## 3. 最適化
 
-- [ ] Flash Attention — fused attention kernel
-  - 現在: `autograd.cu` の `sdpa_kernel` は naive 3-pass 実装
-  - 最適化: タイル化 + online softmax + shared memory による Flash Attention v2
+- [x] Flash Attention — fused attention kernel
+  - 現在: `autograd.cu` の `sdpa_kernel` は `flash_attention_kernel` として実装済み
+  - 最適化: タイル化 + online softmax + shared memory による Flash Attention v2 完了
 
 ---
 

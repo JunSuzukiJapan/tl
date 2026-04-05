@@ -684,13 +684,18 @@ impl CudaTensor {
 
     // ========== Phase C: 新規 NN 層 ==========
 
-    /// Linear (matmul + bias)
     pub fn linear_impl(
         &self,
         weight: &CudaTensor,
         bias: Option<&CudaTensor>,
     ) -> BackendResult<CudaTensor> {
-        let result = self.matmul_impl(weight)?;
+        let w_shape = weight.shape();
+        let wt = if w_shape.len() >= 2 {
+            weight.transpose_impl(w_shape.len() - 2, w_shape.len() - 1)?
+        } else {
+            weight.clone_data()?
+        };
+        let result = self.matmul_impl(&wt)?;
         if let Some(b) = bias {
             result.add_impl(b)
         } else {

@@ -115,9 +115,11 @@ fn test_from_slice_i64() {
 fn test_dtype_size_in_bytes() {
     assert_eq!(DType::F32.size_in_bytes(), 4);
     assert_eq!(DType::F16.size_in_bytes(), 2);
+    assert_eq!(DType::BF16.size_in_bytes(), 2);
     assert_eq!(DType::I32.size_in_bytes(), 4);
     assert_eq!(DType::I64.size_in_bytes(), 8);
     assert_eq!(DType::U8.size_in_bytes(), 1);
+    assert_eq!(DType::U32.size_in_bytes(), 4);
 }
 
 #[test]
@@ -131,8 +133,10 @@ fn test_dtype_equality() {
 fn test_shape_to_bytes() {
     assert_eq!(shape_to_bytes(&[2, 3], DType::F32), 24); // 6 * 4
     assert_eq!(shape_to_bytes(&[4], DType::F16), 8); // 4 * 2
+    assert_eq!(shape_to_bytes(&[4], DType::BF16), 8); // 4 * 2
     assert_eq!(shape_to_bytes(&[10], DType::I64), 80); // 10 * 8
     assert_eq!(shape_to_bytes(&[3, 3], DType::U8), 9); // 9 * 1
+    assert_eq!(shape_to_bytes(&[2, 2], DType::U32), 16); // 4 * 4
 }
 
 #[test]
@@ -334,4 +338,56 @@ fn test_zero_grad() {
         t.get_grad().is_none(),
         "Grad should be None after zero_grad"
     );
+}
+
+// =====================================================================
+// 8. F16 / BF16 Native Support Tests
+// =====================================================================
+
+#[test]
+#[serial]
+fn test_ones_f16_bf16() {
+    let t_f16 = CudaTensor::ones(&[2, 2], DType::F16);
+    assert_eq!(t_f16.shape(), &[2, 2]);
+    assert_eq!(t_f16.dtype(), DType::F16);
+    // f16 ones should be 0x3c00
+    let data_f16 = t_f16.to_vec::<u16>();
+    assert_eq!(data_f16.len(), 4);
+    assert!(data_f16.iter().all(|&x| x == 0x3c00));
+
+    let t_bf16 = CudaTensor::ones(&[3], DType::BF16);
+    assert_eq!(t_bf16.shape(), &[3]);
+    assert_eq!(t_bf16.dtype(), DType::BF16);
+    // bf16 ones should be 0x3f80
+    let data_bf16 = t_bf16.to_vec::<u16>();
+    assert_eq!(data_bf16.len(), 3);
+    assert!(data_bf16.iter().all(|&x| x == 0x3f80));
+}
+
+#[test]
+#[serial]
+fn test_randn_f16_bf16() {
+    let t_f16 = CudaTensor::randn(&[10], DType::F16);
+    assert_eq!(t_f16.shape(), &[10]);
+    assert_eq!(t_f16.dtype(), DType::F16);
+    let data_f16 = t_f16.to_vec::<u16>();
+    assert_eq!(data_f16.len(), 10);
+    
+    let t_bf16 = CudaTensor::randn(&[10], DType::BF16);
+    assert_eq!(t_bf16.shape(), &[10]);
+    assert_eq!(t_bf16.dtype(), DType::BF16);
+    let data_bf16 = t_bf16.to_vec::<u16>();
+    assert_eq!(data_bf16.len(), 10);
+}
+
+#[test]
+#[serial]
+fn test_randn_int_fallback() {
+    let t_i32 = CudaTensor::randn(&[5], DType::I32);
+    assert_eq!(t_i32.shape(), &[5]);
+    assert_eq!(t_i32.dtype(), DType::I32);
+    let data_i32 = t_i32.to_vec::<i32>();
+    assert_eq!(data_i32.len(), 5);
+    // randn for int should fallback to zeros safety without altering DType
+    assert!(data_i32.iter().all(|&x| x == 0));
 }

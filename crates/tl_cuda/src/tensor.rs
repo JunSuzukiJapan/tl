@@ -239,7 +239,22 @@ impl CudaTensor {
                 let data = vec![1.0f64; count];
                 Self::from_slice(&data, shape, dtype)
             }
-            _ => unimplemented!("ones for {:?}", dtype),
+            DType::U8 => {
+                let data = vec![1u8; count];
+                Self::from_slice(&data, shape, dtype)
+            }
+            DType::U32 => {
+                let data = vec![1u32; count];
+                Self::from_slice(&data, shape, dtype)
+            }
+            DType::F16 => {
+                let data = vec![half::f16::ONE; count];
+                Self::from_slice(&data, shape, dtype)
+            }
+            DType::BF16 => {
+                let data = vec![half::bf16::ONE; count];
+                Self::from_slice(&data, shape, dtype)
+            }
         }
     }
 
@@ -270,7 +285,35 @@ impl CudaTensor {
                     .collect();
                 Self::from_slice(&data, shape, dtype)
             }
-            _ => unimplemented!("randn for {:?}", dtype),
+            DType::F16 => {
+                let mut rng = rand::thread_rng();
+                let data: Vec<half::f16> = (0..count)
+                    .map(|_| {
+                        let u1: f32 = 1.0 - rng.gen::<f32>();
+                        let u2: f32 = rng.gen();
+                        let f = (-2.0 * u1.ln()).sqrt() * (2.0 * std::f32::consts::PI * u2).cos();
+                        half::f16::from_f32(f)
+                    })
+                    .collect();
+                Self::from_slice(&data, shape, dtype)
+            }
+            DType::BF16 => {
+                let mut rng = rand::thread_rng();
+                let data: Vec<half::bf16> = (0..count)
+                    .map(|_| {
+                        let u1: f32 = 1.0 - rng.gen::<f32>();
+                        let u2: f32 = rng.gen();
+                        let f = (-2.0 * u1.ln()).sqrt() * (2.0 * std::f32::consts::PI * u2).cos();
+                        half::bf16::from_f32(f)
+                    })
+                    .collect();
+                Self::from_slice(&data, shape, dtype)
+            }
+            DType::U8 | DType::U32 | DType::I32 | DType::I64 => {
+                let mut rng = rand::thread_rng();
+                eprintln!("Warning: randn for {:?} requested, mathematical normal distribution for integers is not well-defined. Returning zeros.", dtype);
+                Self::zeros(shape, dtype)
+            }
         }
     }
 
@@ -285,13 +328,7 @@ impl CudaTensor {
         }
 
         let t_size = std::mem::size_of::<T>();
-        let dtype_size = match self.dtype {
-            DType::F32 => 4,
-            DType::F64 => 8,
-            DType::I64 => 8,
-            DType::I32 => 4,
-            _ => t_size,
-        };
+        let dtype_size = self.dtype.size_in_bytes();
 
         if t_size == dtype_size {
             // 直接コピー（型サイズが一致）

@@ -11,7 +11,9 @@ fn to_backend_dtype(dtype: DType) -> BackendDType {
         DType::I64 => BackendDType::I64,
         DType::I32 => BackendDType::I32,
         DType::F16 => BackendDType::F16,
+        DType::BF16 => BackendDType::BF16,
         DType::U8 => BackendDType::U8,
+        DType::U32 => BackendDType::U32,
     }
 }
 
@@ -22,7 +24,9 @@ fn from_backend_dtype(dtype: BackendDType) -> DType {
         BackendDType::I64 => DType::I64,
         BackendDType::I32 => DType::I32,
         BackendDType::F16 => DType::F16,
+        BackendDType::BF16 => DType::BF16,
         BackendDType::U8 => DType::U8,
+        BackendDType::U32 => DType::U32,
         _ => DType::F32,
     }
 }
@@ -91,57 +95,26 @@ impl CudaTensor {
         if self.dtype == target {
             return self.clone_data();
         }
-        match (self.dtype, target) {
-            (DType::F32, DType::I64) => {
-                let data = self.to_vec::<f32>();
-                let i64_data: Vec<i64> = data.iter().map(|&x| x as i64).collect();
-                Ok(CudaTensor::from_slice(&i64_data, &self.shape, DType::I64))
-            }
-            (DType::I64, DType::F32) => {
-                let data = self.to_vec::<i64>();
-                let f32_data: Vec<f32> = data.iter().map(|&x| x as f32).collect();
-                Ok(CudaTensor::from_slice(&f32_data, &self.shape, DType::F32))
-            }
-            (DType::U8, DType::F32) => {
-                let data = self.to_vec::<u8>();
-                let f32_data: Vec<f32> = data.iter().map(|&x| x as f32).collect();
-                Ok(CudaTensor::from_slice(&f32_data, &self.shape, DType::F32))
-            }
-            (DType::U8, DType::I64) => {
-                let data = self.to_vec::<u8>();
-                let i64_data: Vec<i64> = data.iter().map(|&x| x as i64).collect();
-                Ok(CudaTensor::from_slice(&i64_data, &self.shape, DType::I64))
-            }
-            (DType::F32, DType::U8) => {
-                let data = self.to_vec::<f32>();
-                let u8_data: Vec<u8> = data.iter().map(|&x| x.clamp(0.0, 255.0) as u8).collect();
-                Ok(CudaTensor::from_slice(&u8_data, &self.shape, DType::U8))
-            }
-            (DType::F32, DType::F64) => {
-                let data = self.to_vec::<f32>();
-                let f64_data: Vec<f64> = data.iter().map(|&x| x as f64).collect();
-                Ok(CudaTensor::from_slice(&f64_data, &self.shape, DType::F64))
-            }
-            (DType::F64, DType::F32) => {
-                let data = self.to_vec::<f64>();
-                let f32_data: Vec<f32> = data.iter().map(|&x| x as f32).collect();
-                Ok(CudaTensor::from_slice(&f32_data, &self.shape, DType::F32))
-            }
-            (DType::F64, DType::I64) => {
-                let data = self.to_vec::<f64>();
-                let i64_data: Vec<i64> = data.iter().map(|&x| x as i64).collect();
-                Ok(CudaTensor::from_slice(&i64_data, &self.shape, DType::I64))
-            }
-            (DType::I64, DType::F64) => {
-                let data = self.to_vec::<i64>();
-                let f64_data: Vec<f64> = data.iter().map(|&x| x as f64).collect();
-                Ok(CudaTensor::from_slice(&f64_data, &self.shape, DType::F64))
-            }
-            _ => {
-                // その他: F32 経由で変換
-                let f32_data = self.to_vec::<f32>();
-                Ok(CudaTensor::from_slice(&f32_data, &self.shape, target))
-            }
+        let f32_data: Vec<f32> = match self.dtype {
+            DType::F32 => self.to_vec::<f32>(),
+            DType::F64 => self.to_vec::<f64>().into_iter().map(|x| x as f32).collect(),
+            DType::I64 => self.to_vec::<i64>().into_iter().map(|x| x as f32).collect(),
+            DType::I32 => self.to_vec::<i32>().into_iter().map(|x| x as f32).collect(),
+            DType::U8 => self.to_vec::<u8>().into_iter().map(|x| x as f32).collect(),
+            DType::U32 => self.to_vec::<u32>().into_iter().map(|x| x as f32).collect(),
+            DType::F16 => self.to_vec::<half::f16>().into_iter().map(|x| x.to_f32()).collect(),
+            DType::BF16 => self.to_vec::<half::bf16>().into_iter().map(|x| x.to_f32()).collect(),
+        };
+
+        match target {
+            DType::F32 => Ok(CudaTensor::from_slice(&f32_data, &self.shape, target)),
+            DType::F64 => Ok(CudaTensor::from_slice(&f32_data.into_iter().map(|x| x as f64).collect::<Vec<_>>(), &self.shape, target)),
+            DType::I64 => Ok(CudaTensor::from_slice(&f32_data.into_iter().map(|x| x as i64).collect::<Vec<_>>(), &self.shape, target)),
+            DType::I32 => Ok(CudaTensor::from_slice(&f32_data.into_iter().map(|x| x as i32).collect::<Vec<_>>(), &self.shape, target)),
+            DType::U8 => Ok(CudaTensor::from_slice(&f32_data.into_iter().map(|x| x.clamp(0.0, 255.0) as u8).collect::<Vec<_>>(), &self.shape, target)),
+            DType::U32 => Ok(CudaTensor::from_slice(&f32_data.into_iter().map(|x| x as u32).collect::<Vec<_>>(), &self.shape, target)),
+            DType::F16 => Ok(CudaTensor::from_slice(&f32_data.into_iter().map(|x| half::f16::from_f32(x)).collect::<Vec<_>>(), &self.shape, target)),
+            DType::BF16 => Ok(CudaTensor::from_slice(&f32_data.into_iter().map(|x| half::bf16::from_f32(x)).collect::<Vec<_>>(), &self.shape, target)),
         }
     }
 

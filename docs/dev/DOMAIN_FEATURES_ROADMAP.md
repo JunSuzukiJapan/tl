@@ -2,7 +2,7 @@
 
 > [!NOTE]
 > **全フェーズ完了 (2026-03)**
-> フェーズ 1〜8 の全項目が実装済み。CUDA バックエンドは stub (`unimplemented!()`) のみ残存。
+> フェーズ 1〜8 の全項目が実装済み。CUDA バックエンドは 実装済み。
 > このドキュメントは実装履歴の記録として保存。
 
 > [!CAUTION]
@@ -94,14 +94,14 @@ DOMAIN_FEATURES_ANALYSIS.md の分析結果に基づく実装計画。
 - [x] `masked_fill(mask, value)` — マスク付き値埋め
   - [x] tl_cpu: `masked_fill_impl`
   - [x] tl_metal: GPU kernel (condition ? value : original)
-  - [ ] tl_cuda: `masked_fill_impl`
+  - [x] tl_cuda: `masked_fill_impl`
   - [x] FFI + TypeManager登録
   - [x] テスト
 
 - [x] `to_dtype` / `to_f32` / `to_i64` — 型変換
   - [x] tl_cpu: 実装済み
   - [x] tl_metal: 実装済み
-  - [ ] tl_cuda: 未実装
+  - [x] tl_cuda: 実装済み
   - [x] FFI + TypeManager登録 (`to_f32`, `to_i64`)
   - [x] テスト
 
@@ -113,32 +113,32 @@ DOMAIN_FEATURES_ANALYSIS.md の分析結果に基づく実装計画。
 - [x] `std(dim?)` / `var(dim?)` — 標準偏差・分散
   - [x] tl_cpu: `var_impl`, `std_impl`
   - [x] tl_metal: GPU reduction (mean→差の二乗→mean)
-  - [ ] tl_cuda: 同上
+  - [x] tl_cuda: 同上
   - [x] FFI + TypeManager登録
   - [x] テスト
 
 ### 2.2 中優先度
 
 - [x] `logical_and` / `logical_or` / `logical_not` — 論理演算
-  - [x] CPU/Metal: element-wise kernel, CUDA unimplemented!()
+  - [x] CPU/Metal: element-wise kernel, CUDA 実装済み
   - [x] FFI + TypeManager登録
 
 - [x] `fill_(value)` — インプレース埋め込み
-  - [x] CPU/Metal 実装、CUDA unimplemented!()
+  - [x] CPU/Metal 実装、CUDA 実装済み
 
 - [x] `prod(dim?)` — 全要素の積
   - [x] CPU/Metal: reduction kernel (exp(sum(log)))
   - [x] FFI + TypeManager登録
 
 - [x] `cumsum(dim)` — 累積和
-  - [x] CPU/Metal: sequential scan, CUDA unimplemented!()
+  - [x] CPU/Metal: sequential scan, CUDA 実装済み
   - [x] FFI + TypeManager登録
 
 - [x] `norm(p, dim?)` — Lpノルム
-  - [x] CPU/Metal 実装, CUDA unimplemented!()
+  - [x] CPU/Metal 実装, CUDA 実装済み
 
 - [x] `topk(k, dim)` — 上位k個
-  - [x] CPU/Metal: partial sort, CUDA unimplemented!()
+  - [x] CPU/Metal: partial sort, CUDA 実装済み
   - [x] FFI + TypeManager登録
 
 ---
@@ -174,13 +174,13 @@ DOMAIN_FEATURES_ANALYSIS.md の分析結果に基づく実装計画。
 - [x] `layer_norm(normalized_shape, weight, bias, eps)` — LayerNorm
   - [x] tl_cpu/tl_metal: 既存実装を活用
   - [x] TypeManager登録 + compile関数
-  - [ ] tl_cuda: unimplemented!()
+  - [x] tl_cuda: 実装済み
   - [x] テスト: 使用可能（既存パイプライン経由）
 
 - [x] `batch_norm(weight, bias, running_mean, running_var, eps, training)` — BatchNorm
   - [x] tl_cpu: 実装済み（`tl_cpu_tensor_batch_norm`）
   - [x] tl_metal: バックエンドに実装パターンあり → TL API公開
-  - [ ] tl_cuda: 実装
+  - [x] tl_cuda: 実装済み
   - [x] FFI + TypeManager登録
   - [x] compile関数: `compile_tensor_batch_norm`
 
@@ -207,35 +207,35 @@ DOMAIN_FEATURES_ANALYSIS.md の分析結果に基づく実装計画。
   - [x] テスト: slope=0.01,0.1 確認済み
 
 - [x] `group_norm(num_groups, weight, bias, eps)` — GroupNorm
-  - [x] CPU/Metal 実装、CUDA stub
+  - [x] CPU/Metal 実装、CUDA 実装済み
 
 - [x] `adaptive_avg_pool2d(output_size)` — 適応的プーリング
-  - [x] CPU/Metal 実装、CUDA stub
+  - [x] CPU/Metal 実装、CUDA 実装済み
 
 - [x] `conv1d(weight, bias, stride, padding)` — 1D畳み込み
-  - [x] CPU/Metal 実装、CUDA stub
+  - [x] CPU/Metal 実装、CUDA 実装済み
 
 - [x] `conv_transpose2d(weight, bias, stride, padding, output_padding)` — 転置畳み込み
-  - [x] CPU/Metal 実装、CUDA stub
+  - [x] CPU/Metal 実装、CUDA 実装済み
 
 - [x] `interpolate(output_h, output_w, mode?)` — リサイズ
   - [x] CPU/Metal: nearest(mode=0) / bilinear(mode=1)
 
 - [x] `pad(padding, value?)` — パディング
-  - [x] CPU/Metal 実装、CUDA stub
+  - [x] CPU/Metal 実装、CUDA 実装済み
   - [x] テスト: pad(2,1)=[0,0,1,2,3,0]
 
 ### 4.4 低優先度（活性化関数）
 
 - [x] `elu(alpha?)` — ELU活性化
-  - [x] CPU/Metal 実装、CUDA stub
+  - [x] CPU/Metal 実装、CUDA 実装済み
 - [x] `mish()` — Mish活性化
-  - [x] CPU/Metal 実装、CUDA stub
+  - [x] CPU/Metal 実装、CUDA 実装済み
 - [x] `hardswish()` / `hardsigmoid()` — モバイル向け活性化
-  - [x] CPU/Metal 実装、CUDA stub
+  - [x] CPU/Metal 実装、CUDA 実装済み
   - [x] テスト: hardswish([-6,-3,0,3,6])=[-0,-0,0,3,6]
 - [x] `dropout2d(p, training)` — チャネル単位ドロップアウト
-  - [x] CPU/Metal 実装、CUDA stub
+  - [x] CPU/Metal 実装、CUDA 実装済み
 - [x] `instance_norm(...)` — InstanceNorm
   - [x] group_norm(num_groups=channels) として実装
 
@@ -339,7 +339,7 @@ DOMAIN_FEATURES_ANALYSIS.md の分析結果に基づく実装計画。
 
 - [x] `scaled_dot_product_attention(q, k, v, mask?)` — Fused Attention
   - [x] CPU/Metal: Q×K^T / √d + mask → softmax → ×V
-  - [x] CUDA stub
+  - [x] CUDA 実装済み
   - [x] FFI + TypeManager登録（Tensor.sdpa(q,k,v[,mask])）
 
 - [x] `top_k_sample(logits, k)` — Top-Kサンプリング
@@ -442,4 +442,4 @@ DOMAIN_FEATURES_ANALYSIS.md の分析結果に基づく実装計画。
 ```
 
 全フェーズの CPU/Metal 実装は 2026-03 に完了。
-CUDA は各フェーズで `unimplemented!()` stub を配置済み。
+CUDA は全フェーズで実装が完了しています。

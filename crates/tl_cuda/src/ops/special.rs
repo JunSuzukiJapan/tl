@@ -177,6 +177,7 @@ impl CudaTensor {
         let embed_dim = weight_shape[1];
         let seq_len = indices.elem_count();
 
+        let f32_indices = indices.to_dtype(DType::F32)?;
         let mut out_shape = indices.shape().to_vec();
         out_shape.push(embed_dim);
         let output = CudaTensor::zeros(&out_shape, DType::F32);
@@ -184,7 +185,7 @@ impl CudaTensor {
         unsafe {
             launch_embedding_f32_kernel(
                 self.buffer.ptr() as *const f32,
-                indices.buffer.ptr() as *const f32,
+                f32_indices.buffer.ptr() as *const f32,
                 output.buffer.ptr() as *mut f32,
                 seq_len as i32,
                 embed_dim as i32,
@@ -207,12 +208,14 @@ impl CudaTensor {
         let n = logits_shape[0];
         let c = logits_shape[1];
 
+        let f32_target = target.to_dtype(DType::F32)?;
+
         let losses = CudaTensor::uninit(&[n], DType::F32);
         let stream = crate::stream::get_stream().raw();
         unsafe {
             launch_cross_entropy_f32_kernel(
                 self.buffer.ptr() as *const f32,
-                target.buffer.ptr() as *const f32,
+                f32_target.buffer.ptr() as *const f32,
                 losses.buffer.ptr() as *mut f32,
                 n as i32,
                 c as i32,
@@ -295,6 +298,7 @@ impl CudaTensor {
         let inner: usize = shape[axis + 1..].iter().product::<usize>().max(1);
         let old_dim = shape[axis];
 
+        let f32_indices = indices.to_dtype(DType::F32)?;
         let mut out_shape = shape.clone();
         out_shape[axis] = n_idx;
         let output = CudaTensor::uninit(&out_shape, DType::F32);
@@ -302,7 +306,7 @@ impl CudaTensor {
         unsafe {
             launch_index_select_f32_kernel(
                 self.buffer.ptr() as *const f32,
-                indices.buffer.ptr() as *const f32,
+                f32_indices.buffer.ptr() as *const f32,
                 output.buffer.ptr() as *mut f32,
                 outer as i32,
                 inner as i32,
@@ -372,10 +376,11 @@ impl CudaTensor {
         let out_shape = vec![batch, num_classes];
         let output = CudaTensor::zeros(&out_shape, DType::F32);
 
+        let f32_self = self.to_dtype(DType::F32)?;
         let stream = crate::stream::get_stream().raw();
         unsafe {
             launch_one_hot_f32_kernel(
-                self.buffer.ptr() as *const f32,
+                f32_self.buffer.ptr() as *const f32,
                 output.buffer.ptr() as *mut f32,
                 batch as i32,
                 num_classes as i32,
@@ -397,11 +402,13 @@ impl CudaTensor {
         let out_shape = vec![vocab_size, embed_dim];
         let output = CudaTensor::zeros(&out_shape, DType::F32);
 
+        let f32_indices = indices.to_dtype(DType::F32)?;
+
         let stream = crate::stream::get_stream().raw();
         unsafe {
             launch_scatter_add_f32_kernel(
                 grad.buffer.ptr() as *const f32,
-                indices.buffer.ptr() as *const f32,
+                f32_indices.buffer.ptr() as *const f32,
                 output.buffer.ptr() as *mut f32,
                 seq_len as i32,
                 embed_dim as i32,

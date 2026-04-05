@@ -4097,6 +4097,7 @@ name = "tl_cuda"
 version = "0.4.7"
 dependencies = [
  "cc",
+ "half",
  "rand 0.8.5",
  "serial_test",
  "tl_backend",
