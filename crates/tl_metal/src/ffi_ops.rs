@@ -1155,7 +1155,8 @@ pub fn tl_metal_grad(t: *mut OpaqueTensor) -> *mut OpaqueTensor {
         let ptr = make_tensor(grad);
         ptr
     } else {
-        std::ptr::null_mut()
+        // フォールバック: ゼロテンソル (CPU と挙動を合わせる)
+        make_tensor(MetalTensor::zeros(tensor.shape(), crate::DType::F32))
     }
 }
 
