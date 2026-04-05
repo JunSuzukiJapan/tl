@@ -498,8 +498,11 @@ pub struct CrossEntropyBackward {
 }
 
 impl GradFn for CrossEntropyBackward {
-    fn backward(&self, _grad_output: &MetalTensor) -> BackendResult<Vec<MetalTensor>> {
-        unimplemented!("Metal implementation of CrossEntropyBackward is disabled per user request.");
+    fn backward(&self, grad_output: &MetalTensor) -> BackendResult<Vec<MetalTensor>> {
+        let logits = unsafe { &*self.logits.get() };
+        let labels = unsafe { &*self.labels.get() };
+        let grad = logits.cross_entropy_backward_impl(labels, grad_output)?;
+        Ok(vec![grad])
     }
     fn inputs(&self) -> Vec<TensorRef> {
         vec![self.logits.clone()]

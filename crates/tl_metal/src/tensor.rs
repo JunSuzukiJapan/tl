@@ -104,6 +104,17 @@ impl MetalTensor {
     /// スライスからテンソルを作成
     pub fn from_slice<T: Copy + std::fmt::Debug>(data: &[T], shape: &[usize], dtype: DType) -> Self {
         let tensor = Self::uninit(shape, dtype);
+        // T のバイトサイズと dtype のバイトサイズが一致することを確認
+        // （例: f64 リテラルを f32 バッファに書き込むバグを防止）
+        debug_assert_eq!(
+            std::mem::size_of::<T>() * data.len(),
+            shape_to_bytes(shape, dtype),
+            "from_slice: data byte size ({} * {} = {}) != buffer size ({}). \
+             Hint: use f32 suffix for float literals (e.g., &[1.0f32])",
+            std::mem::size_of::<T>(), data.len(),
+            std::mem::size_of::<T>() * data.len(),
+            shape_to_bytes(shape, dtype),
+        );
         let ptr = tensor.buffer.contents() as *mut T;
         unsafe {
             std::ptr::copy_nonoverlapping(data.as_ptr(), ptr, data.len());

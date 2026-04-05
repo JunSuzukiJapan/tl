@@ -53,6 +53,91 @@ kernel void cross_entropy_elementwise_f32(
     out[id] = -target[id] * log(pred[id] + 1e-7f);
 }
 
+// cross_entropy_backward: fused softmax + gradient computation
+// 各スレッドが1バッチ行を処理: grad[n,c] = (softmax(logits[n,c]) - one_hot(targets[n], c)) * grad_output / valid_count
+kernel void cross_entropy_backward_f32(
+    device const float* logits      [[buffer(0)]],  // [N, C]
+    device const float* targets     [[buffer(1)]],  // [N] integer indices
+    device const float* grad_output [[buffer(2)]],  // [1] scalar
+    device float*       grad_logits [[buffer(3)]],  // [N, C] output
+    constant uint&      num_classes [[buffer(4)]],
+    constant uint&      batch_size  [[buffer(5)]],
+    constant uint&      valid_count [[buffer(6)]],
+    uint row_id [[thread_position_in_grid]]
+) {
+    if (row_id >= batch_size) return;
+
+    uint offset = row_id * num_classes;
+    int target_idx = int(targets[row_id]);
+    float go = grad_output[0];
+
+    // ignore_index (target < 0): この行の gradient は全て 0
+    if (target_idx < 0) {
+        for (uint j = 0; j < num_classes; j++) {
+            grad_logits[offset + j] = 0.0f;
+        }
+        return;
+    }
+
+    // Softmax pass 1: 数値安定性のため max を求める
+    float max_val = logits[offset];
+    for (uint j = 1; j < num_classes; j++) {
+        max_val = max(max_val, logits[offset + j]);
+    }
+
+    // Softmax pass 2: exp の合計
+    float sum_exp = 0.0f;
+    for (uint j = 0; j < num_classes; j++) {
+        sum_exp += exp(logits[offset + j] - max_val);
+    }
+
+    // Gradient: (softmax - one_hot) * grad_output / valid_count
+    float inv_valid = go / float(valid_count);
+    for (uint j = 0; j < num_classes; j++) {
+        float softmax_val = exp(logits[offset + j] - max_val) / sum_exp;
+        float one_hot = (int(j) == target_idx) ? 1.0f : 0.0f;
+        grad_logits[offset + j] = (softmax_val - one_hot) * inv_valid;
+    }
+}
+
+// cross_entropy_forward: fused softmax + NLL loss
+// 各スレッドが1バッチ行を担当: out[n] = -log(softmax(logits[n, target[n]]))
+kernel void cross_entropy_forward_f32(
+    device const float* logits  [[buffer(0)]],  // [N, C]
+    device const float* targets [[buffer(1)]],  // [N] integer indices
+    device float*       losses  [[buffer(2)]],  // [N] per-sample loss
+    constant uint&      num_classes [[buffer(3)]],
+    constant uint&      batch_size  [[buffer(4)]],
+    uint row_id [[thread_position_in_grid]]
+) {
+    if (row_id >= batch_size) return;
+
+    uint offset = row_id * num_classes;
+    int target_idx = int(targets[row_id]);
+
+    // ignore_index (target < 0): loss = 0
+    if (target_idx < 0 || uint(target_idx) >= num_classes) {
+        losses[row_id] = 0.0f;
+        return;
+    }
+
+    // Softmax pass 1: max for numerical stability
+    float max_val = logits[offset];
+    for (uint j = 1; j < num_classes; j++) {
+        max_val = max(max_val, logits[offset + j]);
+    }
+
+    // Softmax pass 2: sum of exp
+    float sum_exp = 0.0f;
+    for (uint j = 0; j < num_classes; j++) {
+        sum_exp += exp(logits[offset + j] - max_val);
+    }
+
+    // NLL: -log(softmax[target])
+    float log_softmax = (logits[offset + uint(target_idx)] - max_val) - log(sum_exp);
+    losses[row_id] = -log_softmax;
+}
+
 // repeat_interleave: 要素を repeats 回繰り返す
 kernel void repeat_interleave_f32(
     device const float* input [[buffer(0)]],
@@ -112,6 +197,8 @@ static WHERE_PIPELINE: std::sync::OnceLock<Result<ComputePipelineState, String>>
 static TRIL_PIPELINE: std::sync::OnceLock<Result<ComputePipelineState, String>> = std::sync::OnceLock::new();
 #[allow(dead_code)]
 static CE_PIPELINE: std::sync::OnceLock<Result<ComputePipelineState, String>> = std::sync::OnceLock::new();
+static CE_FORWARD_PIPELINE: std::sync::OnceLock<Result<ComputePipelineState, String>> = std::sync::OnceLock::new();
+static CE_BACKWARD_PIPELINE: std::sync::OnceLock<Result<ComputePipelineState, String>> = std::sync::OnceLock::new();
 static REPEAT_PIPELINE: std::sync::OnceLock<Result<ComputePipelineState, String>> = std::sync::OnceLock::new();
 static INDEX_SEL_PIPELINE: std::sync::OnceLock<Result<ComputePipelineState, String>> = std::sync::OnceLock::new();
 
@@ -142,6 +229,14 @@ fn get_tril_pipeline() -> BackendResult<&'static ComputePipelineState> {
 #[allow(dead_code)]
 fn get_ce_pipeline() -> BackendResult<&'static ComputePipelineState> {
     CE_PIPELINE.get_or_init(|| compile_special_pipeline("cross_entropy_elementwise_f32"))
+        .as_ref().map_err(|e| BackendError::DeviceError(e.clone()))
+}
+fn get_ce_forward_pipeline() -> BackendResult<&'static ComputePipelineState> {
+    CE_FORWARD_PIPELINE.get_or_init(|| compile_special_pipeline("cross_entropy_forward_f32"))
+        .as_ref().map_err(|e| BackendError::DeviceError(e.clone()))
+}
+fn get_ce_backward_pipeline() -> BackendResult<&'static ComputePipelineState> {
+    CE_BACKWARD_PIPELINE.get_or_init(|| compile_special_pipeline("cross_entropy_backward_f32"))
         .as_ref().map_err(|e| BackendError::DeviceError(e.clone()))
 }
 fn get_repeat_pipeline() -> BackendResult<&'static ComputePipelineState> {
@@ -256,51 +351,117 @@ impl MetalTensor {
         Ok(result)
     }
 
-    /// cross_entropy — integer labels + softmax + NLL loss (CPU fallback)
+    /// cross_entropy — Metal GPU カーネル実装 (fused softmax + NLL loss)
     pub fn cross_entropy_impl(&self, target: &MetalTensor) -> BackendResult<MetalTensor> {
-        // logits: [N, C], target: [N] (integer class indices)
         let logits_shape = MetalTensor::shape(self);
-        let _target_shape = MetalTensor::shape(target);
-
-        let logits_data: Vec<f32> = self.to_vec();
-        let target_data: Vec<f32> = target.to_vec();
-
+        let batch_size = if logits_shape.len() >= 2 { logits_shape[0] } else { 1 };
         let num_classes = if logits_shape.len() >= 2 {
             *logits_shape.last().unwrap()
         } else {
-            logits_data.len()
+            self.elem_count()
         };
-        let batch_size = target_data.len();
 
-        // 1. Softmax (numerically stable)
-        let mut softmax_data = vec![0.0f32; logits_data.len()];
-        for i in 0..batch_size {
-            let start = i * num_classes;
-            let end = (start + num_classes).min(logits_data.len());
-            let row = &logits_data[start..end];
-            let max_val = row.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-            let mut sum_exp = 0.0f32;
-            for j in 0..row.len() {
-                softmax_data[start + j] = (row[j] - max_val).exp();
-                sum_exp += softmax_data[start + j];
+        // per-sample loss [N]
+        let losses = MetalTensor::uninit(&[batch_size], DType::F32);
+        let pipeline = get_ce_forward_pipeline()?;
+
+        let nc = num_classes as u32;
+        let bs = batch_size as u32;
+
+        let logits_buf = self.buffer() as *const metal::Buffer;
+        let targets_buf = target.buffer() as *const metal::Buffer;
+        let losses_buf = losses.buffer() as *const metal::Buffer;
+
+        crate::command_stream::stream_encode(|encoder| {
+            encoder.set_compute_pipeline_state(pipeline);
+            unsafe {
+                encoder.set_buffer(0, Some(&*logits_buf), 0);
+                encoder.set_buffer(1, Some(&*targets_buf), 0);
+                encoder.set_buffer(2, Some(&*losses_buf), 0);
             }
-            for j in 0..row.len() {
-                softmax_data[start + j] /= sum_exp;
+            encoder.set_bytes(3, 4, &nc as *const u32 as *const _);
+            encoder.set_bytes(4, 4, &bs as *const u32 as *const _);
+
+            let max_threads = pipeline.max_total_threads_per_threadgroup() as usize;
+            let threads = batch_size.min(max_threads);
+            let tpg = MTLSize::new(threads as u64, 1, 1);
+            let grid = MTLSize::new(
+                ((batch_size + threads - 1) / threads) as u64, 1, 1,
+            );
+            encoder.dispatch_thread_groups(grid, tpg);
+        });
+
+        // per-sample losses を直接読み出し → mean
+        // GPU カーネル完了を待つ
+        crate::command_stream::sync_stream();
+        let mut total = 0.0f32;
+        unsafe {
+            let ptr = losses.buffer().contents() as *const f32;
+            for i in 0..batch_size {
+                total += *ptr.add(i);
             }
         }
+        let mean_loss = total / batch_size as f32;
+        Ok(MetalTensor::from_slice(&[mean_loss], &[1], DType::F32))
+    }
 
-        // 2. NLL loss: -mean(log(softmax[target]))
-        let mut loss = 0.0f32;
-        for i in 0..batch_size {
-            let idx = target_data[i] as usize;
-            if idx < num_classes {
-                let p = softmax_data[i * num_classes + idx].max(1e-7);
-                loss -= p.ln();
+    /// cross_entropy_backward — Metal GPU カーネル実装
+    /// fused softmax + gradient: grad[n,c] = (softmax(logits[n,c]) - one_hot(targets[n], c)) * grad_output / valid_count
+    pub fn cross_entropy_backward_impl(
+        &self,
+        targets: &MetalTensor,
+        grad_output: &MetalTensor,
+    ) -> BackendResult<MetalTensor> {
+        let shape = MetalTensor::shape(self);
+        let batch_size = if shape.len() >= 2 { shape[0] } else { 1 };
+        let num_classes = if shape.len() >= 2 { shape[1] } else { shape[0] };
+
+        // valid_count を targets バッファから計算 (ignore_index=-1 を除外)
+        crate::command_stream::sync_stream();
+        let mut valid_count = 0u32;
+        unsafe {
+            let target_ptr = targets.buffer().contents() as *const f32;
+            for i in 0..batch_size {
+                if (*target_ptr.add(i) as i64) >= 0 {
+                    valid_count += 1;
+                }
             }
         }
-        loss /= batch_size as f32;
+        if valid_count == 0 { valid_count = 1; } // ゼロ除算防止
 
-        Ok(MetalTensor::from_slice(&[loss], &[1], DType::F32))
+        let result = MetalTensor::uninit(shape, MetalTensor::dtype(self));
+        let pipeline = get_ce_backward_pipeline()?;
+
+        let nc = num_classes as u32;
+        let bs = batch_size as u32;
+        let vc = valid_count;
+
+        let logits_buf = self.buffer() as *const metal::Buffer;
+        let targets_buf = targets.buffer() as *const metal::Buffer;
+        let go_buf = grad_output.buffer() as *const metal::Buffer;
+        let result_buf = result.buffer() as *const metal::Buffer;
+
+        crate::command_stream::stream_encode(|encoder| {
+            encoder.set_compute_pipeline_state(pipeline);
+            unsafe {
+                encoder.set_buffer(0, Some(&*logits_buf), 0);
+                encoder.set_buffer(1, Some(&*targets_buf), 0);
+                encoder.set_buffer(2, Some(&*go_buf), 0);
+                encoder.set_buffer(3, Some(&*result_buf), 0);
+            }
+            encoder.set_bytes(4, 4, &nc as *const u32 as *const _);
+            encoder.set_bytes(5, 4, &bs as *const u32 as *const _);
+            encoder.set_bytes(6, 4, &vc as *const u32 as *const _);
+
+            let max_threads = pipeline.max_total_threads_per_threadgroup() as usize;
+            let threads = batch_size.min(max_threads);
+            let tpg = MTLSize::new(threads as u64, 1, 1);
+            let grid = MTLSize::new(
+                ((batch_size + threads - 1) / threads) as u64, 1, 1,
+            );
+            encoder.dispatch_thread_groups(grid, tpg);
+        });
+        Ok(result)
     }
 
     /// repeat_interleave — Metal GPU シェーダー実装
