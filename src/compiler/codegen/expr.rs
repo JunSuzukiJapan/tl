@@ -1694,9 +1694,20 @@ impl<'ctx> CodeGenerator<'ctx> {
         self.current_time += 1;
         let prev_span = self.current_span.clone();
         self.current_span = Some(expr.span.clone());
-        let result = self.compile_expr_inner(expr);
+        let mut result = self.compile_expr_inner(expr)?;
+        
+        // V6.1: Dynamically concretize type leakage from semantics phase inside generic monomorphization.
+        if let Some(subst) = &self.current_method_generics {
+            eprintln!("[DEBUG] current_method_generics is SET! Subst count: {}", subst.len());
+            let orig_ty = result.1.clone();
+            result.1 = self.substitute_type_simple_bind(&result.1, subst);
+            if orig_ty != result.1 {
+                eprintln!("[DEBUG] Concretized: {:?} -> {:?}", orig_ty, result.1);
+            }
+        }
+        
         self.current_span = prev_span;
-        result
+        Ok(result)
     }
 
     pub(crate) fn compile_expr_inner(
@@ -1799,9 +1810,10 @@ impl<'ctx> CodeGenerator<'ctx> {
             ExprKind::EnumInit {
                 enum_name,
                 variant_name,
-                generics,
+                generics: original_generics,
                 payload,
             } => {
+                let generics: Vec<Type> = original_generics.iter().map(|ty| self.substitute_current_generics(ty)).collect();
                 // 0. specialized name handling
                 // Extract base name from mangled name (e.g., "Option_i64" -> "Option")
                 // and parse generics from mangled suffix if generics is empty
@@ -2222,12 +2234,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                 Err("ExprKind::Range should only appear in For loops".to_string())
             }
             ExprKind::As(expr, target_type) => {
+                let target_type = self.substitute_current_generics(target_type);
                 let (val, source_type) = self.compile_expr(expr)?;
-                if source_type == *target_type {
+                if source_type == target_type {
                     return Ok((val, source_type));
                 }
 
-                match (&source_type, target_type) {
+                match (&source_type, &target_type) {
                     (Type::I64, Type::F32) => {
                         let i = val.into_int_value();
                         let f = self
@@ -3096,19 +3109,35 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
             }
             ExprKind::StructInit(ty, fields) => {
+                 // Substitute with current method generics if available
+                 let ty = self.substitute_current_generics(ty);
+
                  // Normalize Path types to Struct/Enum
-                 let normalized_ty = self.normalize_type(ty);
-                 let (name, generics) = match &normalized_ty {
+                 let normalized_ty = self.normalize_type(&ty);
+                 let (name, mut generics) = match &normalized_ty {
                       Type::Struct(name, generics) => (name.clone(), generics.clone()),
                       Type::Enum(name, generics) => (name.clone(), generics.clone()), // Enums might use struct-init syntax?
                       _ => panic!("StructInit type must be Struct or Enum (after normalization), found {:?} (original: {:?})", normalized_ty, ty),
                  };
+                 
+                 // [CONTEXT INHERITANCE]
+                 if let Some(Some(raw_expected)) = self.expected_type_stack.last() {
+                     let expected = self.normalize_type(raw_expected);
+                     if let Some((exp_name, exp_args)) = expected.as_named_type() {
+                         if name == exp_name && generics.is_empty() && !exp_args.is_empty() {
+                             generics = exp_args.to_vec();
+                         }
+                     }
+                 }
+
                  self.compile_struct_init(&name, &generics, fields)
             },
-            ExprKind::StaticMethodCall(type_ty, method_name, args) => {
+            ExprKind::StaticMethodCall(original_type_ty, method_name, args) => {
+                let type_ty = self.substitute_current_generics(original_type_ty);
+                
                 if method_name == "sizeof" {
                      // For Enum types, we need to get the actual data struct size, not pointer size
-                     if let Type::Enum(enum_name, generics) = type_ty {
+                     if let Type::Enum(enum_name, generics) = &type_ty {
                          // Try direct lookup first, then mangled name if generics present
                          let lookup_name = if generics.is_empty() {
                              enum_name.clone()
@@ -3128,7 +3157,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                      }
                      
                      // For Struct types, also check if it's actually an enum (mangled name)
-                     if let Type::Struct(name, _) = type_ty {
+                     if let Type::Struct(name, _) = &type_ty {
                          if let Some(enum_struct_type) = self.enum_types.get(name) {
                              // It's actually an enum with a Struct type wrapper
                              let size_val = enum_struct_type.size_of().ok_or(format!("Enum type {} has no size", name))?;
@@ -3137,7 +3166,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                      }
                      
                      // Generic T already substituted by Monomorphizer
-                     let llvm_ty = self.get_llvm_type(type_ty).map_err(|e| e.to_string())?;
+                     let llvm_ty = self.get_llvm_type(&type_ty).map_err(|e| e.to_string())?;
                      let size_val = llvm_ty.size_of().ok_or(format!("Type {:?} has no size (ZST not supported)", type_ty))?;
                      // Cast to i64 if needed? IntValue is generic, but usually i64 for size_t on 64bit
                      // LLVM size_of returns integer type matching target's pointer width.
@@ -3146,7 +3175,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                  }
 
 
-                let struct_name = match type_ty {
+                let struct_name = match &type_ty {
                     Type::Struct(name, _) => name,
                     Type::Enum(name, _) => name,
                     Type::F32 => "F32",
@@ -4635,7 +4664,18 @@ impl<'ctx> CodeGenerator<'ctx> {
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
         // Normalize target_type to resolve Path types to Struct/Enum
         let normalized_target = self.normalize_type(target_type);
-        let target_type = &normalized_target;
+        let mut target_type = normalized_target.clone();
+
+        // [CONTEXT INHERITANCE] Inherit generic args from left-hand side if missing
+        if let Some(Some(raw_expected)) = self.expected_type_stack.last() {
+            let expected = self.normalize_type(raw_expected);
+            if let (Some((base, targs)), Some((exp_base, exp_args))) = (target_type.as_named_type(), expected.as_named_type()) {
+                if base == exp_base && targs.is_empty() && !exp_args.is_empty() {
+                    target_type = expected.clone();
+                }
+            }
+        }
+        let target_type = &target_type;
         
         // Compatibility aliases for existing logic
         let is_grad_tensor_call = struct_name == "GradTensor";
@@ -5966,6 +6006,14 @@ impl<'ctx> CodeGenerator<'ctx> {
     fn substitute_type_simple_bind(&self, ty: &Type, subst: &HashMap<String, Type>) -> Type {
         let substitutor = crate::compiler::ast_subst::TypeSubstitutor::new(subst.clone());
         substitutor.substitute_type(ty)
+    }
+
+    pub(crate) fn substitute_current_generics(&self, ty: &Type) -> Type {
+        if let Some(subst) = &self.current_method_generics {
+            self.substitute_type_simple_bind(ty, subst)
+        } else {
+            ty.clone()
+        }
     }
 
 /*

@@ -15,6 +15,10 @@ impl<'ctx> CodeGenerator<'ctx> {
         method_name: &str,
         generic_args: &[Type],
     ) -> Result<String, String> {
+        let args_str = format!("{:?}", generic_args);
+        if struct_name == "Vec" && method_name == "pop" && args_str.contains("K") {
+            panic!("Vec_pop_K_monomorphized!!");
+        }
 
         let impls = self.generic_impls.get(struct_name)
              .ok_or_else(|| format!("No generic impls found for struct {}", struct_name))?;
@@ -70,7 +74,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
 
         // Instantiate
-        let substitutor = TypeSubstitutor::new(subst_map);
+        let substitutor = TypeSubstitutor::new(subst_map.clone());
         let mut new_method = method.clone();
         new_method.name = mangled_name.clone(); 
         new_method.generics = vec![]; // Concrete
@@ -90,8 +94,20 @@ impl<'ctx> CodeGenerator<'ctx> {
             *ty = self.normalize_type(ty);
         }
         new_method.return_type = full_substitutor.substitute_type(&new_method.return_type);
+        new_method.return_type = full_substitutor.substitute_type(&new_method.return_type);
         new_method.return_type = self.normalize_type(&new_method.return_type);
-        new_method.body = new_method.body.iter().map(|s| full_substitutor.substitute_stmt(s)).collect();
+        new_method.body = new_method.body.iter().map(|s| {
+            let ns = full_substitutor.substitute_stmt(s);
+            if let crate::compiler::ast::StmtKind::Let { name, type_annotation, .. } = &s.inner {
+                 if name == "result" {
+                      println!("[MONO] var={} orig_ta={:?}", name, type_annotation);
+                      if let crate::compiler::ast::StmtKind::Let { type_annotation: n_ta, .. } = &ns.inner {
+                           println!("[MONO] var={} new_ta={:?} subst={:?}", name, n_ta, subst_map);
+                      }
+                 }
+            }
+            ns
+        }).collect();
         
         // Transform StaticMethodCall to EnumInit for enum variant constructors
 
@@ -105,7 +121,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         
         // NEW: If extern, we are done (declaration only). Otherwise compile body.
         if !new_method.is_extern {
-            self.pending_functions.push(new_method);
+            self.pending_functions.push((new_method, Some(subst_map)));
         }
         
         // Restore builder position
@@ -161,7 +177,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
         
         // 6. Instantiate
-        let substitutor = TypeSubstitutor::new(subst_map);
+        let substitutor = TypeSubstitutor::new(subst_map.clone());
         
         let mut new_func = func_def.clone();
         new_func.name = mangled_name.clone();
@@ -179,7 +195,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         // 7. Compile
         // Need to register proto first (for recursion support etc)
         self.compile_fn_proto(&new_func)?;
-        self.pending_functions.push(new_func);
+        self.pending_functions.push((new_func, Some(subst_map)));
         
         Ok(mangled_name)
     }
@@ -674,6 +690,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
             Type::Enum(_, inner_args) => inner_args.iter().any(|a| Self::is_unresolved_generic(a)),
             Type::UnifiedType { type_args, .. } => type_args.iter().any(|a| Self::is_unresolved_generic(a)),
+            Type::Tuple(types) => types.iter().any(|a| Self::is_unresolved_generic(a)),
             Type::Undefined(_) => true,
             _ => false,
         }
@@ -728,6 +745,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                     mangled_name: mangled,
                     is_enum: true,
                 }
+            }
+            Type::Tuple(types) => {
+                let unified_types: Vec<Type> = types.iter()
+                    .map(|t| self.to_unified_type_if_generic(t.clone()))
+                    .collect();
+                Type::Tuple(unified_types)
             }
             _ => ty,
         }
@@ -837,14 +860,14 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let normalized_args: Vec<Type> = args.iter().map(|a| self.normalize_type(a)).collect();
                 Type::Enum(name.clone(), normalized_args)
             }
-            Type::UnifiedType { base_name: _, type_args, mangled_name, is_enum } => {
-                // Flatten UnifiedType to Struct/Enum for legacy pattern matching compatibility.
-                // Use mangled_name as the name and preserve type_args.
+            Type::UnifiedType { base_name, type_args, mangled_name: _, is_enum } => {
+                // Flatten UnifiedType to Struct/Enum.
+                // Always use base_name so that generic matching works correctly.
                 let normalized_args: Vec<Type> = type_args.iter().map(|a| self.normalize_type(a)).collect();
                 if *is_enum {
-                    Type::Enum(mangled_name.clone(), normalized_args)
+                    Type::Enum(base_name.clone(), normalized_args)
                 } else {
-                    Type::Struct(mangled_name.clone(), normalized_args)
+                    Type::Struct(base_name.clone(), normalized_args)
                 }
             }
             Type::Tensor(inner, rank) => Type::Tensor(Box::new(self.normalize_type(inner)), *rank),

@@ -1664,12 +1664,23 @@ impl<'ctx> CodeGenerator<'ctx> {
                     }
                 }
 
-                let (mut val_ir, val_ty) = if let Some((r, t)) = dps_result {
+                let (mut val_ir, mut val_ty) = if let Some((r, t)) = dps_result {
                     (r, t)
                 } else {
                     // Standard expression compilation
-                    self.compile_expr(value)?
+                    let expected_subst = type_annotation.as_ref().map(|ty| self.substitute_current_generics(ty));
+                    self.expected_type_stack.push(expected_subst);
+                    let result = self.compile_expr(value);
+                    self.expected_type_stack.pop();
+                    result?
                 };
+                
+                let orig_val_ty = val_ty.clone();
+                val_ty = self.substitute_current_generics(&val_ty);
+                if matches!(orig_val_ty, Type::Tuple(_)) || matches!(orig_val_ty, Type::Tensor(_, _)) || matches!(orig_val_ty, Type::Struct(_, _)) {
+                     let func_name = self.builder.get_insert_block().and_then(|b| b.get_parent()).map(|f| f.get_name().to_string_lossy().into_owned()).unwrap_or_else(|| "unknown".to_string());
+                     println!("[DEBUG SUBSTITUTION] func={} orig={:?} after={:?} subst_map={:?}", func_name, orig_val_ty, val_ty, self.current_method_generics);
+                }
                 
                 // Ownership: Shared. The temporary (value) remains in scope and will be released at scope exit.
                 // The variable (name) acquires a NEW reference via deep_clone below.
@@ -1951,7 +1962,14 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // 1. Try to compile as Addressable L-Value
                 let lvalue_res = self.compile_lvalue_addr(lhs);
                 
-                let (val_ir, val_ty) = self.compile_expr(value)?;
+                if let Ok((_, ref lhs_type, _, _)) = lvalue_res {
+                    self.expected_type_stack.push(Some(lhs_type.clone()));
+                } else {
+                    self.expected_type_stack.push(None);
+                }
+                let compile_res = self.compile_expr(value);
+                self.expected_type_stack.pop();
+                let (val_ir, val_ty) = compile_res?;
 
                 if let Ok((Some(lhs_ptr), lhs_type, lhs_cleanup_mode, lhs_scope_name)) = lvalue_res {
                      // STANDARD ASSIGNMENT (Var or Field)
@@ -3582,10 +3600,14 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // (V5.1 の SRET RC 蓄積問題の根本解決)
                 let simple_name = mangled_name.as_str();
 
+                if simple_name == "K" || simple_name == "V" {
+                    panic!("EMIT_DEEP_CLONE_CALLED_ON_{}!!", simple_name);
+                }
+
                 let struct_def = self
                     .struct_defs
                     .get(simple_name)
-                    .ok_or(format!("Struct {} definition not found for deep clone", simple_name))?
+                    .ok_or_else(|| format!("Struct {} definition not found for deep clone! ty={:?}", simple_name, ty))?
                     .clone();
                 let st_llvm_ty = *self
                     .struct_types

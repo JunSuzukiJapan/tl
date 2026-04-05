@@ -1284,11 +1284,15 @@ impl Monomorphizer {
                  Type::Path(segments.clone(), new_args)
              },
              Type::Ptr(inner) => {
-             Type::Ptr(Box::new(self.substitute_type(inner, subst)))
-         },
-         Type::Array(inner, size) => {
-             Type::Array(Box::new(self.substitute_type(inner, subst)), *size)
-         },
+                 Type::Ptr(Box::new(self.substitute_type(inner, subst)))
+             },
+             Type::Array(inner, size) => {
+                 Type::Array(Box::new(self.substitute_type(inner, subst)), *size)
+             },
+             Type::Tuple(types) => {
+                 let new_types: Vec<Type> = types.iter().map(|t| self.substitute_type(t, subst)).collect();
+                 Type::Tuple(new_types)
+             },
 
              _ => ty.clone()
         }

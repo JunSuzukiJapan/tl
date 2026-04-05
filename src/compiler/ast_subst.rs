@@ -73,8 +73,13 @@ impl TypeSubstitutor {
                 }
             }
             Type::Ptr(inner) => Type::Ptr(Box::new(self.substitute_type(inner))),
+            Type::Array(inner, size) => Type::Array(Box::new(self.substitute_type(inner)), *size),
+            Type::Fn(args, ret) => {
+                let new_args = args.iter().map(|a| self.substitute_type(a)).collect();
+                let new_ret = Box::new(self.substitute_type(ret));
+                Type::Fn(new_args, new_ret)
+            }
             // Type::Ref(inner) => Type::Ref(Box::new(self.substitute_type(inner))), // REMOVED
-
 
             _ => ty.clone(),
         }
@@ -248,6 +253,49 @@ impl TypeSubstitutor {
                 }
             }
             
+            ExprKind::Closure { args, return_type, body, captures } => {
+                let new_args = args.iter().map(|(n, t)| (n.clone(), t.as_ref().map(|t| self.substitute_type(t)))).collect();
+                let new_rt = return_type.as_ref().map(|t| self.substitute_type(t));
+                let new_body = body.iter().map(|s| self.substitute_stmt(s)).collect();
+                let new_captures = captures.iter().map(|(n, t, m)| (n.clone(), self.substitute_type(t), *m)).collect();
+                ExprKind::Closure {
+                    args: new_args,
+                    return_type: new_rt,
+                    body: new_body,
+                    captures: new_captures,
+                }
+            }
+            ExprKind::TensorLiteral(exprs) => {
+                ExprKind::TensorLiteral(exprs.iter().map(|e| self.substitute_expr(e)).collect())
+            }
+            ExprKind::TensorConstLiteral(exprs) => {
+                ExprKind::TensorConstLiteral(exprs.iter().map(|e| self.substitute_expr(e)).collect())
+            }
+            ExprKind::Try(expr) => {
+                ExprKind::Try(Box::new(self.substitute_expr(expr)))
+            }
+            ExprKind::StaticConstAccess(ty, name) => {
+                ExprKind::StaticConstAccess(self.substitute_type(ty), name.clone())
+            }
+            ExprKind::TensorComprehension { indices, clauses, body } => {
+                let new_clauses = clauses.iter().map(|c| match c {
+                    crate::compiler::ast::ComprehensionClause::Generator { name, range } => {
+                        crate::compiler::ast::ComprehensionClause::Generator {
+                            name: name.clone(),
+                            range: self.substitute_expr(range),
+                        }
+                    }
+                    crate::compiler::ast::ComprehensionClause::Condition(cond) => {
+                        crate::compiler::ast::ComprehensionClause::Condition(self.substitute_expr(cond))
+                    }
+                }).collect();
+                let new_body = body.as_ref().map(|e| Box::new(self.substitute_expr(e)));
+                ExprKind::TensorComprehension {
+                    indices: indices.clone(),
+                    clauses: new_clauses,
+                    body: new_body,
+                }
+            }
             // For now, handle commonly used kinds. Extend as needed.
             _ => expr.inner.clone(),
         };
@@ -341,6 +389,10 @@ impl TypeSubstitutor {
                     init: new_init,
                 }
             }
+            StmtKind::Loop { body } => {
+                let new_body = body.iter().map(|s| self.substitute_stmt(s)).collect();
+                StmtKind::Loop { body: new_body }
+            }
             _ => stmt.inner.clone(),
         };
         
@@ -350,3 +402,82 @@ impl TypeSubstitutor {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn make_subst() -> TypeSubstitutor {
+        let mut map = HashMap::new();
+        map.insert("K".to_string(), Type::I64);
+        map.insert("V".to_string(), Type::String("String".to_string()));
+        TypeSubstitutor::new(map)
+    }
+
+    #[test]
+    fn test_substitute_closure_captures_and_args() {
+        let subst = make_subst();
+        let closure = Spanned::dummy(ExprKind::Closure {
+            args: vec![("x".to_string(), Some(Type::Struct("K".to_string(), vec![])))],
+            return_type: Some(Type::Struct("V".to_string(), vec![])),
+            body: vec![Spanned::dummy(StmtKind::Expr(Spanned::dummy(ExprKind::Variable("x".to_string()))))],
+            captures: vec![("cap".to_string(), Type::Struct("K".to_string(), vec![]), false)],
+        });
+
+        let substituted = subst.substitute_expr(&closure);
+        match &substituted.inner {
+            ExprKind::Closure { args, return_type, captures, .. } => {
+                assert_eq!(args[0].1, Some(Type::I64));
+                assert_eq!(*return_type, Some(Type::String("String".to_string())));
+                assert_eq!(captures[0].1, Type::I64);
+            }
+            _ => panic!("Expected Closure"),
+        }
+    }
+
+    #[test]
+    fn test_substitute_loop_body() {
+        let subst = make_subst();
+        let loop_stmt = Spanned::dummy(StmtKind::Loop {
+            body: vec![Spanned::dummy(StmtKind::Let {
+                name: "var".to_string(),
+                type_annotation: Some(Type::Struct("K".to_string(), vec![])),
+                value: Spanned::dummy(ExprKind::Variable("x".to_string())),
+                mutable: false,
+            })],
+        });
+
+        let substituted = subst.substitute_stmt(&loop_stmt);
+        match &substituted.inner {
+            StmtKind::Loop { body } => {
+                match &body[0].inner {
+                    StmtKind::Let { type_annotation, .. } => {
+                        assert_eq!(*type_annotation, Some(Type::I64));
+                    }
+                    _ => panic!("Expected Let inside Loop"),
+                }
+            }
+            _ => panic!("Expected Loop"),
+        }
+    }
+
+    #[test]
+    fn test_substitute_nested_types() {
+        let subst = make_subst();
+        
+        let array_ty = Type::Array(Box::new(Type::Struct("K".to_string(), vec![])), 10);
+        assert_eq!(subst.substitute_type(&array_ty), Type::Array(Box::new(Type::I64), 10));
+
+        let fn_ty = Type::Fn(
+            vec![Type::Struct("K".to_string(), vec![])],
+            Box::new(Type::Struct("V".to_string(), vec![]))
+        );
+        let expected_fn = Type::Fn(
+            vec![Type::I64],
+            Box::new(Type::String("String".to_string()))
+        );
+        assert_eq!(subst.substitute_type(&fn_ty), expected_fn);
+    }
+}
+

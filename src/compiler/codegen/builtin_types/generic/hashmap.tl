@@ -260,6 +260,25 @@ impl<K, V> HashMap<K, V> {
         result
     }
 
+    fn entries(self) -> Vec<(K, V)> {
+        let mut result: Vec<(K, V)> = Vec::new();
+        let mut i = 0;
+        let cap = self.entries.len();
+        while i < cap {
+            let entry = self.entries.get(i).unwrap();
+            match (entry) {
+                Entry<K, V>::Occupied(k, v) => {
+                    result.push((k, v));
+                },
+                Entry<K, V>::Empty => {},
+                Entry<K, V>::Deleted => {}
+            }
+            i = i + 1;
+        }
+        result
+    }
+
+
     fn clear(mut self) {
         let cap = self.entries.len();
         let mut i = 0;

@@ -225,4 +225,53 @@ mod tests {
             Type::Struct("Pair[i64][i64]".to_string(), vec![Type::I64, Type::I64])
         );
     }
+
+    #[test]
+    fn test_extract_args_deep_nesting() {
+        // 深いネストの引数を正確に第一階層のみ分割できるか
+        assert_eq!(
+            MANGLER.extract_args("HashMap[String][Vec[Option[i64]]]"),
+            vec!["String", "Vec[Option[i64]]"]
+        );
+        assert_eq!(
+            MANGLER.extract_args("Tuple[Array_f32][Map[k][v]]"),
+            vec!["Array_f32", "Map[k][v]"]
+        );
+    }
+
+    #[test]
+    fn test_extract_args_malformed() {
+        // 閉じ括弧がないなどの不正なフォーマットでもパニックせず処理するか
+        assert_eq!(MANGLER.extract_args("Vec[i64"), Vec::<&str>::new()); // 閉じ括弧がないのでトップレベルの引数として確定しない（実装に依存するが最低限パニックしないこと）
+        assert_eq!(MANGLER.extract_args("Veci64]"), Vec::<&str>::new());
+    }
+
+    #[test]
+    fn test_has_args_boundary() {
+        // 空の括弧
+        assert!(MANGLER.has_args("Vec[]"));
+        // 異なるデリミタ文字空間
+        assert!(!MANGLER.has_args("Array_f32"));
+    }
+
+    #[test]
+    fn test_parse_type_str_nested() {
+        let ty = MANGLER.parse_type_str("HashMap[String][Vec[i64]]");
+        match ty {
+            Type::Struct(name, inner) => {
+                assert_eq!(name, "HashMap[String][Vec[i64]]");
+                assert_eq!(inner.len(), 2);
+                assert_eq!(inner[0], Type::String("String".to_string()));
+                match &inner[1] {
+                    Type::Struct(n2, args2) => {
+                        assert_eq!(n2, "Vec[i64]");
+                        assert_eq!(args2.len(), 1);
+                        assert_eq!(args2[0], Type::I64);
+                    }
+                    _ => panic!("Expected Struct for inner type"),
+                }
+            }
+            _ => panic!("Expected Struct for root type"),
+        }
+    }
 }

@@ -32,4 +32,7 @@ fn main() {
     // values
     let vs = m.values();
     println("[values_len] {}", vs.len());
+
+    // entries
+    let es = m.entries();
 }
