@@ -4,7 +4,7 @@ fn test_thread_basic() {
         42
     });
     
-    let res = t.join();
+    let res = t.join().unwrap();
     if res == 42 {
         println("OK: Thread returned 42");
     } else {
