@@ -4038,10 +4038,20 @@ impl SemanticAnalyzer {
                 // Simple strict matching and inference
                 if left == right || self.are_types_compatible(&left, &right) {
                     let resolved_left = self.type_engine.resolve(left.clone());
+                    let resolved_right = self.type_engine.resolve(right.clone());
                     let final_result_ty = match op {
                         BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge => Type::Bool,
                         BinOp::And | BinOp::Or => Type::Bool,
-                        _ => resolved_left,
+                        _ => {
+                            let is_left_tensor = matches!(resolved_left, Type::Tensor(..) | Type::GradTensor(..)) || matches!(&resolved_left, Type::Struct(n, _) if n == "Tensor");
+                            let is_right_tensor = matches!(resolved_right, Type::Tensor(..) | Type::GradTensor(..)) || matches!(&resolved_right, Type::Struct(n, _) if n == "Tensor");
+                            
+                            if is_right_tensor && !is_left_tensor {
+                                resolved_right
+                            } else {
+                                resolved_left
+                            }
+                        }
                     };
                     Ok(final_result_ty)
                 } else {
