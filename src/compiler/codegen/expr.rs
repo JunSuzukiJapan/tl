@@ -4700,6 +4700,130 @@ impl<'ctx> CodeGenerator<'ctx> {
             return Ok((val, grad_ty));
         }
 
+        let is_thread_call = struct_name.starts_with("Thread") || type_name == "Thread";
+        if is_thread_call && method == "spawn" {
+            if args.len() != 1 {
+                return Err("Thread::spawn requires 1 argument (closure)".into());
+            }
+            
+            // Expected element type T
+            let inner_ty = if let Type::Struct(_, targs) = self.normalize_type(target_type) {
+                targs.first().cloned().unwrap_or(Type::I64)
+            } else {
+                Type::I64
+            };
+            
+            let (closure_val, closure_ty) = self.compile_expr(&args[0])?;
+            let closure_struct = closure_val.into_struct_value();
+            
+            let fn_ptr = self.builder.build_extract_value(closure_struct, 0, "fn_ptr").unwrap().into_pointer_value();
+            let env_ptr = self.builder.build_extract_value(closure_struct, 1, "env_ptr").unwrap().into_pointer_value();
+            
+            // To support arbitrary returning closures without ABI mismatch, we must generate a wrapper function
+            // that invokes fn_ptr(env_ptr), allocates memory using tl_alloc_tmp, stores the result, 
+            // and returns *mut c_void. BUT we can't easily dynamically invoke an unknown LLVM function pointer
+            // without knowing its exact LLVM signature in the trampoline!
+            // Wait, actually, fn_ptr IS statically known at this point if it's evaluated, but in TL closures
+            // are always `fn(*mut c_void) -> T`. We CAN create a trampoline because we know `T`'s LLVM Type!
+            
+            let llvm_ret_ty = self.get_llvm_type(&inner_ty)?;
+            let uses_sret = matches!(&inner_ty, Type::Struct(name, _) if name != "Tensor" && name != "String");
+            let closure_llvm_ty = if uses_sret {
+                // If it uses sret, the signature is `void (T*, i8*)`
+                self.context.void_type().fn_type(&[
+                    self.context.ptr_type(inkwell::AddressSpace::default()).into(),
+                    self.context.ptr_type(inkwell::AddressSpace::default()).into()
+                ], false)
+            } else {
+                llvm_ret_ty.fn_type(&[self.context.ptr_type(inkwell::AddressSpace::default()).into()], false)
+            };
+            
+            static mut TRAMPOLINE_ID: u64 = 0;
+            let tid = unsafe { TRAMPOLINE_ID += 1; TRAMPOLINE_ID };
+            let trampoline_name = format!("tl_thread_trampoline_{:x}", tid);
+            
+            let trampoline_sig = self.context.ptr_type(inkwell::AddressSpace::default()).fn_type(&[
+                self.context.ptr_type(inkwell::AddressSpace::default()).into()
+            ], false);
+            
+            let trampoline_fn = self.module.add_function(&trampoline_name, trampoline_sig, None);
+            let prev_bb = self.builder.get_insert_block().unwrap();
+            
+            let basic_block = self.context.append_basic_block(trampoline_fn, "entry");
+            self.builder.position_at_end(basic_block);
+            
+            let env_param = trampoline_fn.get_first_param().unwrap().into_pointer_value();
+            
+            // Re-cast fn_ptr inside trampoline? We don't have fn_ptr inside trampoline because it's dynamic!
+            // Ah! We must pass BOTH fn_ptr and env_ptr to the trampoline.
+            // But tl_thread_spawn only takes `env_ptr`.
+            // We can allocate a `{ fn_ptr, env_ptr }` bundle on the heap, and pass THAT as env_ptr!
+            let bundle_ty = self.context.struct_type(&[
+                self.context.ptr_type(inkwell::AddressSpace::default()).into(),
+                self.context.ptr_type(inkwell::AddressSpace::default()).into()
+            ], false);
+            
+            let ext_env_param = self.builder.build_pointer_cast(env_param, self.context.ptr_type(inkwell::AddressSpace::default()), "bundle_ptr").unwrap();
+            let dyn_fn_ptr = self.builder.build_load(self.context.ptr_type(inkwell::AddressSpace::default()), self.builder.build_struct_gep(bundle_ty, ext_env_param, 0, "").unwrap(), "dyn_fn").unwrap().into_pointer_value();
+            let dyn_env_ptr = self.builder.build_load(self.context.ptr_type(inkwell::AddressSpace::default()), self.builder.build_struct_gep(bundle_ty, ext_env_param, 1, "").unwrap(), "dyn_env").unwrap().into_pointer_value();
+            
+            // free the bundle
+            let free_tmp_fn = self.module.get_function("tl_free_tmp").unwrap();
+            self.builder.build_call(free_tmp_fn, &[ext_env_param.into()], "").unwrap();
+            
+            let size = if llvm_ret_ty.is_sized() { llvm_ret_ty.size_of().unwrap() } else { self.context.i64_type().const_zero() };
+            let size_i64 = if size.get_type() == self.context.i32_type() { self.builder.build_int_z_extend(size, self.context.i64_type(), "").unwrap() } else { size };
+            let alloc_tmp_fn = self.module.get_function("tl_alloc_tmp").unwrap();
+            let call_buf = self.builder.build_call(alloc_tmp_fn, &[size_i64.into()], "buf").unwrap();
+            let buf_ptr = match call_buf.try_as_basic_value() {
+                inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
+                _ => return Err("tl_alloc_tmp returned void".into()),
+            };
+            let typed_buf = self.builder.build_pointer_cast(buf_ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "typed_buf").unwrap();
+            
+            if uses_sret {
+                self.builder.build_indirect_call(closure_llvm_ty, dyn_fn_ptr, &[typed_buf.into(), dyn_env_ptr.into()], "call").unwrap();
+            } else {
+                let call_ret = self.builder.build_indirect_call(closure_llvm_ty, dyn_fn_ptr, &[dyn_env_ptr.into()], "call").unwrap();
+                let ret_val = match call_ret.try_as_basic_value() {
+                    inkwell::values::ValueKind::Basic(v) => v,
+                    _ => return Err("closure returned void unexpectedly".into()),
+                };
+                self.builder.build_store(typed_buf, ret_val).unwrap();
+            }
+            // Return heap buffer
+            self.builder.build_return(Some(&buf_ptr)).unwrap();
+            
+            // Restore builder
+            self.builder.position_at_end(prev_bb);
+            
+            // Prepare bundle to send
+            let bundle_size = bundle_ty.size_of().unwrap();
+            let bundle_size_i64 = if bundle_size.get_type() == self.context.i32_type() { self.builder.build_int_z_extend(bundle_size, self.context.i64_type(), "").unwrap() } else { bundle_size };
+            let call_bundle = self.builder.build_call(alloc_tmp_fn, &[bundle_size_i64.into()], "bundle").unwrap();
+            let bundle_raw = match call_bundle.try_as_basic_value() {
+                inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
+                _ => return Err("tl_alloc_tmp returned void".into()),
+            };
+            let bundle_typed = self.builder.build_pointer_cast(bundle_raw, self.context.ptr_type(inkwell::AddressSpace::default()), "bundle_typed").unwrap();
+            self.builder.build_store(self.builder.build_struct_gep(bundle_ty, bundle_typed, 0, "").unwrap(), fn_ptr).unwrap();
+            self.builder.build_store(self.builder.build_struct_gep(bundle_ty, bundle_typed, 1, "").unwrap(), env_ptr).unwrap();
+            
+            let spawn_fn = self.module.get_function("tl_thread_spawn").unwrap();
+            let call = self.builder.build_call(spawn_fn, &[trampoline_fn.as_global_value().as_pointer_value().into(), bundle_raw.into()], "spawn").unwrap();
+            let thread_id = match call.try_as_basic_value() {
+                inkwell::values::ValueKind::Basic(v) => v,
+                _ => return Err("tl_thread_spawn returned void".into()),
+            };
+            
+            let t_name = if let Type::Struct(name, _) = self.normalize_type(target_type) { name } else { "Thread".to_string() };
+            let t_struct_ty = self.context.struct_type(&[self.context.i64_type().into()], false);
+            let ret_ptr = self.builder.build_alloca(t_struct_ty, "thread_struct").unwrap();
+            self.builder.build_store(self.builder.build_struct_gep(t_struct_ty, ret_ptr, 0, "").unwrap(), thread_id).unwrap();
+            
+            return Ok((ret_ptr.into(), Type::Struct(t_name, vec![inner_ty])));
+        }
+
         let is_mutex_call = struct_name.starts_with("Mutex") || type_name == "Mutex";
         if is_mutex_call && method == "new" {
             if args.len() != 1 {
@@ -6357,13 +6481,16 @@ impl<'ctx> CodeGenerator<'ctx> {
         let closure_methods = ["map", "filter", "any", "all", "and_then", "unwrap_or_else", "map_err", "reduce", "read", "modify"];
         if closure_methods.contains(&method) && args.len() == 1 {
             if let ExprKind::Closure { args: closure_args, body, .. } = &args[0].inner {
-                // Get element type from the closure argument's type annotation
-                let elem_ty = closure_args.first()
-                    .and_then(|(_, ty_opt)| ty_opt.clone())
-                    .ok_or_else(|| "Closure argument missing type annotation and could not be inferred for dynamic collection method".to_string())?;
-
                 // Now compile the object expression to get obj_val
                 let (obj_val, obj_ty) = self.compile_expr(obj)?;
+
+                // Extract elem_ty from obj_ty's type_args (first generic parameter, except for map_err which uses the second), or fallback to closure argument type
+                let elem_ty_opt = if method == "map_err" {
+                    obj_ty.as_named_type().and_then(|(_, args)| args.get(1).cloned())
+                } else {
+                    obj_ty.as_named_type().and_then(|(_, args)| args.first().cloned())
+                }.or_else(|| closure_args.first().and_then(|(_, ty_opt)| ty_opt.clone()));
+                let elem_ty = elem_ty_opt.ok_or_else(|| "Could not determine element type for dynamic collection method".to_string())?;
 
                 // Dispatch: Option vs Result vs Vec vs Mutex
                 let (is_option, is_result, is_mutex) = match &obj_ty {
@@ -6416,6 +6543,109 @@ impl<'ctx> CodeGenerator<'ctx> {
             };
             if is_vec {
                 return self.compile_vec_join(obj_val, &obj_ty, args);
+            }
+        }
+        
+        // === Thread.join() -> Result<T, String> ===
+        if method == "join" && args.len() == 0 {
+            let is_thread = match &obj_ty {
+                Type::Struct(name, _) => {
+                    let base = mangle_base_name(name);
+                    base == "Thread"
+                }
+                _ => false,
+            };
+            if is_thread {
+                let inner_ty = if let Type::Struct(_, targs) = &obj_ty {
+                    targs.first().cloned().unwrap_or(Type::I64)
+                } else {
+                    Type::I64
+                };
+                
+                let t_struct_ty = self.context.struct_type(&[self.context.i64_type().into()], false);
+                let ptr = if obj_val.is_pointer_value() {
+                    obj_val.into_pointer_value()
+                } else {
+                    return Err("Thread obj is not pointer".into());
+                };
+                let id_val = self.builder.build_load(self.context.i64_type(), self.builder.build_struct_gep(t_struct_ty, ptr, 0, "").unwrap(), "id").unwrap();
+                
+                let join_fn = self.module.get_function("tl_thread_join").unwrap();
+                let call = self.builder.build_call(join_fn, &[id_val.into()], "join_ret").unwrap();
+                let raw_ptr = match call.try_as_basic_value() {
+                    inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
+                    _ => return Err("tl_thread_join returned void".into()),
+                };
+                
+                // Check if raw_ptr is Null
+                let is_null = self.builder.build_is_null(raw_ptr, "is_null").unwrap();
+                
+                let res_ty = Type::Enum("Result".to_string(), vec![inner_ty.clone(), Type::String("String".to_string())]);
+                let llvm_res_ty = self.get_llvm_type(&res_ty)?;
+                let res_alloc = self.builder.build_alloca(llvm_res_ty, "res_alloc").unwrap();
+                
+                let ok_bb = self.context.append_basic_block(self.builder.get_insert_block().unwrap().get_parent().unwrap(), "join_ok");
+                let err_bb = self.context.append_basic_block(self.builder.get_insert_block().unwrap().get_parent().unwrap(), "join_err");
+                let cont_bb = self.context.append_basic_block(self.builder.get_insert_block().unwrap().get_parent().unwrap(), "join_cont");
+                
+                self.builder.build_conditional_branch(is_null, err_bb, ok_bb).unwrap();
+                
+                // OK block
+                self.builder.position_at_end(ok_bb);
+                let typed_ptr = self.builder.build_pointer_cast(raw_ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "typed").unwrap();
+                let llvm_inner_ty = self.get_llvm_type(&inner_ty)?;
+                // if it uses sret, or if it is directly loaded:
+                let loaded = if matches!(inner_ty, Type::Tensor(_, _) | Type::Struct(_, _) | Type::Tuple(_) | Type::String(_)) {
+                    self.builder.build_load(llvm_inner_ty, typed_ptr, "inner_val").unwrap()
+                } else {
+                    self.builder.build_load(llvm_inner_ty, typed_ptr, "inner_val").unwrap()
+                };
+                
+                let res_mangled = self.mangle_type_name("Result", &[inner_ty.clone(), Type::String("String".to_string())]);
+                // Recompile enum definition just in case it's not present
+                let enum_ty = if let Some(ty) = self.enum_types.get(&res_mangled) { 
+                    *ty 
+                } else { 
+                    self.monomorphize_enum("Result", &[inner_ty.clone(), Type::String("String".to_string())]).unwrap();
+                    let specialized_def = self.enum_defs.get(&res_mangled).unwrap().clone();
+                    self.compile_enum_defs(&[specialized_def]).unwrap();
+                    *self.enum_types.get(&res_mangled).unwrap()
+                };
+                let malloc_fn = self.module.get_function("malloc").unwrap();
+                let size_ptr = unsafe { self.builder.build_gep(enum_ty, self.context.ptr_type(inkwell::AddressSpace::default()).const_null(), &[self.context.i64_type().const_int(1, false)], "").unwrap() };
+                let size = self.builder.build_ptr_to_int(size_ptr, self.context.i64_type(), "").unwrap();
+                let call_ok = self.builder.build_call(malloc_fn, &[size.into()], "res_ok").unwrap();
+                let ok_ptr = match call_ok.try_as_basic_value() { inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(), _ => return Err("malloc void".into()), };
+                self.builder.build_store(self.builder.build_struct_gep(enum_ty, ok_ptr, 0, "").unwrap(), self.context.i32_type().const_int(0, false)).unwrap();
+                let payload_ok = self.builder.build_pointer_cast(self.builder.build_struct_gep(enum_ty, ok_ptr, 1, "").unwrap(), self.context.ptr_type(inkwell::AddressSpace::default()), "").unwrap();
+                let variant_ok_ty = self.context.struct_type(&[llvm_inner_ty], false);
+                self.builder.build_store(self.builder.build_struct_gep(variant_ok_ty, payload_ok, 0, "").unwrap(), loaded).unwrap();
+                
+                self.builder.build_store(res_alloc, ok_ptr).unwrap();
+                
+                let free_tmp_fn = self.module.get_function("tl_free_tmp").unwrap();
+                self.builder.build_call(free_tmp_fn, &[raw_ptr.into()], "").unwrap();
+                self.builder.build_unconditional_branch(cont_bb).unwrap();
+                
+                // ERR block
+                self.builder.position_at_end(err_bb);
+                let err_msg = "Thread panicked: joined null pointer".to_string();
+                let msg_str = self.compile_string_literal(&err_msg).unwrap();
+                
+                let call_err = self.builder.build_call(malloc_fn, &[size.into()], "res_err").unwrap();
+                let err_ptr = match call_err.try_as_basic_value() { inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(), _ => return Err("malloc void".into()), };
+                self.builder.build_store(self.builder.build_struct_gep(enum_ty, err_ptr, 0, "").unwrap(), self.context.i32_type().const_int(1, false)).unwrap();
+                let payload_err = self.builder.build_pointer_cast(self.builder.build_struct_gep(enum_ty, err_ptr, 1, "").unwrap(), self.context.ptr_type(inkwell::AddressSpace::default()), "").unwrap();
+                let variant_err_ty = self.context.struct_type(&[self.get_llvm_type(&Type::String("String".to_string()))?], false);
+                self.builder.build_store(self.builder.build_struct_gep(variant_err_ty, payload_err, 0, "").unwrap(), msg_str.0).unwrap();
+                
+                self.builder.build_store(res_alloc, err_ptr).unwrap();
+                self.builder.build_unconditional_branch(cont_bb).unwrap();
+                
+                // CONT block
+                self.builder.position_at_end(cont_bb);
+                let final_res = self.builder.build_load(llvm_res_ty, res_alloc, "final_res").unwrap();
+                return Ok((final_res, res_ty));
             }
         }
 
@@ -8044,8 +8274,10 @@ impl<'ctx> CodeGenerator<'ctx> {
         let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
 
         // Get the Option enum type from enum_types registry
-        let opt_type_name = opt_ty.codegen_name()
-            .ok_or_else(|| "Cannot get Option codegen name".to_string())?;
+        let opt_type_name = match opt_ty {
+            Type::Enum(name, args) if !args.is_empty() => self.mangle_type_name(name, &args),
+            _ => opt_ty.codegen_name().ok_or_else(|| "Cannot get Option codegen name".to_string())?
+        };
         let enum_ty = *self.enum_types.get(&opt_type_name)
             .ok_or_else(|| format!("Option enum type {} not found", opt_type_name))?;
         let opt_ptr = opt_val.into_pointer_value();
@@ -8292,8 +8524,10 @@ impl<'ctx> CodeGenerator<'ctx> {
         let i64_type = self.context.i64_type();
         let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
 
-        let result_type_name = result_ty.codegen_name()
-            .ok_or_else(|| "Cannot get Result codegen name".to_string())?;
+        let result_type_name = match result_ty {
+            Type::Enum(name, args) if !args.is_empty() => self.mangle_type_name(name, &args),
+            _ => result_ty.codegen_name().ok_or_else(|| "Cannot get Result codegen name".to_string())?
+        };
         let enum_ty = *self.enum_types.get(&result_type_name)
             .ok_or_else(|| format!("Result enum type {} not found", result_type_name))?;
         let result_ptr = result_val.into_pointer_value();

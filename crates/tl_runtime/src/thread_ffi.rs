@@ -3,14 +3,20 @@ use std::os::raw::c_void;
 use std::sync::Mutex;
 use once_cell::sync::Lazy;
 
+/// A wrapper to securely send a dynamically allocated pointer across OS threads.
+#[derive(Debug, Clone, Copy)]
+pub struct SendablePtr(pub *mut c_void);
+unsafe impl Send for SendablePtr {}
+unsafe impl Sync for SendablePtr {}
+
 /// A global registry to hold JoinHandles of spawned threads.
-static THREAD_REGISTRY: Lazy<Mutex<HashMap<i64, std::thread::JoinHandle<i64>>>> = Lazy::new(|| {
+static THREAD_REGISTRY: Lazy<Mutex<HashMap<i64, std::thread::JoinHandle<SendablePtr>>>> = Lazy::new(|| {
     Mutex::new(HashMap::new())
 });
 static NEXT_THREAD_ID: Lazy<Mutex<i64>> = Lazy::new(|| Mutex::new(1));
 
-/// The signature of a JIT-compiled closure function in TL
-type ThreadFn = extern "C" fn(*mut c_void) -> i64;
+/// The signature of a JIT-compiled closure function in TL (Returns heap allocated return buffer ptr)
+type ThreadFn = extern "C" fn(*mut c_void) -> *mut c_void;
 
 /// @ffi_sig (ThreadFn, *mut c_void) -> i64
 /// Spawns a new OS background thread.
@@ -25,13 +31,6 @@ pub extern "C" fn tl_thread_spawn(fn_ptr: ThreadFn, env_ptr: *mut c_void) -> i64
         current_id
     };
 
-    // Note: The JIT engine function pointers are essentially static.
-    // The environment pointer (env_ptr) must trace back to safe memory (ARC/Arena).
-    // The compiler MUST ensure the closure is Send-safe.
-    
-    // Safety: we transmute the lifetime of the extern "C" function to 'static 
-    // because JIT code usually lives until the ExecutionEngine is destroyed.
-    // Also env_ptr needs to be raw-sent to the new thread.
     let fn_ptr_send = fn_ptr as usize;
     let env_ptr_send = env_ptr as usize;
 
@@ -39,7 +38,8 @@ pub extern "C" fn tl_thread_spawn(fn_ptr: ThreadFn, env_ptr: *mut c_void) -> i64
         let f: ThreadFn = unsafe { std::mem::transmute(fn_ptr_send) };
         let env = env_ptr_send as *mut c_void;
         // Invoke the TL function inside the new thread!
-        f(env)
+        let result_ptr = f(env);
+        SendablePtr(result_ptr)
     });
 
     // Store handle in registry
@@ -49,11 +49,11 @@ pub extern "C" fn tl_thread_spawn(fn_ptr: ThreadFn, env_ptr: *mut c_void) -> i64
     id
 }
 
-/// @ffi_sig (i64) -> i64
-/// Joins the thread by its ID and returns the result (i64).
-/// Returns -1 or appropriate error fallback if joining fails.
+/// @ffi_sig (i64) -> void*
+/// Joins the thread by its ID and returns the result pointer.
+/// Returns null pointer if joining fails (e.g. panic).
 #[unsafe(no_mangle)]
-pub extern "C" fn tl_thread_join(id: i64) -> i64 {
+pub extern "C" fn tl_thread_join(id: i64) -> *mut c_void {
     let handle_opt = {
         let mut registry = THREAD_REGISTRY.lock().unwrap();
         registry.remove(&id)
@@ -61,14 +61,14 @@ pub extern "C" fn tl_thread_join(id: i64) -> i64 {
 
     if let Some(handle) = handle_opt {
         match handle.join() {
-            Ok(res) => res,
+            Ok(res) => res.0,
             Err(e) => {
                 eprintln!("[Thread Error] Panicked during thread execution: {:?}", e);
-                -1
+                std::ptr::null_mut()
             }
         }
     } else {
         // Handle gracefully if invalid ID
-        -1
+        std::ptr::null_mut()
     }
 }

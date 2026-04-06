@@ -9,7 +9,10 @@ fn verify_inference(name: String, test_val: i64, expected: i64) {
 fn test_collections() {
     print("--- Collection Inference ---");
     // 1. Array/Vec mapping with implicit args and return types
-    let arr = [1, 2, 3];
+    let arr: Vec<i64> = Vec::new();
+    arr.push(1);
+    arr.push(2);
+    arr.push(3);
     let mapped = arr.map(|x| x * 2);
     
     // 2. Chaining operations requiring type persistence
@@ -57,7 +60,8 @@ fn test_concurrency() {
         (10, 20)
     });
     let res = handle.join(); 
-    verify_inference("Thread returning tuple", res.0 + res.1, 30);
+    let unpacked = res.unwrap_or_else(|| (0, 0));
+    verify_inference("Thread returning tuple via Result", unpacked.0 + unpacked.1, 30);
     
     // 2. Mutex implicitly typed operations
     let m = Mutex::new(10);

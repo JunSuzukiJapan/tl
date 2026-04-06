@@ -20,7 +20,6 @@ pub use non_generic::llm;
 pub use non_generic::tensor;
 pub use non_generic::param;
 pub use non_generic::regex;
-pub use non_generic::thread;
 
 use crate::compiler::codegen::CodeGenerator;
 
@@ -130,7 +129,7 @@ pub fn load_all_builtins(codegen: &mut CodeGenerator) {
     io::register_io_types(&mut codegen.type_manager);
     system::register_system_types(&mut codegen.type_manager);
     non_generic::regex::register_regex_types(&mut codegen.type_manager);
-    non_generic::thread::register_thread_types(&mut codegen.type_manager);
+    // Thread is now fully generic and natively evaluated in expr.rs
     // Register LLM Structs (from source)
     let llm_data = llm::load_llm_data();
     for def in llm_data.extra_structs {

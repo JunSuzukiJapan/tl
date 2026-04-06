@@ -3478,7 +3478,7 @@ pub fn declare_runtime_functions<'ctx>(
         execution_engine.add_global_mapping(&f, runtime::stdlib::tl_thread_spawn as *const () as usize);
     }
     
-    let fn_thread_join_type = i64_type.fn_type(&[i64_type.into()], false);
+    let fn_thread_join_type = ptr_type.fn_type(&[i64_type.into()], false);
     add_fn("tl_thread_join", fn_thread_join_type);
     if let Some(f) = module.get_function("tl_thread_join") {
         execution_engine.add_global_mapping(&f, runtime::stdlib::tl_thread_join as *const () as usize);

@@ -4,6 +4,7 @@ use crate::compiler::error::{SemanticErrorKind, Span, TlError};
 // use crate::compiler::type_registry::{TypeRegistry, ParamType, ReturnType, MethodSignature};
 use std::collections::{HashMap, HashSet};
 use thiserror::Error;
+use crate::compiler::type_engine::TypeEngine;
 
 #[derive(Error, Debug)]
 pub enum SemanticError {
@@ -235,8 +236,8 @@ pub struct SemanticAnalyzer {
     // Type Registry for Builtins
     type_manager: TypeManager,
 
-    // Type Inference Map (Undefined ID -> Concrete Type)
-    inference_map: HashMap<u64, Type>,
+    // Bidirectional Type Engine
+    pub type_engine: TypeEngine,
 
     // ── Trait Registry ──
     /// trait名 → TraitDef
@@ -262,7 +263,7 @@ impl SemanticAnalyzer {
 
             undefined_counter: 0,
             type_manager: TypeManager::new(),
-            inference_map: HashMap::new(),
+            type_engine: TypeEngine::new(),
             traits: HashMap::new(),
             trait_impls: HashMap::new(),
             type_traits: HashMap::new(),
@@ -280,9 +281,7 @@ impl SemanticAnalyzer {
         crate::compiler::codegen::builtin_types::non_generic::regex::register_regex_types(
             &mut analyzer.type_manager,
         );
-        crate::compiler::codegen::builtin_types::non_generic::thread::register_thread_types(
-            &mut analyzer.type_manager,
-        );
+        // Thread registry removed: Thread is handled generically
         crate::compiler::codegen::builtin_types::non_generic::llm::register_llm_types(
             &mut analyzer.type_manager,
         );
@@ -297,19 +296,19 @@ impl SemanticAnalyzer {
     }
 
     fn err<T>(&self, error: SemanticError, span: Option<Span>) -> Result<T, TlError> {
-        // if let SemanticError::TypeMismatch { expected, found } = &error {
-        //     if let Some(s) = &span {
-        //         eprintln!("DEBUG: TypeMismatch expected {:?}, found {:?} at line {:?}", expected, found, s.line);
-        //     } else {
-        //         eprintln!("DEBUG: TypeMismatch expected {:?}, found {:?} at unknown line", expected, found);
-        //     }
-        // }
+        if let SemanticError::TypeMismatch { expected, found } = &error {
+            if let Some(s) = &span {
+                eprintln!("DEBUG: TypeMismatch expected {:?}, found {:?} at line {:?}", expected, found, s.line);
+            } else {
+                eprintln!("DEBUG: TypeMismatch expected {:?}, found {:?} at unknown line", expected, found);
+            }
+            eprintln!("{}", std::backtrace::Backtrace::force_capture());
+        }
         Err(error.to_tl_error(span))
     }
 
     fn get_next_undefined_id(&mut self) -> u64 {
-        self.undefined_counter += 1;
-        self.undefined_counter
+        self.type_engine.get_next_id()
     }
 
     fn declare_builtins(&mut self) {
@@ -486,71 +485,11 @@ impl SemanticAnalyzer {
     // Unify two types, binding any Undefined(id) to the other type.
     // Returns true if types are compatible (or unified successfully).
     fn unify(&mut self, expected: &Type, found: &Type) -> bool {
-        // Resolve both types first using current inference map
-        let expected_res = self.resolve_inferred_type(expected);
-        let found_res = self.resolve_inferred_type(found);
-
-        match (&expected_res, &found_res) {
-            (Type::Undefined(id1), Type::Undefined(id2)) => {
-                if id1 != id2 {
-                    // Union two undefined types: bind id1 -> id2
-                    self.inference_map.insert(*id1, Type::Undefined(*id2));
-                }
-                true
-            }
-            (Type::Undefined(id), ty) | (ty, Type::Undefined(id)) => {
-                // Bind undefined to concrete type
-                // Occurs check could go here, but omitted for simplicity
-                self.inference_map.insert(*id, ty.clone());
-                true
-            }
-            (Type::Struct(n1, args1), Type::Struct(n2, args2)) => {
-                if n1 == n2 && args1.len() == args2.len() {
-                    for (a1, a2) in args1.iter().zip(args2.iter()) {
-                        if !self.unify(a1, a2) {
-                            return false;
-                        }
-                    }
-                    true
-                } else {
-                    false
-                }
-            }
-            (Type::Tensor(t1, r1), Type::Tensor(t2, r2)) => r1 == r2 && self.unify(t1, t2),
-            (Type::Ptr(t1), Type::Ptr(t2)) => self.unify(t1, t2),
-            (Type::Array(t1, s1), Type::Array(t2, s2)) => s1 == s2 && self.unify(t1, t2),
-            // Primitive equality or other types
-            _ => expected_res == found_res,
-        }
+        self.type_engine.unify(expected, found)
     }
 
-    // Recursively resolve Undefined(id) using inference_map
     fn resolve_inferred_type(&self, ty: &Type) -> Type {
-        match ty {
-            Type::Undefined(id) => {
-                if let Some(concrete) = self.inference_map.get(id) {
-                    self.resolve_inferred_type(concrete)
-                } else {
-                    ty.clone()
-                }
-            }
-            Type::Struct(name, args) => Type::Struct(
-                name.clone(),
-                args.iter().map(|a| self.resolve_inferred_type(a)).collect(),
-            ),
-            Type::Enum(name, args) => Type::Enum(
-                name.clone(),
-                args.iter().map(|a| self.resolve_inferred_type(a)).collect(),
-            ),
-            Type::Tensor(inner, rank) => {
-                Type::Tensor(Box::new(self.resolve_inferred_type(inner)), *rank)
-            }
-            Type::Ptr(inner) => Type::Ptr(Box::new(self.resolve_inferred_type(inner))),
-            Type::Array(inner, size) => {
-                Type::Array(Box::new(self.resolve_inferred_type(inner)), *size)
-            }
-            _ => ty.clone(),
-        }
+        self.type_engine.resolve(ty.clone())
     }
 
     // Helper to resolve a name based on current scope aliases and module context
@@ -1041,6 +980,9 @@ impl SemanticAnalyzer {
                 }
             }
         }
+
+        // Phase 3: Concretize all types in the AST using the resolved TypeEngine constraints
+        self.concretize_types_in_module(module);
 
         Ok(())
     }
@@ -3062,9 +3004,13 @@ impl SemanticAnalyzer {
     }
 
     pub fn check_expr(&mut self, expr: &mut Expr) -> Result<Type, TlError> {
+        self.check_expr_with_expected(expr, None)
+    }
+
+    pub fn check_expr_with_expected(&mut self, expr: &mut Expr, expected_type: Option<&Type>) -> Result<Type, TlError> {
         if let ExprKind::StaticMethodCall(_, _, _) = &expr.inner {
             let inner = std::mem::replace(&mut expr.inner, ExprKind::Wildcard);
-            if let ExprKind::StaticMethodCall(type_node, method_name, mut args) = inner {
+            if let ExprKind::StaticMethodCall(type_node, mut method_name, mut args) = inner {
                 // Resolve type logic
                 let type_ty = self.resolve_user_type(&type_node);
 
@@ -3161,37 +3107,13 @@ impl SemanticAnalyzer {
                 };
 
                 if is_thread_spawn && args.len() == 1 {
-                    if let ExprKind::Closure { args: closure_args, body, .. } = &mut args[0].inner {
-                        self.enter_scope();
-                        for (arg_name, arg_type_opt) in closure_args.iter() {
-                            let arg_ty = match arg_type_opt {
-                                Some(ty) => ty.clone(),
-                                None => return self.err(
-                                    SemanticError::Generic(format!("Thread closure argument '{}' requires type annotation", arg_name)),
-                                    Some(expr.span.clone())
-                                )
-                            };
-                            self.declare_variable(arg_name.clone(), arg_ty, false)?;
-                        }
-                        let mut last_ty = Type::Void;
-                        let body_len = body.len();
-                        for (idx, stmt) in body.iter_mut().enumerate() {
-                            if idx == body_len - 1 {
-                                if let StmtKind::Expr(e) = &mut stmt.inner {
-                                    last_ty = self.check_expr(e)?;
-                                } else {
-                                    self.check_stmt(stmt)?;
-                                }
-                            } else {
-                                self.check_stmt(stmt)?;
-                            }
-                        }
-                        self.exit_scope();
-
-                        if let ExprKind::Closure { return_type, .. } = &mut args[0].inner {
-                            *return_type = Some(last_ty.clone());
-                        }
-                    }
+                    let ret_ty = self.type_engine.new_undefined();
+                    let expected_fn = Type::Fn(vec![], Box::new(ret_ty.clone()));
+                    let _closure_ty = self.check_expr_with_expected(&mut args[0], Some(&expected_fn))?;
+                    method_name = "spawn".to_string(); // Keep mangled or raw? raw for now
+                    let resolved_ret_ty = self.type_engine.resolve(ret_ty);
+                    expr.inner = ExprKind::StaticMethodCall(type_ty.clone(), method_name, args);
+                    return Ok(Type::Struct("Thread".to_string(), vec![resolved_ret_ty]));
                 }
 
 
@@ -3221,7 +3143,8 @@ impl SemanticAnalyzer {
             }
             ExprKind::TupleAccess(expr, idx) => {
                 let ty = self.check_expr(expr)?;
-                if let Type::Tuple(types) = ty {
+                let resolved_ty = self.type_engine.resolve(ty.clone());
+                if let Type::Tuple(types) = resolved_ty {
                     if *idx < types.len() {
                         Ok(types[*idx].clone())
                     } else {
@@ -3296,16 +3219,38 @@ impl SemanticAnalyzer {
                 // Enter a new scope for the closure
                 self.enter_scope();
 
-                // Collect arg types (inferred as Unknown if not annotated)
+                // If expected_type is provided (e.g. fn(A, B) -> C), use it to infer arg types
+                let expected_fn_args = if let Some(Type::Fn(fn_args, _)) = expected_type {
+                    Some(fn_args.clone())
+                } else {
+                    None
+                };
+
+                // Collect arg types (inferred as Undefined if not annotated)
                 let mut arg_types = Vec::new();
                 let arg_names: Vec<String> = args.iter().map(|(n, _)| n.clone()).collect();
-                for (arg_name, arg_type_opt) in args.iter() {
+                for (i, (arg_name, arg_type_opt)) in args.iter_mut().enumerate() {
                     let arg_ty = match arg_type_opt {
                         Some(ty) => ty.clone(),
-                        None => return self.err(
-                            SemanticError::Generic(format!("Closure argument '{}' requires explicit type annotation or proper type inference", arg_name)),
-                            Some(expr.span.clone())
-                        ),
+                        None => {
+                            if let Some(ref fn_args) = expected_fn_args {
+                                if i < fn_args.len() {
+                                    let inferred = fn_args[i].clone();
+                                    *arg_type_opt = Some(inferred.clone());
+                                    inferred
+                                } else {
+                                    return self.err(
+                                        SemanticError::Generic(format!("Too many closure arguments provided for '{}'", arg_name)),
+                                        Some(expr.span.clone())
+                                    )
+                                }
+                            } else {
+                                // Create a new type variable for the inference engine
+                                let inferred = self.type_engine.new_undefined();
+                                *arg_type_opt = Some(inferred.clone());
+                                inferred
+                            }
+                        }
                     };
                     self.declare_variable(arg_name.clone(), arg_ty.clone(), false)?;
                     arg_types.push(arg_ty);
@@ -3336,6 +3281,20 @@ impl SemanticAnalyzer {
                 } else {
                     last_ty
                 };
+                *return_type = Some(ret_ty.clone());
+
+                // Unify inferred return type with expected return type
+                if let Some(Type::Fn(_, expected_ret)) = expected_type {
+                    if !self.type_engine.unify(&ret_ty, expected_ret) {
+                        return self.err(
+                            SemanticError::TypeMismatch {
+                                expected: *expected_ret.clone(),
+                                found: ret_ty.clone(),
+                            },
+                            Some(expr.span.clone()),
+                        );
+                    }
+                }
 
                 // Detect captured variables: collect variable names used in body,
                 // then filter out closure args and locally defined vars.
@@ -3379,6 +3338,23 @@ impl SemanticAnalyzer {
                 self.current_return_type = prev_return_type;
 
                 self.exit_scope();
+
+                if let Some(Type::Fn(_, expected_ret)) = expected_type {
+                    eprintln!("DEBUG: Closure Unify! expected_ret={:?}, ret_ty={:?}", expected_ret, ret_ty);
+                    let unify_res = self.unify(&expected_ret, &ret_ty);
+                    if !unify_res {
+                        let resolved_expected = self.type_engine.resolve((**expected_ret).clone());
+                        let resolved_found = self.type_engine.resolve(ret_ty.clone());
+                        eprintln!("DEBUG: Real Mismatch!! expected_resolved={:?}, found_resolved={:?}", resolved_expected, resolved_found);
+                        return self.err(
+                            SemanticError::TypeMismatch {
+                                expected: resolved_expected,
+                                found: resolved_found,
+                            },
+                            Some(expr.span.clone())
+                        );
+                    }
+                }
 
                 Ok(Type::Fn(arg_types, Box::new(ret_ty)))
             }
@@ -4059,9 +4035,15 @@ impl SemanticAnalyzer {
                     _ => left.clone(), // Arith ops preserve type (or broadcast)
                 };
 
-                // Simple strict matching for now
-                if left == right {
-                    Ok(result_ty)
+                // Simple strict matching and inference
+                if left == right || self.are_types_compatible(&left, &right) {
+                    let resolved_left = self.type_engine.resolve(left.clone());
+                    let final_result_ty = match op {
+                        BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge => Type::Bool,
+                        BinOp::And | BinOp::Or => Type::Bool,
+                        _ => resolved_left,
+                    };
+                    Ok(final_result_ty)
                 } else {
                     match (&left, &right) {
                         (Type::String(_), Type::String(_)) => {
@@ -5859,7 +5841,23 @@ impl SemanticAnalyzer {
                     }
                 }
 
-                // Construct Tensor type.
+                // If we have an expected type of Vec, resolve to Vec instead of Tensor
+                if let Some(Type::Struct(name, generics)) = expected_type {
+                    if name == "Vec" && generics.len() == 1 {
+                        if !self.are_types_compatible(&generics[0], &first_type) {
+                            return self.err(
+                                SemanticError::TypeMismatch {
+                                    expected: generics[0].clone(),
+                                    found: first_type,
+                                },
+                                Some(expr.span.clone()),
+                            );
+                        }
+                        return Ok(Type::Struct("Vec".to_string(), vec![generics[0].clone()]));
+                    }
+                }
+
+                // Construct Tensor type by default.
                 if has_float {
                     Ok(Type::Tensor(Box::new(Type::F32), 1))
                 } else {
@@ -6782,45 +6780,49 @@ impl SemanticAnalyzer {
                     };
 
                     if is_vec {
-                        if let ExprKind::Closure { args: closure_args, body, .. } = &mut args[0].inner {
-                            // Get element type from Vec type args
-                            let elem_ty = match &obj_type {
-                                Type::Struct(_, type_args) => type_args.first().cloned().ok_or_else(|| {
-                                    SemanticError::Generic("Vec must have generic type parameter".to_string()).to_tl_error(Some(expr.span.clone()))
-                                })?,
-                                _ => return self.err(SemanticError::Generic("Expected Vec".to_string()), Some(expr.span.clone())),
-                            };
+                        let elem_ty = match &obj_type {
+                            Type::Struct(_, type_args) => type_args.first().cloned().ok_or_else(|| {
+                                SemanticError::Generic("Vec must have generic type parameter".to_string()).to_tl_error(Some(expr.span.clone()))
+                            })?,
+                            _ => return self.err(SemanticError::Generic("Expected Vec".to_string()), Some(expr.span.clone())),
+                        };
 
-                            // Enter scope and bind closure args
-                            self.enter_scope();
-                            for (arg_name, arg_type_opt) in closure_args.iter() {
-                                let arg_ty = arg_type_opt.clone().unwrap_or(elem_ty.clone());
-                                self.declare_variable(arg_name.clone(), arg_ty, false)?;
-                            }
-
-                            // Check closure body
-                            let mut _last_ty = Type::Void;
-                            let body_len = body.len();
-                            for (idx, stmt) in body.iter_mut().enumerate() {
-                                if idx == body_len - 1 {
-                                    if let StmtKind::Expr(e) = &mut stmt.inner {
-                                        _last_ty = self.check_expr(e)?;
-                                    } else {
-                                        self.check_stmt(stmt)?;
+                        return match method_name.as_str() {
+                            "map" => {
+                                let ret_ty = self.type_engine.new_undefined();
+                                let expected_fn = Type::Fn(vec![elem_ty], Box::new(ret_ty.clone()));
+                                let closure_ty = self.check_expr_with_expected(&mut args[0], Some(&expected_fn))?;
+                                if let Type::Fn(_, actual_ret) = closure_ty {
+                                    match &obj_type {
+                                        Type::Array(_, size) => Ok(Type::Array(actual_ret.clone(), *size)),
+                                        Type::Tensor(_, rank) => Ok(Type::Tensor(actual_ret.clone(), *rank)),
+                                        _ => Ok(Type::Struct(obj_type.get_base_name(), vec![*actual_ret]))
                                     }
                                 } else {
-                                    self.check_stmt(stmt)?;
+                                    match &obj_type {
+                                        Type::Array(_, size) => Ok(Type::Array(Box::new(ret_ty), *size)),
+                                        Type::Tensor(_, rank) => Ok(Type::Tensor(Box::new(ret_ty), *rank)),
+                                        _ => Ok(Type::Struct(obj_type.get_base_name(), vec![ret_ty]))
+                                    }
                                 }
                             }
-                            self.exit_scope();
-
-                            return match method_name.as_str() {
-                                "map" | "filter" => Ok(obj_type.clone()),
-                                "any" | "all" => Ok(Type::Bool),
-                                "reduce" => Ok(elem_ty),
-                                _ => unreachable!(),
-                            };
-                        }
+                            "filter" => {
+                                let expected_fn = Type::Fn(vec![elem_ty], Box::new(Type::Bool));
+                                self.check_expr_with_expected(&mut args[0], Some(&expected_fn))?;
+                                Ok(obj_type.clone())
+                            }
+                            "any" | "all" => {
+                                let expected_fn = Type::Fn(vec![elem_ty], Box::new(Type::Bool));
+                                self.check_expr_with_expected(&mut args[0], Some(&expected_fn))?;
+                                Ok(Type::Bool)
+                            }
+                            "reduce" => { // (acc, elem) -> acc
+                                let expected_fn = Type::Fn(vec![elem_ty.clone(), elem_ty.clone()], Box::new(elem_ty.clone()));
+                                self.check_expr_with_expected(&mut args[0], Some(&expected_fn))?;
+                                Ok(elem_ty)
+                            }
+                            _ => unreachable!(),
+                        };
                     }
                 }
 
@@ -6864,46 +6866,18 @@ impl SemanticAnalyzer {
                             );
                         }
 
-                        if let ExprKind::Closure { args: closure_args, body, .. } = &mut args[0].inner {
-                            self.enter_scope();
-                            for (arg_name, arg_type_opt) in closure_args.iter() {
-                                let arg_ty = arg_type_opt.clone().unwrap_or(elem_ty.clone());
-                                self.declare_variable(arg_name.clone(), arg_ty, false)?;
-                            }
-
-                            let mut last_ty = Type::Void;
-                            let body_len = body.len();
-                            for (idx, stmt) in body.iter_mut().enumerate() {
-                                if idx == body_len - 1 {
-                                    if let StmtKind::Expr(e) = &mut stmt.inner {
-                                        last_ty = self.check_expr(e)?;
-                                    } else {
-                                        self.check_stmt(stmt)?;
-                                    }
-                                } else {
-                                    self.check_stmt(stmt)?;
-                                }
-                            }
-                            self.exit_scope();
-
-                            if let ExprKind::Closure { return_type, .. } = &mut args[0].inner {
-                                *return_type = Some(last_ty.clone());
-                            }
-
-                            if method_name == "modify" {
-                                return Ok(Type::Void); // modify implicitly returns Void to Caller
+                        if method_name == "modify" {
+                            let expected_fn = Type::Fn(vec![elem_ty.clone()], Box::new(elem_ty.clone()));
+                            self.check_expr_with_expected(&mut args[0], Some(&expected_fn))?;
+                            return Ok(Type::Void);
+                        } else { // read
+                            let ret_ty = self.type_engine.new_undefined();
+                            let expected_fn = Type::Fn(vec![elem_ty.clone()], Box::new(ret_ty.clone()));
+                            let closure_ty = self.check_expr_with_expected(&mut args[0], Some(&expected_fn))?;
+                            if let Type::Fn(_, actual_ret) = closure_ty {
+                                return Ok(*actual_ret);
                             } else {
-                                return Ok(last_ty); // read returns the closure's return type
-                            }
-                        } else {
-                            // Support passing a raw Fn? Currently we only really support inline closures for these in TL.
-                            // If it's another expr that evaluates to Fn, we just check and return.
-                            let _closure_ty = self.check_expr(&mut args[0])?;
-                            if method_name == "modify" {
-                                return Ok(Type::Void);
-                            } else {
-                                // Better inference could be done here, returning elem_ty for simplicity if not a direct closure AST node.
-                                return Ok(elem_ty);
+                                return Ok(ret_ty);
                             }
                         }
                     }
@@ -6919,6 +6893,24 @@ impl SemanticAnalyzer {
                         // Check arg type
                         let _arg_ty = self.check_expr(&mut args[0])?;
                         return Ok(Type::String("String".to_string()));
+                    }
+                }
+
+                // === Thread::join() -> Result<T, String> ===
+                if method_name == "join" && args.is_empty() {
+                    let is_thread = match &obj_type {
+                        Type::Struct(name, _) if name.starts_with("Thread") => true,
+                        _ => obj_type.get_base_name() == "Thread",
+                    };
+                    if is_thread {
+                        let elem_ty = match &obj_type {
+                            Type::Struct(_, type_args) => type_args.first().cloned().ok_or_else(|| {
+                                SemanticError::Generic("Thread must have explicit generic type parameter".to_string()).to_tl_error(Some(expr.span.clone()))
+                            })?,
+                            _ => return self.err(SemanticError::Generic("Expected Thread".to_string()), Some(expr.span.clone())),
+                        };
+                        let resolved_ty = self.type_engine.resolve(elem_ty);
+                        return Ok(Type::Enum("Result".to_string(), vec![resolved_ty, Type::String("String".to_string())]));
                     }
                 }
 
@@ -6978,41 +6970,33 @@ impl SemanticAnalyzer {
                         _ => false,
                     };
                     if is_option {
-                        if let ExprKind::Closure { args: closure_args, body, .. } = &mut args[0].inner {
-                            let elem_ty = match &obj_type {
-                                Type::Enum(_, type_args) => type_args.first().cloned().ok_or_else(|| {
-                                    SemanticError::Generic("Option/Result must have generic type parameter".to_string()).to_tl_error(Some(expr.span.clone()))
-                                })?,
-                                _ => return self.err(SemanticError::Generic("Expected Option/Result".to_string()), Some(expr.span.clone())),
-                            };
+                        let elem_ty = match &obj_type {
+                            Type::Enum(_, type_args) => type_args.first().cloned().ok_or_else(|| {
+                                SemanticError::Generic("Option must have generic type parameter".to_string()).to_tl_error(Some(expr.span.clone()))
+                            })?,
+                            _ => return self.err(SemanticError::Generic("Expected Option".to_string()), Some(expr.span.clone())),
+                        };
 
-                            self.enter_scope();
-                            for (arg_name, arg_type_opt) in closure_args.iter() {
-                                let arg_ty = arg_type_opt.clone().unwrap_or(elem_ty.clone());
-                                self.declare_variable(arg_name.clone(), arg_ty, false)?;
+                        return match method_name.as_str() {
+                            "map" => {
+                                let ret_ty = self.type_engine.new_undefined();
+                                let expected_fn = Type::Fn(vec![elem_ty], Box::new(ret_ty.clone()));
+                                let _closure_ty = self.check_expr_with_expected(&mut args[0], Some(&expected_fn))?;
+                                Ok(Type::Enum("Option".to_string(), vec![ret_ty]))
                             }
-                            let mut last_ty = Type::Void;
-                            let body_len = body.len();
-                            for (idx, stmt) in body.iter_mut().enumerate() {
-                                if idx == body_len - 1 {
-                                    if let StmtKind::Expr(e) = &mut stmt.inner {
-                                        last_ty = self.check_expr(e)?;
-                                    } else {
-                                        self.check_stmt(stmt)?;
-                                    }
-                                } else {
-                                    self.check_stmt(stmt)?;
-                                }
+                            "and_then" => {
+                                let ret_ty = self.type_engine.new_undefined();
+                                let expected_fn = Type::Fn(vec![elem_ty], Box::new(Type::Enum("Option".to_string(), vec![ret_ty.clone()])));
+                                let _closure_ty = self.check_expr_with_expected(&mut args[0], Some(&expected_fn))?;
+                                Ok(Type::Enum("Option".to_string(), vec![ret_ty]))
                             }
-                            self.exit_scope();
-
-                            return match method_name.as_str() {
-                                "map" => Ok(obj_type.clone()),       // Option<U>
-                                "and_then" => Ok(last_ty),            // closure returns Option<U>
-                                "unwrap_or_else" => Ok(elem_ty),      // T
-                                _ => unreachable!(),
-                            };
-                        }
+                            "unwrap_or_else" => {
+                                let expected_fn = Type::Fn(vec![], Box::new(elem_ty.clone()));
+                                let _closure_ty = self.check_expr_with_expected(&mut args[0], Some(&expected_fn))?;
+                                Ok(elem_ty)
+                            }
+                            _ => unreachable!(),
+                        };
                     }
                 }
 
@@ -7025,49 +7009,39 @@ impl SemanticAnalyzer {
                         _ => false,
                     };
                     if is_result {
-                        if let ExprKind::Closure { args: closure_args, body, .. } = &mut args[0].inner {
-                            let (ok_ty, err_ty) = match &obj_type {
-                                Type::Enum(_, type_args) if type_args.len() >= 2 => {
-                                    (type_args[0].clone(), type_args[1].clone())
-                                }
-                                _ => (Type::I64, Type::I64),
-                            };
-
-                            // Bind closure arg with appropriate type
-                            let bind_ty = match method_name.as_str() {
-                                "map" | "and_then" => ok_ty.clone(),
-                                "map_err" => err_ty.clone(),
-                                "unwrap_or_else" => err_ty.clone(),
-                                _ => ok_ty.clone(),
-                            };
-
-                            self.enter_scope();
-                            for (arg_name, arg_type_opt) in closure_args.iter() {
-                                let arg_ty = arg_type_opt.clone().unwrap_or(bind_ty.clone());
-                                self.declare_variable(arg_name.clone(), arg_ty, false)?;
+                        let (ok_ty, err_ty) = match &obj_type {
+                            Type::Enum(_, type_args) if type_args.len() >= 2 => {
+                                (type_args[0].clone(), type_args[1].clone())
                             }
-                            let mut last_ty = Type::Void;
-                            let body_len = body.len();
-                            for (idx, stmt) in body.iter_mut().enumerate() {
-                                if idx == body_len - 1 {
-                                    if let StmtKind::Expr(e) = &mut stmt.inner {
-                                        last_ty = self.check_expr(e)?;
-                                    } else {
-                                        self.check_stmt(stmt)?;
-                                    }
-                                } else {
-                                    self.check_stmt(stmt)?;
-                                }
-                            }
-                            self.exit_scope();
+                            _ => (Type::I64, Type::I64),
+                        };
 
-                            return match method_name.as_str() {
-                                "map" | "map_err" => Ok(obj_type.clone()),  // Result<U, E> or Result<T, U>
-                                "and_then" => Ok(last_ty),                   // closure returns Result
-                                "unwrap_or_else" => Ok(ok_ty),               // T
-                                _ => unreachable!(),
-                            };
-                        }
+                        return match method_name.as_str() {
+                            "map" => {
+                                let ret_ty = self.type_engine.new_undefined();
+                                let expected_fn = Type::Fn(vec![ok_ty.clone()], Box::new(ret_ty.clone()));
+                                let _closure_ty = self.check_expr_with_expected(&mut args[0], Some(&expected_fn))?;
+                                Ok(Type::Enum("Result".to_string(), vec![ret_ty, err_ty]))
+                            }
+                            "map_err" => {
+                                let ret_ty = self.type_engine.new_undefined();
+                                let expected_fn = Type::Fn(vec![err_ty.clone()], Box::new(ret_ty.clone()));
+                                let _closure_ty = self.check_expr_with_expected(&mut args[0], Some(&expected_fn))?;
+                                Ok(Type::Enum("Result".to_string(), vec![ok_ty, ret_ty]))
+                            }
+                            "and_then" => {
+                                let ret_ty = self.type_engine.new_undefined();
+                                let expected_fn = Type::Fn(vec![ok_ty.clone()], Box::new(Type::Enum("Result".to_string(), vec![ret_ty.clone(), err_ty.clone()])));
+                                let _closure_ty = self.check_expr_with_expected(&mut args[0], Some(&expected_fn))?;
+                                Ok(Type::Enum("Result".to_string(), vec![ret_ty, err_ty]))
+                            }
+                            "unwrap_or_else" => {
+                                let expected_fn = Type::Fn(vec![err_ty.clone()], Box::new(ok_ty.clone()));
+                                let _closure_ty = self.check_expr_with_expected(&mut args[0], Some(&expected_fn))?;
+                                Ok(ok_ty)
+                            }
+                            _ => unreachable!(),
+                        };
                     }
                 }
 
@@ -7725,4 +7699,202 @@ fn is_builtin_relation(pred: &str) -> bool {
             | "mod"
             | "neg"
     )
+}
+
+// -----------------------------------------------------------------------------
+// Phase 3: AST Type Concretization
+// Replace all unresolved Type::Undefined(id) within the AST with their concrete
+// types from the TypeEngine, leaving them as TypeVar/Undefined if they are 
+// truly unconstrained.
+// -----------------------------------------------------------------------------
+impl SemanticAnalyzer {
+    pub fn concretize_types_in_module(&mut self, module: &mut crate::compiler::ast::Module) {
+        for f in &mut module.functions {
+            self.concretize_function(f);
+        }
+        for imp in &mut module.impls {
+            imp.target_type = self.type_engine.resolve(imp.target_type.clone());
+            for m in &mut imp.methods {
+                self.concretize_function(m);
+            }
+        }
+        for tr in &mut module.traits {
+            for m in &mut tr.methods {
+                m.return_type = self.type_engine.resolve(m.return_type.clone());
+                for (_, ty) in &mut m.args {
+                    *ty = self.type_engine.resolve(ty.clone());
+                }
+                if let Some(body) = &mut m.default_body {
+                    self.concretize_stmts(body);
+                }
+            }
+        }
+        for tr_imp in &mut module.trait_impls {
+            tr_imp.target_type = self.type_engine.resolve(tr_imp.target_type.clone());
+            for m in &mut tr_imp.methods {
+                self.concretize_function(m);
+            }
+        }
+    }
+
+    fn concretize_function(&mut self, f: &mut crate::compiler::ast::FunctionDef) {
+        f.return_type = self.type_engine.resolve(f.return_type.clone());
+        for (_, ty) in &mut f.args {
+            *ty = self.type_engine.resolve(ty.clone());
+        }
+        self.concretize_stmts(&mut f.body);
+    }
+
+    fn concretize_stmts(&mut self, stmts: &mut Vec<crate::compiler::ast::Stmt>) {
+        for stmt in stmts {
+            self.concretize_stmt(stmt);
+        }
+    }
+
+    fn concretize_stmt(&mut self, stmt: &mut crate::compiler::ast::Stmt) {
+        match &mut stmt.inner {
+            crate::compiler::ast::StmtKind::TensorDecl { type_annotation, init, .. } => {
+                *type_annotation = self.type_engine.resolve(type_annotation.clone());
+                if let Some(e) = init {
+                    self.concretize_expr(e);
+                }
+            }
+            crate::compiler::ast::StmtKind::Let { type_annotation, value, .. } => {
+                if let Some(ty) = type_annotation {
+                    *ty = self.type_engine.resolve(ty.clone());
+                }
+                self.concretize_expr(value);
+            }
+            crate::compiler::ast::StmtKind::Assign { value, .. } => {
+                self.concretize_expr(value);
+            }
+            crate::compiler::ast::StmtKind::Expr(e) | crate::compiler::ast::StmtKind::Return(Some(e)) => {
+                self.concretize_expr(e);
+            }
+            crate::compiler::ast::StmtKind::Return(None) => {}
+            crate::compiler::ast::StmtKind::For { iterator, body, .. } => {
+                self.concretize_expr(iterator);
+                self.concretize_stmts(body);
+            }
+            crate::compiler::ast::StmtKind::While { cond, body } => {
+                self.concretize_expr(cond);
+                self.concretize_stmts(body);
+            }
+            crate::compiler::ast::StmtKind::Loop { body } => {
+                self.concretize_stmts(body);
+            }
+            _ => {}
+        }
+    }
+
+    fn concretize_expr(&mut self, expr: &mut crate::compiler::ast::Expr) {
+        use crate::compiler::ast::ExprKind::*;
+        match &mut expr.inner {
+            Tuple(exprs) | TensorLiteral(exprs) | TensorConstLiteral(exprs) => {
+                for e in exprs {
+                    self.concretize_expr(e);
+                }
+            }
+            Range(s, e) => {
+                if let Some(s) = s { self.concretize_expr(s); }
+                if let Some(e) = e { self.concretize_expr(e); }
+            }
+            TensorComprehension { body: Some(b), .. } => {
+                self.concretize_expr(b);
+            }
+            IndexAccess(base, idxs) => {
+                self.concretize_expr(base);
+                for i in idxs {
+                    self.concretize_expr(i);
+                }
+            }
+            TupleAccess(base, _) | FieldAccess(base, _) | UnOp(_, base) | Try(base) => {
+                self.concretize_expr(base);
+            }
+            BinOp(lhs, _, rhs) => {
+                self.concretize_expr(lhs);
+                self.concretize_expr(rhs);
+            }
+            FnCall(_, args) => {
+                for a in args {
+                    self.concretize_expr(a);
+                }
+            }
+            StaticMethodCall(ty_node, _, args) => {
+                *ty_node = self.type_engine.resolve(ty_node.clone());
+                for a in args {
+                    self.concretize_expr(a);
+                }
+            }
+            MethodCall(base, _, args) => {
+                self.concretize_expr(base);
+                for a in args {
+                    self.concretize_expr(a);
+                }
+            }
+            As(base, ty) => {
+                self.concretize_expr(base);
+                *ty = self.type_engine.resolve(ty.clone());
+            }
+            IfExpr(cond, tb, eb) => {
+                self.concretize_expr(cond);
+                self.concretize_stmts(tb);
+                if let Some(eb) = eb {
+                    self.concretize_stmts(eb);
+                }
+            }
+            IfLet { expr: e, then_block, else_block, .. } => {
+                self.concretize_expr(e);
+                self.concretize_stmts(then_block);
+                if let Some(eb) = else_block {
+                    self.concretize_stmts(eb);
+                }
+            }
+            Block(stmts) => {
+                self.concretize_stmts(stmts);
+            }
+            StructInit(ty, fields) => {
+                *ty = self.type_engine.resolve(ty.clone());
+                for (_, e) in fields {
+                    self.concretize_expr(e);
+                }
+            }
+            EnumInit { generics, payload, .. } => {
+                for g in generics {
+                    *g = self.type_engine.resolve(g.clone());
+                }
+                match payload {
+                    crate::compiler::ast::EnumVariantInit::Tuple(exprs) => {
+                        for e in exprs {
+                            self.concretize_expr(e);
+                        }
+                    }
+                    crate::compiler::ast::EnumVariantInit::Struct(fields) => {
+                        for (_, e) in fields {
+                            self.concretize_expr(e);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Match { expr: e, arms } => {
+                self.concretize_expr(e);
+                for (_, arm_expr) in arms {
+                    self.concretize_expr(arm_expr);
+                }
+            }
+            Closure { args, return_type, body, .. } => {
+                for (_, ty_opt) in args {
+                    if let Some(ty) = ty_opt {
+                        *ty = self.type_engine.resolve(ty.clone());
+                    }
+                }
+                if let Some(ret_ty) = return_type {
+                    *ret_ty = self.type_engine.resolve(ret_ty.clone());
+                }
+                self.concretize_stmts(body);
+            }
+            _ => {}
+        }
+    }
 }

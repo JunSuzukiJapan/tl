@@ -13,6 +13,7 @@ pub mod liveness;
 
 
 pub mod semantics;
+pub mod type_engine; // Strict type inference engine
 pub mod builtin_loader;
 pub mod shape_analysis; // Phase 2: Static size analysis for Arena
 pub mod lexer;
