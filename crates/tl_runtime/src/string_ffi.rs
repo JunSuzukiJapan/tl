@@ -537,3 +537,28 @@ pub extern "C" fn tl_string_chars(s: *mut StringStruct) -> *mut VecStruct {
         vec_ptr
     }
 }
+
+/// String.from_chars(chars: Vec<i64>) -> String
+/// Vec<i64> の各要素を Unicode コードポイントとして1つの文字列を構築
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_string_from_chars(vec: *mut VecStruct) -> *mut StringStruct {
+    unsafe {
+        if vec.is_null() || (*vec).ptr.is_null() || (*vec).len <= 0 {
+            return make_string_struct(String::new());
+        }
+        
+        let len = (*vec).len as usize;
+        let ptr = (*vec).ptr as *const i64;
+        let mut s = String::with_capacity(len);
+        
+        for i in 0..len {
+            let cp = *ptr.add(i);
+            if let Some(ch) = char::from_u32(cp as u32) {
+                s.push(ch);
+            } else {
+                s.push('?');
+            }
+        }
+        make_string_struct(s)
+    }
+}

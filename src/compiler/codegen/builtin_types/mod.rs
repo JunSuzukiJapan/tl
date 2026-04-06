@@ -10,6 +10,7 @@ pub use generic::hashmap;
 pub use generic::hashset;
 pub use generic::vec_deque;
 pub use generic::btreemap;
+pub use generic::string_builder;
 pub use generic::traits;
 
 pub use non_generic::io;
@@ -103,6 +104,14 @@ pub fn load_all_builtins(codegen: &mut CodeGenerator) {
         codegen.struct_defs.insert(def.name.clone(), def);
     }
     codegen.generic_impls.entry("BTreeNode".to_string()).or_default().extend(btree_node_data.impl_blocks);
+
+    // StringBuilder
+    let str_builder_data = generic::string_builder::load_string_builder_data();
+    codegen.type_manager.register_builtin(str_builder_data.clone());
+    if let Some(def) = str_builder_data.struct_def {
+        codegen.struct_defs.insert(def.name.clone(), def);
+    }
+    codegen.generic_impls.entry("StringBuilder".to_string()).or_default().extend(str_builder_data.impl_blocks);
 
     // 2. Register Non-Generic Types (IO, System, LLM, Tensor, Param, Primitives)
     // These register directly into TypeManager

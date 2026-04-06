@@ -379,3 +379,21 @@ pub fn compile_chars<'ctx>(
     };
     Ok((res, Type::Struct("Vec".to_string(), vec![Type::I64])))
 }
+
+/// String::from_chars(chars: Vec<i64>) -> String
+pub fn compile_from_chars<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _hint: Option<&Type>
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 1 { return Err("String::from_chars requires 1 argument".into()); }
+    let fn_val = codegen.module.get_function("tl_string_from_chars")
+        .ok_or("tl_string_from_chars not found")?;
+    let call = codegen.builder.build_call(fn_val, &[args[0].0.into()], "from_chars_res")
+        .map_err(|e| e.to_string())?;
+    let res = match call.try_as_basic_value() {
+        ValueKind::Basic(v) => v,
+        _ => return Err("Invalid return from String::from_chars".into()),
+    };
+    Ok((res, Type::String("String".to_string())))
+}

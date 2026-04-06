@@ -26,6 +26,7 @@ pub use crate::string_ffi::{
     tl_string_to_f64,
     tl_string_repeat,
     tl_string_chars,
+    tl_string_from_chars,
     tl_string_from_f64,
     tl_string_from_bool,
     tl_assert,

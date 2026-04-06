@@ -3439,6 +3439,13 @@ pub fn declare_runtime_functions<'ctx>(
         execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_chars as *const () as usize);
     }
 
+    // tl_string_from_chars(vec: *mut VecStruct) -> *mut StringStruct
+    let str_from_chars_type = i8_ptr.fn_type(&[i8_ptr.into()], false);
+    add_fn("tl_string_from_chars", str_from_chars_type);
+    if let Some(f) = module.get_function("tl_string_from_chars") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_from_chars as *const () as usize);
+    }
+
     // tl_string_from_f64(f: f64) -> *mut StringStruct
     let str_from_f64_type = i8_ptr.fn_type(&[f64_type.into()], false);
     add_fn("tl_string_from_f64", str_from_f64_type);

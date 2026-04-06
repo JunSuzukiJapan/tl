@@ -373,6 +373,9 @@ impl SemanticAnalyzer {
 
         let btree_node_data = crate::compiler::codegen::builtin_types::btreemap::load_btree_node_data();
         self.register_builtin_data(btree_node_data);
+
+        let string_builder_data = crate::compiler::codegen::builtin_types::string_builder::load_string_builder_data();
+        self.register_builtin_data(string_builder_data);
     }
 
     fn register_builtin_data(&mut self, data: BuiltinTypeData) {
