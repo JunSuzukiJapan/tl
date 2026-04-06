@@ -280,6 +280,9 @@ impl SemanticAnalyzer {
         crate::compiler::codegen::builtin_types::non_generic::regex::register_regex_types(
             &mut analyzer.type_manager,
         );
+        crate::compiler::codegen::builtin_types::non_generic::thread::register_thread_types(
+            &mut analyzer.type_manager,
+        );
         crate::compiler::codegen::builtin_types::non_generic::llm::register_llm_types(
             &mut analyzer.type_manager,
         );
@@ -379,6 +382,12 @@ impl SemanticAnalyzer {
 
         let string_builder_data = crate::compiler::codegen::builtin_types::string_builder::load_string_builder_data();
         self.register_builtin_data(string_builder_data);
+
+        // We only register Mutex methods via GenericImpl. It doesn't have a `.tl` file with a full struct def parsed.
+        // Wait, actually Mutex generic parsing needs a generic Type definition in TypeManager.
+        // We defined `struct Mutex<T> { id: i64 }` in mutex.tl. So we need a generic data loader like BTreeMap.
+        let mutex_data = crate::compiler::codegen::builtin_types::mutex::load_mutex_data();
+        self.register_builtin_data(mutex_data);
     }
 
     fn register_builtin_data(&mut self, data: BuiltinTypeData) {
@@ -3144,6 +3153,47 @@ impl SemanticAnalyzer {
                         }
                     }
                 }
+                // 1.5 Check Thread::spawn
+                let is_thread_spawn = if let Type::Struct(name, _) = &type_ty {
+                    name == "Thread" && method_name == "spawn"
+                } else {
+                    false
+                };
+
+                if is_thread_spawn && args.len() == 1 {
+                    if let ExprKind::Closure { args: closure_args, body, .. } = &mut args[0].inner {
+                        self.enter_scope();
+                        for (arg_name, arg_type_opt) in closure_args.iter() {
+                            let arg_ty = match arg_type_opt {
+                                Some(ty) => ty.clone(),
+                                None => return self.err(
+                                    SemanticError::Generic(format!("Thread closure argument '{}' requires type annotation", arg_name)),
+                                    Some(expr.span.clone())
+                                )
+                            };
+                            self.declare_variable(arg_name.clone(), arg_ty, false)?;
+                        }
+                        let mut last_ty = Type::Void;
+                        let body_len = body.len();
+                        for (idx, stmt) in body.iter_mut().enumerate() {
+                            if idx == body_len - 1 {
+                                if let StmtKind::Expr(e) = &mut stmt.inner {
+                                    last_ty = self.check_expr(e)?;
+                                } else {
+                                    self.check_stmt(stmt)?;
+                                }
+                            } else {
+                                self.check_stmt(stmt)?;
+                            }
+                        }
+                        self.exit_scope();
+
+                        if let ExprKind::Closure { return_type, .. } = &mut args[0].inner {
+                            *return_type = Some(last_ty.clone());
+                        }
+                    }
+                }
+
 
                 // Restore if nothing matched
                 expr.inner = ExprKind::StaticMethodCall(type_ty.clone(), method_name, args);
@@ -3250,7 +3300,13 @@ impl SemanticAnalyzer {
                 let mut arg_types = Vec::new();
                 let arg_names: Vec<String> = args.iter().map(|(n, _)| n.clone()).collect();
                 for (arg_name, arg_type_opt) in args.iter() {
-                    let arg_ty = arg_type_opt.clone().unwrap_or(Type::I64); // Default to i64 for now
+                    let arg_ty = match arg_type_opt {
+                        Some(ty) => ty.clone(),
+                        None => return self.err(
+                            SemanticError::Generic(format!("Closure argument '{}' requires explicit type annotation or proper type inference", arg_name)),
+                            Some(expr.span.clone())
+                        ),
+                    };
                     self.declare_variable(arg_name.clone(), arg_ty.clone(), false)?;
                     arg_types.push(arg_ty);
                 }
@@ -6336,7 +6392,22 @@ impl SemanticAnalyzer {
                     return Ok(arg1_type);
                 }
 
-                // (Enum Constructor logic moved to check_expr entry)
+                // Special handling for Mutex::new
+                if type_name == "Mutex" && method_name == "new" {
+                    if args.len() != 1 {
+                        return self.err(
+                            SemanticError::ArgumentCountMismatch {
+                                name: "Mutex::new".into(),
+                                expected: 1,
+                                found: args.len(),
+                            },
+                            Some(expr.span.clone()),
+                        );
+                    }
+                    let arg_type = self.check_expr(&mut args[0])?;
+                    // Return Mutex<T> where T is arg_type
+                    return Ok(Type::Struct("Mutex".to_string(), vec![arg_type]));
+                }
 
                 // Check arguments first so we can mangle
                 let mut arg_types = Vec::new();
@@ -6714,8 +6785,10 @@ impl SemanticAnalyzer {
                         if let ExprKind::Closure { args: closure_args, body, .. } = &mut args[0].inner {
                             // Get element type from Vec type args
                             let elem_ty = match &obj_type {
-                                Type::Struct(_, type_args) => type_args.first().cloned().unwrap_or(Type::I64),
-                                _ => Type::I64,
+                                Type::Struct(_, type_args) => type_args.first().cloned().ok_or_else(|| {
+                                    SemanticError::Generic("Vec must have generic type parameter".to_string()).to_tl_error(Some(expr.span.clone()))
+                                })?,
+                                _ => return self.err(SemanticError::Generic("Expected Vec".to_string()), Some(expr.span.clone())),
                             };
 
                             // Enter scope and bind closure args
@@ -6751,6 +6824,91 @@ impl SemanticAnalyzer {
                     }
                 }
 
+                // === Mutex methods: read, modify, release ===
+                if method_name == "read" || method_name == "modify" || method_name == "release" {
+                    let is_mutex = match &obj_type {
+                        Type::Struct(name, _) if name.starts_with("Mutex") => true,
+                        _ => obj_type.get_base_name() == "Mutex",
+                    };
+
+                    if is_mutex {
+                        let elem_ty = match &obj_type {
+                            Type::Struct(_, type_args) => type_args.first().cloned().ok_or_else(|| {
+                                SemanticError::Generic("Mutex must have generic type parameter".to_string()).to_tl_error(Some(expr.span.clone()))
+                            })?,
+                            _ => return self.err(SemanticError::Generic("Expected Mutex".to_string()), Some(expr.span.clone())),
+                        };
+
+                        if method_name == "release" {
+                            if args.len() != 0 {
+                                return self.err(
+                                    SemanticError::ArgumentCountMismatch {
+                                        name: "Mutex.release".into(),
+                                        expected: 0,
+                                        found: args.len(),
+                                    },
+                                    Some(expr.span.clone()),
+                                );
+                            }
+                            return Ok(Type::Void);
+                        }
+
+                        if args.len() != 1 {
+                            return self.err(
+                                SemanticError::ArgumentCountMismatch {
+                                    name: format!("Mutex.{}", method_name),
+                                    expected: 1,
+                                    found: args.len(),
+                                },
+                                Some(expr.span.clone()),
+                            );
+                        }
+
+                        if let ExprKind::Closure { args: closure_args, body, .. } = &mut args[0].inner {
+                            self.enter_scope();
+                            for (arg_name, arg_type_opt) in closure_args.iter() {
+                                let arg_ty = arg_type_opt.clone().unwrap_or(elem_ty.clone());
+                                self.declare_variable(arg_name.clone(), arg_ty, false)?;
+                            }
+
+                            let mut last_ty = Type::Void;
+                            let body_len = body.len();
+                            for (idx, stmt) in body.iter_mut().enumerate() {
+                                if idx == body_len - 1 {
+                                    if let StmtKind::Expr(e) = &mut stmt.inner {
+                                        last_ty = self.check_expr(e)?;
+                                    } else {
+                                        self.check_stmt(stmt)?;
+                                    }
+                                } else {
+                                    self.check_stmt(stmt)?;
+                                }
+                            }
+                            self.exit_scope();
+
+                            if let ExprKind::Closure { return_type, .. } = &mut args[0].inner {
+                                *return_type = Some(last_ty.clone());
+                            }
+
+                            if method_name == "modify" {
+                                return Ok(Type::Void); // modify implicitly returns Void to Caller
+                            } else {
+                                return Ok(last_ty); // read returns the closure's return type
+                            }
+                        } else {
+                            // Support passing a raw Fn? Currently we only really support inline closures for these in TL.
+                            // If it's another expr that evaluates to Fn, we just check and return.
+                            let _closure_ty = self.check_expr(&mut args[0])?;
+                            if method_name == "modify" {
+                                return Ok(Type::Void);
+                            } else {
+                                // Better inference could be done here, returning elem_ty for simplicity if not a direct closure AST node.
+                                return Ok(elem_ty);
+                            }
+                        }
+                    }
+                }
+
                 // === Vec::join(sep: String) -> String ===
                 if method_name == "join" && args.len() == 1 {
                     let is_vec = match &obj_type {
@@ -6772,8 +6930,10 @@ impl SemanticAnalyzer {
                     };
                     if is_vec {
                         let elem_ty = match &obj_type {
-                            Type::Struct(_, type_args) => type_args.first().cloned().unwrap_or(Type::I64),
-                            _ => Type::I64,
+                            Type::Struct(_, type_args) => type_args.first().cloned().ok_or_else(|| {
+                                SemanticError::Generic("Vec must have generic type parameter".to_string()).to_tl_error(Some(expr.span.clone()))
+                            })?,
+                            _ => return self.err(SemanticError::Generic("Expected Vec".to_string()), Some(expr.span.clone())),
                         };
                         match method_name.as_str() {
                             "enumerate" => {
@@ -6784,8 +6944,10 @@ impl SemanticAnalyzer {
                             "flatten" => {
                                 if args.len() == 0 {
                                     let inner_elem_ty = match &elem_ty {
-                                        Type::Struct(name, type_args) if name == "Vec" => type_args.first().cloned().unwrap_or(Type::I64),
-                                        _ => Type::I64,
+                                        Type::Struct(name, type_args) if name == "Vec" => type_args.first().cloned().ok_or_else(|| {
+                                            SemanticError::Generic("Inner Vec must have generic type parameter".to_string()).to_tl_error(Some(expr.span.clone()))
+                                        })?,
+                                        _ => return self.err(SemanticError::Generic("flatten requires inner type to be Vec".to_string()), Some(expr.span.clone())),
                                     };
                                     return Ok(Type::Struct("Vec".to_string(), vec![inner_elem_ty]));
                                 }
@@ -6794,8 +6956,10 @@ impl SemanticAnalyzer {
                                 if args.len() == 1 {
                                     let arg_ty = self.check_expr(&mut args[0])?;
                                     let arg_elem_ty = match &arg_ty {
-                                        Type::Struct(name, type_args) if name == "Vec" => type_args.first().cloned().unwrap_or(Type::I64),
-                                        _ => Type::I64,
+                                        Type::Struct(name, type_args) if name == "Vec" => type_args.first().cloned().ok_or_else(|| {
+                                            SemanticError::Generic("Argument to zip must be a Vec with generic type parameter".to_string()).to_tl_error(Some(expr.span.clone()))
+                                        })?,
+                                        _ => return self.err(SemanticError::Generic("zip argument must be Vec".to_string()), Some(expr.span.clone())),
                                     };
                                     return Ok(Type::Struct("Vec".to_string(), vec![Type::Tuple(vec![elem_ty, arg_elem_ty])]));
                                 }
@@ -6816,8 +6980,10 @@ impl SemanticAnalyzer {
                     if is_option {
                         if let ExprKind::Closure { args: closure_args, body, .. } = &mut args[0].inner {
                             let elem_ty = match &obj_type {
-                                Type::Enum(_, type_args) => type_args.first().cloned().unwrap_or(Type::I64),
-                                _ => Type::I64,
+                                Type::Enum(_, type_args) => type_args.first().cloned().ok_or_else(|| {
+                                    SemanticError::Generic("Option/Result must have generic type parameter".to_string()).to_tl_error(Some(expr.span.clone()))
+                                })?,
+                                _ => return self.err(SemanticError::Generic("Expected Option/Result".to_string()), Some(expr.span.clone())),
                             };
 
                             self.enter_scope();

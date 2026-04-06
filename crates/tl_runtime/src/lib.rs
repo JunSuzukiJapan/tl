@@ -26,6 +26,8 @@ pub mod gguf;
 pub mod image_ffi;
 pub mod data_ffi;
 pub mod regex_ffi;
+pub mod thread_ffi;
+pub mod mutex_ffi;
 // autograd_registry は MetalTensor 統合により廃止
 
 // ========== Stub Modules (Legacy Compatibility) ==========
@@ -93,6 +95,14 @@ pub use string_ffi::{
 // ========== Regex Exports ==========
 pub use regex_ffi::{
     tl_regex_new, tl_regex_is_match, tl_regex_replace, tl_regex_release,
+};
+
+// ========== Thread / Mutex Exports ==========
+pub use thread_ffi::{
+    tl_thread_spawn, tl_thread_join,
+};
+pub use mutex_ffi::{
+    tl_mutex_new, tl_mutex_modify, tl_mutex_read, tl_mutex_release,
 };
 
 // ========== TensorOps Extended Exports ==========

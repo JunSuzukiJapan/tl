@@ -12,6 +12,7 @@ pub use generic::vec_deque;
 pub use generic::btreemap;
 pub use generic::string_builder;
 pub use generic::traits;
+pub use generic::mutex;
 
 pub use non_generic::io;
 pub use non_generic::system;
@@ -19,6 +20,7 @@ pub use non_generic::llm;
 pub use non_generic::tensor;
 pub use non_generic::param;
 pub use non_generic::regex;
+pub use non_generic::thread;
 
 use crate::compiler::codegen::CodeGenerator;
 
@@ -114,12 +116,21 @@ pub fn load_all_builtins(codegen: &mut CodeGenerator) {
     }
     codegen.generic_impls.entry("StringBuilder".to_string()).or_default().extend(str_builder_data.impl_blocks);
 
+    // Mutex
+    let mutex_data = generic::mutex::load_mutex_data();
+    codegen.type_manager.register_builtin(mutex_data.clone());
+    if let Some(def) = mutex_data.struct_def {
+        codegen.struct_defs.insert(def.name.clone(), def);
+    }
+    codegen.generic_impls.entry("Mutex".to_string()).or_default().extend(mutex_data.impl_blocks);
+
     // 2. Register Non-Generic Types (IO, System, LLM, Tensor, Param, Primitives)
     // These register directly into TypeManager
     non_generic::primitives::register_primitive_types(&mut codegen.type_manager);
     io::register_io_types(&mut codegen.type_manager);
     system::register_system_types(&mut codegen.type_manager);
     non_generic::regex::register_regex_types(&mut codegen.type_manager);
+    non_generic::thread::register_thread_types(&mut codegen.type_manager);
     // Register LLM Structs (from source)
     let llm_data = llm::load_llm_data();
     for def in llm_data.extra_structs {

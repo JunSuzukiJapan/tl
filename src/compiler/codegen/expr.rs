@@ -2654,13 +2654,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let mut param_types = Vec::new();
                 let mut param_names = Vec::new();
                 for (arg_name, arg_type_opt) in args {
-                    let arg_ty = arg_type_opt.clone().unwrap_or(Type::I64);
+                    let arg_ty = arg_type_opt.clone().ok_or_else(|| format!("Closure argument '{}' missing type annotation and could not be inferred", arg_name))?;
                     param_types.push(arg_ty);
                     param_names.push(arg_name.clone());
                 }
 
                 // Determine return type
-                let ret_ty = return_type.clone().unwrap_or(Type::I64);
+                let ret_ty = return_type.clone().ok_or_else(|| "Closure return type missing and could not be inferred".to_string())?;
 
                 let has_captures = !captures.is_empty();
                 let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
@@ -2669,7 +2669,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let mut llvm_param_types: Vec<inkwell::types::BasicMetadataTypeEnum<'ctx>> = Vec::new();
                 llvm_param_types.push(ptr_type.into()); // env_ptr always first
                 for pt in &param_types {
-                    let llvm_ty = self.get_llvm_type(pt).unwrap_or(self.context.i64_type().into());
+                    let llvm_ty = self.get_llvm_type(pt)?;
                     llvm_param_types.push(llvm_ty.into());
                 }
 
@@ -4700,6 +4700,71 @@ impl<'ctx> CodeGenerator<'ctx> {
             return Ok((val, grad_ty));
         }
 
+        let is_mutex_call = struct_name.starts_with("Mutex") || type_name == "Mutex";
+        if is_mutex_call && method == "new" {
+            if args.len() != 1 {
+                return Err("Mutex::new requires 1 argument".into());
+            }
+            
+            let arg_expr = &args[0];
+            let (val, ty) = self.compile_expr(arg_expr)?;
+            
+            let llvm_type = self.get_llvm_type(&ty)?;
+            let size = if llvm_type.is_sized() { llvm_type.size_of().unwrap() } else { self.context.i64_type().const_zero() };
+            // Cast size to i64
+            let size_i64 = if size.get_type() == self.context.i32_type() {
+                 self.builder.build_int_z_extend(size, self.context.i64_type(), "size_i64").unwrap()
+            } else {
+                 size
+            };
+            
+            let temp_ptr = self.builder.build_alloca(llvm_type, "mutex_val").unwrap();
+            let store_val = if matches!(ty, Type::Tensor(_, _) | Type::Struct(_, _) | Type::Tuple(_) | Type::String(_)) {
+                self.emit_deep_clone(val, &ty)?
+            } else {
+                val
+            };
+            self.builder.build_store(temp_ptr, store_val).unwrap();
+            
+            let data_ptr_cast = self.builder.build_pointer_cast(temp_ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "m_val_cast").unwrap();
+            let new_fn = self.module.get_function("tl_mutex_new").unwrap();
+            let call = self.builder.build_call(new_fn, &[size_i64.into(), data_ptr_cast.into()], "m_id").unwrap();
+            let id_val = match call.try_as_basic_value() {
+                inkwell::values::ValueKind::Basic(v) => v,
+                _ => return Err("tl_mutex_new returned void".into()),
+            };
+            
+            // To construct Mutex<T>, we need to dynamically allocate it as a struct.
+            let m_name = if let Type::Struct(name, _) = self.normalize_type(target_type) { name } else { "Mutex".to_string() };
+            let t_struct_ty = self.context.struct_type(&[self.context.i64_type().into()], false);
+            
+            let malloc_fn = self.module.get_function("malloc").unwrap();
+            let m_size = t_struct_ty.size_of().unwrap();
+            let m_size_i64 = if m_size.get_type() == self.context.i32_type() {
+                 self.builder.build_int_z_extend(m_size, self.context.i64_type(), "size_i64").unwrap()
+            } else {
+                 m_size
+            };
+            let call_malloc = self.builder.build_call(malloc_fn, &[m_size_i64.into()], "m_malloc").unwrap();
+            let raw_ptr = match call_malloc.try_as_basic_value() {
+                inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
+                _ => return Err("malloc returned void".into()),
+            };
+            
+            // register
+            let cast_ptr = self.builder.build_pointer_cast(raw_ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "cast_ptr").unwrap();
+            let name_global = self.builder.build_global_string_ptr(&m_name, "struct_name").unwrap();
+            let register_fn = self.module.get_function("tl_mem_register_struct_named").unwrap();
+            self.builder.build_call(register_fn, &[cast_ptr.into(), name_global.as_pointer_value().into()], "").unwrap();
+            
+            // store id
+            let m_ptr = self.builder.build_pointer_cast(raw_ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "m_ptr").unwrap();
+            let id_gep = self.builder.build_struct_gep(t_struct_ty, m_ptr, 0, "id_f").unwrap();
+            self.builder.build_store(id_gep, id_val).unwrap();
+            
+            return Ok((m_ptr.into(), Type::Struct(m_name, vec![ty])));
+        }
+
         // 0. Check if this is an Enum Variant initialization (priority check)
         //    This handles cases like Entry_i64_i64::Empty where the type_name is
         //    the mangled enum name and method is a variant name.
@@ -6289,24 +6354,28 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Detect BEFORE compile_expr(obj) so we have full AST access to the closure.
         // The element type comes from the closure argument's type annotation,
         // NOT from parsing mangled type names.
-        let closure_methods = ["map", "filter", "any", "all", "and_then", "unwrap_or_else", "map_err", "reduce"];
+        let closure_methods = ["map", "filter", "any", "all", "and_then", "unwrap_or_else", "map_err", "reduce", "read", "modify"];
         if closure_methods.contains(&method) && args.len() == 1 {
             if let ExprKind::Closure { args: closure_args, body, .. } = &args[0].inner {
                 // Get element type from the closure argument's type annotation
                 let elem_ty = closure_args.first()
                     .and_then(|(_, ty_opt)| ty_opt.clone())
-                    .unwrap_or(Type::I64); // fallback if no annotation
+                    .ok_or_else(|| "Closure argument missing type annotation and could not be inferred for dynamic collection method".to_string())?;
 
                 // Now compile the object expression to get obj_val
                 let (obj_val, obj_ty) = self.compile_expr(obj)?;
 
-                // Dispatch: Option vs Result vs Vec
-                let (is_option, is_result) = match &obj_ty {
+                // Dispatch: Option vs Result vs Vec vs Mutex
+                let (is_option, is_result, is_mutex) = match &obj_ty {
                     Type::Enum(name, _) => {
                         let base = crate::compiler::ast::mangle_base_name(name);
-                        (base == "Option", base == "Result")
+                        (base == "Option", base == "Result", false)
                     }
-                    _ => (false, false),
+                    Type::Struct(name, _) => {
+                        let base = crate::compiler::ast::mangle_base_name(name);
+                        (false, false, base == "Mutex")
+                    }
+                    _ => (false, false, false),
                 };
 
                 if is_option && (method == "map" || method == "and_then" || method == "unwrap_or_else") {
@@ -6318,6 +6387,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                 if is_result && (method == "map" || method == "map_err" || method == "and_then" || method == "unwrap_or_else") {
                     return self.compile_result_closure_method(
                         obj_val, &obj_ty, &elem_ty, method, closure_args, body,
+                    );
+                }
+                
+                if is_mutex && (method == "read" || method == "modify") {
+                    return self.compile_mutex_closure_method(
+                        obj_val, &obj_ty, &elem_ty, method, &args[0]
                     );
                 }
 
@@ -6355,6 +6430,30 @@ impl<'ctx> CodeGenerator<'ctx> {
             };
             if is_vec {
                 return self.compile_vec_builtin_method(obj_val, &obj_ty, method, args);
+            }
+        }
+
+        // === Mutex: release ===
+        if method == "release" && args.len() == 0 {
+            let is_mutex = match &obj_ty {
+                Type::Struct(name, _) => {
+                    let base = mangle_base_name(name);
+                    base == "Mutex"
+                }
+                _ => false,
+            };
+            if is_mutex {
+                let m_struct_ty = self.context.struct_type(&[self.context.i64_type().into()], false);
+                let ptr = if obj_val.is_pointer_value() {
+                    obj_val.into_pointer_value()
+                } else {
+                    return Err("Mutex value is not pointer".into());
+                };
+                let id_gep = self.builder.build_struct_gep(m_struct_ty, ptr, 0, "id_field").unwrap();
+                let id_val = self.builder.build_load(self.context.i64_type(), id_gep, "id_val").unwrap();
+                let fn_val = self.module.get_function("tl_mutex_release").ok_or("tl_mutex_release not found")?;
+                self.builder.build_call(fn_val, &[id_val.into()], "").unwrap();
+                return Ok((self.context.i64_type().const_zero().into(), Type::Void));
             }
         }
 
@@ -11278,5 +11377,132 @@ impl<'ctx> CodeGenerator<'ctx> {
             _ => vec![],
         };
         Ok((alloca.into(), Type::Enum(enum_name.to_string(), type_args)))
+    }
+
+    fn compile_mutex_closure_method(
+        &mut self,
+        obj_val: inkwell::values::BasicValueEnum<'ctx>,
+        _obj_ty: &Type,
+        _elem_ty: &Type,
+        method: &str,
+        closure_expr: &crate::compiler::ast::Expr,
+    ) -> Result<(inkwell::values::BasicValueEnum<'ctx>, Type), String> {
+        // Compile closure to {fn_ptr, env_ptr} using compile_expr
+        let (closure_val, closure_ty) = self.compile_expr(closure_expr)?;
+
+        let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
+        
+        // closure_val is a StructValue { fn_ptr, env_ptr }
+        let closure_struct = closure_val.into_struct_value();
+        let actual_fn_ptr = self.builder.build_extract_value(closure_struct, 0, "fn_ptr").unwrap().into_pointer_value();
+        let actual_env_ptr = self.builder.build_extract_value(closure_struct, 1, "env_ptr").unwrap().into_pointer_value();
+        
+        // Generate a Trampoline function: void trampoline(env_ptr, arg_ptr, out_ptr)
+        let void_ty = self.context.void_type();
+        let trampoline_fn_type = void_ty.fn_type(&[ptr_type.into(), ptr_type.into(), ptr_type.into()], false);
+        static TRAMPOLINE_ID: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let tid = TRAMPOLINE_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let trampoline_name = format!("__tl_mutex_trampoline_{}", tid);
+        let trampoline_fn = self.module.add_function(&trampoline_name, trampoline_fn_type, None);
+        
+        // Build Trampoline body
+        let saved_block = self.builder.get_insert_block();
+        let tramp_bb = self.context.append_basic_block(trampoline_fn, "entry");
+        self.builder.position_at_end(tramp_bb);
+        
+        let t_env_ptr = trampoline_fn.get_nth_param(0).unwrap().into_pointer_value();
+        let t_arg_ptr = trampoline_fn.get_nth_param(1).unwrap().into_pointer_value();
+        let t_out_ptr = trampoline_fn.get_nth_param(2).unwrap().into_pointer_value();
+        
+        // Get the arg according to elem_ty
+        let llvm_elem_ty = self.get_llvm_type(_elem_ty)?;
+        let t_arg_val = if llvm_elem_ty.is_pointer_type() {
+            // For structs/tensors, arg is a pointer, but in FFI we receive a pointer to the pointer?
+            // Actually, `guard.data_ptr` IS the pointer to the heap object (the struct itself).
+            // So if `_elem_ty` is Struct, the closure expects `i8*`.
+            // The FFI passes `guard.data_ptr` which is `i8*`! So we just use `t_arg_ptr` directly!
+            // Wait, t_arg_ptr IS the `data_ptr` value inside Mutex state. 
+            // If T is I64, `data_ptr` points to an 8-byte allocation holding the I64.
+            // So we always LOAD from t_arg_ptr for primitive types, and pass directly for pointer types?
+            if matches!(_elem_ty, Type::Tensor(_,_) | Type::Struct(_,_) | Type::Tuple(_) | Type::String(_)) {
+                t_arg_ptr.into()
+            } else {
+                self.builder.build_load(llvm_elem_ty, t_arg_ptr, "arg_loaded").unwrap()
+            }
+        } else {
+            self.builder.build_load(llvm_elem_ty, t_arg_ptr, "arg_loaded").unwrap()
+        };
+        
+        // Ret type
+        let ret_ty = if let Type::Fn(_, ref ret) = closure_ty { (**ret).clone() } else { Type::Void };
+        let llvm_ret_ty = self.get_llvm_type(&ret_ty)?;
+        
+        // Call actual closure
+        // Re-construct the FnType of the closure to call it indirectly
+        let actual_fn_type = if ret_ty == Type::Void {
+            void_ty.fn_type(&[ptr_type.into(), llvm_elem_ty.into()], false)
+        } else {
+            llvm_ret_ty.fn_type(&[ptr_type.into(), llvm_elem_ty.into()], false)
+        };
+        
+        let call_res = self.builder.build_indirect_call(actual_fn_type, actual_fn_ptr, &[t_env_ptr.into(), t_arg_val.into()], "call_res").unwrap();
+        
+        if let inkwell::values::ValueKind::Basic(res_val) = call_res.try_as_basic_value() {
+            // Store res_val into t_out_ptr
+            if llvm_ret_ty.is_pointer_type() {
+                if matches!(ret_ty, Type::Tensor(_,_) | Type::Struct(_,_) | Type::Tuple(_) | Type::String(_)) {
+                    let out_ptr_cast = self.builder.build_pointer_cast(t_out_ptr, ptr_type, "out_ptr_cast").unwrap();
+                    self.builder.build_store(out_ptr_cast, res_val).unwrap();
+                } else {
+                    let out_ptr_cast = self.builder.build_pointer_cast(t_out_ptr, ptr_type, "out_ptr_cast").unwrap();
+                    self.builder.build_store(out_ptr_cast, res_val).unwrap();
+                }
+            } else {
+                let out_ptr_cast = self.builder.build_pointer_cast(t_out_ptr, ptr_type, "out_ptr_cast").unwrap();
+                self.builder.build_store(out_ptr_cast, res_val).unwrap();
+            }
+        }
+        
+        self.builder.build_return(None).unwrap();
+        
+        // Restore builder
+        if let Some(sb) = saved_block {
+             self.builder.position_at_end(sb);
+        }
+        
+        let fn_ptr = trampoline_fn.as_global_value().as_pointer_value();
+        let env_ptr = actual_env_ptr;
+        
+        let m_struct_ty = self.context.struct_type(&[self.context.i64_type().into()], false);
+        let id_gep = self.builder.build_struct_gep(m_struct_ty, obj_val.into_pointer_value(), 0, "id_gep").unwrap();
+        let id_val = self.builder.build_load(self.context.i64_type(), id_gep, "id_val").unwrap();
+        
+        if method == "modify" {
+            let fn_val = self.module.get_function("tl_mutex_modify").ok_or("tl_mutex_modify not found")?;
+            self.builder.build_call(fn_val, &[id_val.into(), fn_ptr.into(), env_ptr.into()], "").unwrap();
+            Ok((self.context.i64_type().const_zero().into(), Type::Void))
+        } else {
+            let fn_val = self.module.get_function("tl_mutex_read").ok_or("tl_mutex_read not found")?;
+            
+            let ret_ty = if let Type::Fn(_, ref ret) = closure_ty {
+                (**ret).clone()
+            } else {
+                Type::Void
+            };
+            
+            let llvm_ret_ty = self.get_llvm_type(&ret_ty)?;
+            let _size = if llvm_ret_ty.is_sized() { llvm_ret_ty.size_of().unwrap() } else { self.context.i64_type().const_zero() };
+            // Wait, we need to pass a pointer to output. The FFI copies `out_size` bytes into `out_ptr`.
+            // Wait, does our FFI require `out_size` in `read`?
+            // Signature of tl_mutex_read: void tl_mutex_read(int64_t id, MutexAccessorFn accessor, void* env_ptr, void* out_data);
+            // It does not take out_size. It just takes `out_data` pointer to cast back.
+            let ret_ptr = self.builder.build_alloca(llvm_ret_ty, "ret_val").unwrap();
+            let ret_ptr_cast = self.builder.build_pointer_cast(ret_ptr, ptr_type, "ret_ptr_cast").unwrap();
+            
+            self.builder.build_call(fn_val, &[id_val.into(), fn_ptr.into(), env_ptr.into(), ret_ptr_cast.into()], "").unwrap();
+            
+            let res = self.builder.build_load(llvm_ret_ty, ret_ptr, "res").unwrap();
+            Ok((res, ret_ty))
+        }
     }
 }

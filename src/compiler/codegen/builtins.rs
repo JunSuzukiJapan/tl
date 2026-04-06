@@ -3471,6 +3471,44 @@ pub fn declare_runtime_functions<'ctx>(
         execution_engine.add_global_mapping(&f, runtime::stdlib::tl_regex_release as *const () as usize);
     }
 
+    // Thread FFI
+    let fn_thread_spawn_type = i64_type.fn_type(&[usize_ptr.into(), void_ptr.into()], false);
+    add_fn("tl_thread_spawn", fn_thread_spawn_type);
+    if let Some(f) = module.get_function("tl_thread_spawn") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_thread_spawn as *const () as usize);
+    }
+    
+    let fn_thread_join_type = i64_type.fn_type(&[i64_type.into()], false);
+    add_fn("tl_thread_join", fn_thread_join_type);
+    if let Some(f) = module.get_function("tl_thread_join") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_thread_join as *const () as usize);
+    }
+
+    // Mutex FFI
+    let fn_mutex_new_type = i64_type.fn_type(&[i64_type.into(), void_ptr.into()], false);
+    add_fn("tl_mutex_new", fn_mutex_new_type);
+    if let Some(f) = module.get_function("tl_mutex_new") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_mutex_new as *const () as usize);
+    }
+    
+    let fn_mutex_modify_type = void_type.fn_type(&[i64_type.into(), usize_ptr.into(), void_ptr.into()], false);
+    add_fn("tl_mutex_modify", fn_mutex_modify_type);
+    if let Some(f) = module.get_function("tl_mutex_modify") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_mutex_modify as *const () as usize);
+    }
+    
+    let fn_mutex_read_type = void_type.fn_type(&[i64_type.into(), usize_ptr.into(), void_ptr.into(), void_ptr.into()], false);
+    add_fn("tl_mutex_read", fn_mutex_read_type);
+    if let Some(f) = module.get_function("tl_mutex_read") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_mutex_read as *const () as usize);
+    }
+    
+    let fn_mutex_release_type = void_type.fn_type(&[i64_type.into()], false);
+    add_fn("tl_mutex_release", fn_mutex_release_type);
+    if let Some(f) = module.get_function("tl_mutex_release") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_mutex_release as *const () as usize);
+    }
+
     // tl_string_from_f64(f: f64) -> *mut StringStruct
     let str_from_f64_type = i8_ptr.fn_type(&[f64_type.into()], false);
     add_fn("tl_string_from_f64", str_from_f64_type);

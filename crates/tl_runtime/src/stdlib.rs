@@ -54,6 +54,18 @@ pub use crate::regex_ffi::{
     tl_regex_release,
 };
 
+pub use crate::thread_ffi::{
+    tl_thread_spawn,
+    tl_thread_join,
+};
+
+pub use crate::mutex_ffi::{
+    tl_mutex_new,
+    tl_mutex_modify,
+    tl_mutex_read,
+    tl_mutex_release,
+};
+
 // path 関連は file_io.rs から re-export
 pub use crate::file_io::{
     tl_path_new,
