@@ -45,6 +45,9 @@ pub fn register_regex_types(manager: &mut TypeManager) {
     );
     
     // Regex.release() -> Void
+    // NOTE: We don't use 'free' as the method name or the generated C function name (tl_regex_free)
+    // because the compiler implicitly tries to generate/call a global `tl_<struct>_free(ptr)`
+    // which leads to an LLVM signature mismatch (id as i64 vs ptr).
     regex_type.register_evaluated_instance_method(
         "release", 
         compile_regex_release, 
@@ -174,6 +177,8 @@ pub fn compile_regex_replace<'ctx>(
     Ok((res, Type::String("String".to_string())))
 }
 
+/// NOTE: Avoid naming this `compile_regex_free` and calling `tl_regex_free` to prevent 
+/// collision with the compiler's implicit cleanup hooks which expect a pointer argument.
 pub fn compile_regex_release<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     obj: BasicValueEnum<'ctx>,

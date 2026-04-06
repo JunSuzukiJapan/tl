@@ -85,7 +85,10 @@ pub extern "C" fn tl_regex_replace(id: i64, text: *mut StringStruct, replacement
     }
 }
 
-/// Frees the compiled Regex from the registry
+/// Frees the compiled Regex from the registry.
+/// NOTE: The name `tl_regex_release` is used instead of `tl_regex_free` to avoid 
+/// collisions with the compiler's implicit/auto-generated garbage collector hooks 
+/// (`tl_<type>_free`) which typically expect a raw pointer rather than an i64 ID.
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_regex_release(id: i64) {
     if id > 0 {
