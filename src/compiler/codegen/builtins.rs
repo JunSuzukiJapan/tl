@@ -3446,6 +3446,31 @@ pub fn declare_runtime_functions<'ctx>(
         execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_from_chars as *const () as usize);
     }
 
+    // Regex FFI
+    let fn_regex_new_type = i64_type.fn_type(&[i8_ptr.into()], false);
+    add_fn("tl_regex_new", fn_regex_new_type);
+    if let Some(f) = module.get_function("tl_regex_new") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_regex_new as *const () as usize);
+    }
+
+    let fn_regex_is_match_type = context.bool_type().fn_type(&[i64_type.into(), i8_ptr.into()], false);
+    add_fn("tl_regex_is_match", fn_regex_is_match_type);
+    if let Some(f) = module.get_function("tl_regex_is_match") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_regex_is_match as *const () as usize);
+    }
+
+    let fn_regex_replace_type = i8_ptr.fn_type(&[i64_type.into(), i8_ptr.into(), i8_ptr.into()], false);
+    add_fn("tl_regex_replace", fn_regex_replace_type);
+    if let Some(f) = module.get_function("tl_regex_replace") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_regex_replace as *const () as usize);
+    }
+
+    let fn_regex_release_type = void_type.fn_type(&[i64_type.into()], false);
+    add_fn("tl_regex_release", fn_regex_release_type);
+    if let Some(f) = module.get_function("tl_regex_release") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_regex_release as *const () as usize);
+    }
+
     // tl_string_from_f64(f: f64) -> *mut StringStruct
     let str_from_f64_type = i8_ptr.fn_type(&[f64_type.into()], false);
     add_fn("tl_string_from_f64", str_from_f64_type);

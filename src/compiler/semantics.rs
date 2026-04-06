@@ -277,6 +277,9 @@ impl SemanticAnalyzer {
         crate::compiler::codegen::builtin_types::non_generic::system::register_system_types(
             &mut analyzer.type_manager,
         );
+        crate::compiler::codegen::builtin_types::non_generic::regex::register_regex_types(
+            &mut analyzer.type_manager,
+        );
         crate::compiler::codegen::builtin_types::non_generic::llm::register_llm_types(
             &mut analyzer.type_manager,
         );

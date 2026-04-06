@@ -4134,6 +4134,7 @@ dependencies = [
  "memmap2",
  "once_cell",
  "rand 0.8.5",
+ "regex",
  "reqwest 0.13.1",
  "safetensors",
  "serde_json",

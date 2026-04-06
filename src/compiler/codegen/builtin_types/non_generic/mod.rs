@@ -13,3 +13,4 @@ pub mod string_methods;
 pub mod map_methods;
 pub mod primitive_methods;
 pub mod param;
+pub mod regex;

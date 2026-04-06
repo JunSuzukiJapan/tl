@@ -18,6 +18,7 @@ pub use non_generic::system;
 pub use non_generic::llm;
 pub use non_generic::tensor;
 pub use non_generic::param;
+pub use non_generic::regex;
 
 use crate::compiler::codegen::CodeGenerator;
 
@@ -118,6 +119,7 @@ pub fn load_all_builtins(codegen: &mut CodeGenerator) {
     non_generic::primitives::register_primitive_types(&mut codegen.type_manager);
     io::register_io_types(&mut codegen.type_manager);
     system::register_system_types(&mut codegen.type_manager);
+    non_generic::regex::register_regex_types(&mut codegen.type_manager);
     // Register LLM Structs (from source)
     let llm_data = llm::load_llm_data();
     for def in llm_data.extra_structs {

@@ -46,6 +46,14 @@ pub use crate::system::{
     tl_prompt,
 };
 
+// regex_ffi からの re-export
+pub use crate::regex_ffi::{
+    tl_regex_new,
+    tl_regex_is_match,
+    tl_regex_replace,
+    tl_regex_release,
+};
+
 // path 関連は file_io.rs から re-export
 pub use crate::file_io::{
     tl_path_new,
