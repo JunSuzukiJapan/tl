@@ -1,67 +1,107 @@
 fn test_primitive() {
-    print("Testing Option<I64>...");
-    let some_val = Option::Some(42);
-    // FIXME: Option::None requires explicit generics or type inference improvements
-    // let none_val: Option<I64> = Option::None;
+    println("Testing Option<i64>...");
+    let some_val: Option<i64> = Option::Some(42);
+    let none_val: Option<i64> = Option::None;
 
     if some_val.is_some() {
-        print("some_val is some: OK");
+        println("OK: is_some()");
     } else {
-        print("some_val is some: FAILED");
+        println("FAIL: is_some()");
     }
-    
-    // if none_val.is_none() {
-    //    print("none_val is none: OK");
-    // } else {
-    //    print("none_val is none: FAILED");
-    // }
+
+    if none_val.is_none() {
+        println("OK: is_none()");
+    } else {
+        println("FAIL: is_none()");
+    }
 
     let val = some_val.unwrap();
     if val == 42 {
-        print("unwrap: OK");
+        println("OK: unwrap()");
     } else {
-        print("unwrap: FAILED");
+        println("FAIL: unwrap()");
     }
-    
-    // let default_val = none_val.unwrap_or(100);
-    // if default_val == 100 {
-    //    print("unwrap_or: OK");
-    // } else {
-    //    print("unwrap_or: FAILED");
-    // }
+
+    let default_val = none_val.unwrap_or(100);
+    if default_val == 100 {
+        println("OK: unwrap_or()");
+    } else {
+        println("FAIL: unwrap_or()");
+    }
 }
 
-fn test_string() {
-    /*
-    print("\nTesting Option<String>...");
-    let s = "Hello";
-    let some_str = Option::Some(s);
-    let none_str: Option<String> = Option::None;
-
-    if some_str.is_some() {
-        print("some_str is some: OK");
+// ===== Option::map =====
+fn test_option_map() {
+    println("Testing Option::map()...");
+    let ok: Option<i64> = Option::Some(21);
+    let mapped = ok.map(|x: i64| x * 2);
+    if mapped.is_some() {
+        if mapped.unwrap() == 42 {
+            println("OK: Option::map() some");
+        } else {
+            println("FAIL: Option::map() some");
+        }
     } else {
-        print("some_str is some: FAIL");
+        println("FAIL: Option::map() returned None");
     }
 
-    let unwrapped = some_str.unwrap();
-    if unwrapped == "Hello" {
-        print("some_str.unwrap(): OK");
+    let none: Option<i64> = Option::None;
+    let none_mapped = none.map(|x: i64| x * 2);
+    if none_mapped.is_none() {
+        println("OK: Option::map() none");
     } else {
-        print("some_str.unwrap(): FAIL");
+        println("FAIL: Option::map() none");
+    }
+}
+
+// ===== Option::and_then =====
+fn test_option_and_then() {
+    println("Testing Option::and_then()...");
+    let ok: Option<i64> = Option::Some(10);
+    let chained = ok.and_then(|x: i64| Option::Some(x * 3));
+    if chained.is_some() {
+        if chained.unwrap() == 30 {
+            println("OK: Option::and_then() some");
+        } else {
+            println("FAIL: Option::and_then() some");
+        }
+    } else {
+        println("FAIL: Option::and_then() returned None");
+    }
+    
+    let none: Option<i64> = Option::None;
+    let none_chained = none.and_then(|x: i64| Option::Some(x * 3));
+    if none_chained.is_none() {
+        println("OK: Option::and_then() none");
+    } else {
+        println("FAIL: Option::and_then() none");
+    }
+}
+
+// ===== Option::unwrap_or_else =====
+fn test_option_unwrap_or_else() {
+    println("Testing Option::unwrap_or_else()...");
+    let ok: Option<i64> = Option::Some(42);
+    let val1 = ok.unwrap_or_else(|| 100);
+    if val1 == 42 {
+        println("OK: Option::unwrap_or_else() some");
+    } else {
+        println("FAIL: Option::unwrap_or_else() some");
     }
 
-    let default_str = none_str.unwrap_or("World");
-    if default_str == "World" {
-        print("none_str.unwrap_or(): OK");
+    let none: Option<i64> = Option::None;
+    let val2 = none.unwrap_or_else(|| 100);
+    if val2 == 100 {
+        println("OK: Option::unwrap_or_else() none");
     } else {
-        print("none_str.unwrap_or(): FAIL");
+        println("FAIL: Option::unwrap_or_else() none");
     }
-    */
 }
 
 fn main() {
     test_primitive();
-    test_string();
-    print("\nAll Option tests finished.");
+    test_option_map();
+    test_option_and_then();
+    test_option_unwrap_or_else();
+    println("\nAll Option tests finished.");
 }

@@ -568,19 +568,32 @@ fn parse_variable(input: Input) -> IResult<Input, Expr, ParserError> {
 
 fn parse_closure(input: Input) -> IResult<Input, Expr, ParserError> {
     // Parse |args| body  or  || body
-    let (input, _) = expect_token(Token::Pipe)(input)?;
-    
-    // Parse arguments: name or name: Type, separated by commas
-    let (input, args) = separated_list0(
-        expect_token(Token::Comma),
-        |input| {
-            let (input, name) = identifier(input)?;
-            let (input, ty) = opt(preceded(expect_token(Token::Colon), parse_type))(input)?;
-            Ok((input, (name, ty)))
-        }
-    )(input)?;
-    
-    let (input, _) = expect_token(Token::Pipe)(input)?;
+    // Note: || might be lexed as Token::Or
+    let parse_empty_closure = |i| {
+        let (i, _) = expect_token(Token::Or)(i)?;
+        Ok((i, Vec::new()))
+    };
+
+    let parse_args_closure = |i| {
+        let (i, _) = expect_token(Token::Pipe)(i)?;
+        // Parse arguments: name or name: Type, separated by commas
+        let (i, args) = separated_list0(
+            expect_token(Token::Comma),
+            |input| {
+                let (input, name) = identifier(input)?;
+                let (input, ty) = opt(preceded(expect_token(Token::Colon), parse_type))(input)?;
+                Ok((input, (name, ty)))
+            }
+        )(i)?;
+        let (i, _) = expect_token(Token::Pipe)(i)?;
+        Ok((i, args))
+    };
+
+    let (input, args) = alt((
+        parse_empty_closure,
+        parse_args_closure,
+    ))(input)?;
+
     
     // Optional return type annotation: -> Type
     let (input, return_type) = opt(preceded(expect_token(Token::Arrow), parse_type))(input)?;
