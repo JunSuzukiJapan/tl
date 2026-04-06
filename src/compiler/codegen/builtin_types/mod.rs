@@ -7,6 +7,8 @@ pub use generic::option;
 pub use generic::result;
 pub use generic::vec;
 pub use generic::hashmap;
+pub use generic::hashset;
+pub use generic::vec_deque;
 pub use generic::traits;
 
 pub use non_generic::io;
@@ -60,6 +62,30 @@ pub fn load_all_builtins(codegen: &mut CodeGenerator) {
         codegen.enum_defs.insert(def.name.clone(), def);
     }
     codegen.generic_impls.entry("Entry".to_string()).or_default().extend(entry_data.impl_blocks);
+
+    // HashSet
+    let hashset_data = generic::hashset::load_hashset_data();
+    codegen.type_manager.register_builtin(hashset_data.clone());
+    if let Some(def) = hashset_data.struct_def {
+        codegen.struct_defs.insert(def.name.clone(), def);
+    }
+    codegen.generic_impls.entry("HashSet".to_string()).or_default().extend(hashset_data.impl_blocks);
+    
+    // SetEntry
+    let set_entry_data = generic::hashset::load_set_entry_data();
+    codegen.type_manager.register_builtin(set_entry_data.clone());
+    if let Some(def) = set_entry_data.enum_def {
+        codegen.enum_defs.insert(def.name.clone(), def);
+    }
+    codegen.generic_impls.entry("SetEntry".to_string()).or_default().extend(set_entry_data.impl_blocks);
+
+    // VecDeque
+    let vec_deque_data = generic::vec_deque::load_vec_deque_data();
+    codegen.type_manager.register_builtin(vec_deque_data.clone());
+    if let Some(def) = vec_deque_data.struct_def {
+        codegen.struct_defs.insert(def.name.clone(), def);
+    }
+    codegen.generic_impls.entry("VecDeque".to_string()).or_default().extend(vec_deque_data.impl_blocks);
 
     // 2. Register Non-Generic Types (IO, System, LLM, Tensor, Param, Primitives)
     // These register directly into TypeManager

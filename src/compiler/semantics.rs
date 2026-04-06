@@ -358,6 +358,15 @@ impl SemanticAnalyzer {
 
         let entry_data = crate::compiler::codegen::builtin_types::hashmap::load_entry_data();
         self.register_builtin_data(entry_data);
+
+        let hashset_data = crate::compiler::codegen::builtin_types::hashset::load_hashset_data();
+        self.register_builtin_data(hashset_data);
+
+        let set_entry_data = crate::compiler::codegen::builtin_types::hashset::load_set_entry_data();
+        self.register_builtin_data(set_entry_data);
+
+        let vec_deque_data = crate::compiler::codegen::builtin_types::vec_deque::load_vec_deque_data();
+        self.register_builtin_data(vec_deque_data);
     }
 
     fn register_builtin_data(&mut self, data: BuiltinTypeData) {
