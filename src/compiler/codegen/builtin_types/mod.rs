@@ -9,6 +9,7 @@ pub use generic::vec;
 pub use generic::hashmap;
 pub use generic::hashset;
 pub use generic::vec_deque;
+pub use generic::btreemap;
 pub use generic::traits;
 
 pub use non_generic::io;
@@ -86,6 +87,22 @@ pub fn load_all_builtins(codegen: &mut CodeGenerator) {
         codegen.struct_defs.insert(def.name.clone(), def);
     }
     codegen.generic_impls.entry("VecDeque".to_string()).or_default().extend(vec_deque_data.impl_blocks);
+
+    // BTreeMap
+    let btreemap_data = generic::btreemap::load_btreemap_data();
+    codegen.type_manager.register_builtin(btreemap_data.clone());
+    if let Some(def) = btreemap_data.struct_def {
+        codegen.struct_defs.insert(def.name.clone(), def);
+    }
+    codegen.generic_impls.entry("BTreeMap".to_string()).or_default().extend(btreemap_data.impl_blocks);
+
+    // BTreeNode
+    let btree_node_data = generic::btreemap::load_btree_node_data();
+    codegen.type_manager.register_builtin(btree_node_data.clone());
+    if let Some(def) = btree_node_data.struct_def {
+        codegen.struct_defs.insert(def.name.clone(), def);
+    }
+    codegen.generic_impls.entry("BTreeNode".to_string()).or_default().extend(btree_node_data.impl_blocks);
 
     // 2. Register Non-Generic Types (IO, System, LLM, Tensor, Param, Primitives)
     // These register directly into TypeManager

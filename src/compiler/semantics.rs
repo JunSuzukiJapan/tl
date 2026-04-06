@@ -367,6 +367,12 @@ impl SemanticAnalyzer {
 
         let vec_deque_data = crate::compiler::codegen::builtin_types::vec_deque::load_vec_deque_data();
         self.register_builtin_data(vec_deque_data);
+
+        let btreemap_data = crate::compiler::codegen::builtin_types::btreemap::load_btreemap_data();
+        self.register_builtin_data(btreemap_data);
+
+        let btree_node_data = crate::compiler::codegen::builtin_types::btreemap::load_btree_node_data();
+        self.register_builtin_data(btree_node_data);
     }
 
     fn register_builtin_data(&mut self, data: BuiltinTypeData) {

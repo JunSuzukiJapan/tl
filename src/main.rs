@@ -711,6 +711,7 @@ fn load_builtins() -> Result<tl_lang::compiler::ast::Module> {
         builtin_types::hashmap::SOURCE,
         builtin_types::hashset::SOURCE,
         builtin_types::vec_deque::SOURCE,
+        builtin_types::btreemap::SOURCE,
         builtin_types::option::SOURCE,
         builtin_types::result::SOURCE,
         builtin_types::llm::SOURCE,

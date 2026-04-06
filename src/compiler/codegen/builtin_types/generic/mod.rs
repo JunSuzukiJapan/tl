@@ -4,4 +4,5 @@ pub mod vec;
 pub mod hashmap;
 pub mod hashset;
 pub mod vec_deque;
+pub mod btreemap;
 pub mod traits;

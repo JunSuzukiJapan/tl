@@ -2999,7 +2999,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         // generic_args is empty but name is mangled (e.g., Vec_Entry_i64_i64)
                         // For Vec, HashMap, etc., the LLVM layout is fixed regardless of generic args
                         // So we can use the base type's LLVM layout
-                        if underscore_base == "Vec" || underscore_base == "HashMap" || underscore_base == "HashSet" || underscore_base == "Option" || underscore_base == "Result" || underscore_base == "VecDeque" {
+                        if underscore_base == "Vec" || underscore_base == "HashMap" || underscore_base == "HashSet" || underscore_base == "Option" || underscore_base == "Result" || underscore_base == "VecDeque" || underscore_base == "BTreeMap" || underscore_base == "BTreeNode" {
                             // Try to get base type, then monomorphize with i64 as fallback
                             if let Some(t) = self.struct_types.get(&underscore_base) {
                                 *t
