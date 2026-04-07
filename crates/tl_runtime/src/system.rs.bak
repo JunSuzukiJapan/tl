@@ -1,7 +1,7 @@
 //! System 関連の FFI 関数
 
 use crate::string_ffi::StringStruct;
-use std::ffi::{c_char, CStr, CString};
+use std::ffi::{CStr, CString};
 use std::io::Write;
 
 /// スリープ（ミリ秒）

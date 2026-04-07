@@ -2980,6 +2980,10 @@ pub fn declare_runtime_functions<'ctx>(
     let file_create_dir_type = context.bool_type().fn_type(&[i8_ptr.into()], false);
     module.add_function("tl_file_create_dir", file_create_dir_type, None);
 
+    // tl_file_list_dir(path: *const i8) -> *mut VecStruct
+    let file_list_dir_type = void_ptr.fn_type(&[i8_ptr.into()], false);
+    module.add_function("tl_file_list_dir", file_list_dir_type, None);
+
     // tl_path_parent(path: *mut Path) -> *mut String
     let path_parent_type = i8_ptr.fn_type(&[void_ptr.into()], false);
     module.add_function("tl_path_parent", path_parent_type, None);
@@ -2995,6 +2999,14 @@ pub fn declare_runtime_functions<'ctx>(
     // tl_system_exit(code: i64) -> void
     let system_exit_type = void_type.fn_type(&[context.i64_type().into()], false);
     module.add_function("tl_system_exit", system_exit_type, None);
+
+    // tl_system_platform() -> *mut StringStruct
+    let system_platform_type = i8_ptr.fn_type(&[], false);
+    module.add_function("tl_system_platform", system_platform_type, None);
+
+    // tl_system_command(cmd: *mut StringStruct) -> *mut StringStruct
+    let system_command_type = i8_ptr.fn_type(&[void_ptr.into()], false);
+    module.add_function("tl_system_command", system_command_type, None);
 
     // System
     // tl_system_time() -> f32
@@ -3071,7 +3083,10 @@ pub fn declare_runtime_functions<'ctx>(
         execution_engine.add_global_mapping(&f, runtime::stdlib::tl_file_delete as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_file_create_dir") {
-        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_file_create_dir as *const () as usize);
+        execution_engine.add_global_mapping(&f, runtime::file_io::tl_file_create_dir as *const () as usize);
+    }
+    if let Some(f) = module.get_function("tl_file_list_dir") {
+        execution_engine.add_global_mapping(&f, runtime::file_io::tl_file_list_dir as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_path_parent") {
         execution_engine.add_global_mapping(&f, runtime::stdlib::tl_path_parent as *const () as usize);
@@ -3084,6 +3099,12 @@ pub fn declare_runtime_functions<'ctx>(
     }
     if let Some(f) = module.get_function("tl_system_exit") {
         execution_engine.add_global_mapping(&f, runtime::stdlib::tl_system_exit as *const () as usize);
+    }
+    if let Some(f) = module.get_function("tl_system_platform") {
+        execution_engine.add_global_mapping(&f, runtime::system::tl_system_platform as *const () as usize);
+    }
+    if let Some(f) = module.get_function("tl_system_command") {
+        execution_engine.add_global_mapping(&f, runtime::system::tl_system_command as *const () as usize);
     }
     if let Some(f) = module.get_function("tl_read_line") {
         execution_engine.add_global_mapping(&f, runtime::stdlib::tl_read_line as *const () as usize);

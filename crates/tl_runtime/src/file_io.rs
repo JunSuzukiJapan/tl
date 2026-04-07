@@ -525,6 +525,57 @@ pub extern "C" fn tl_file_create_dir(path: *const c_char) -> bool {
     std::fs::create_dir_all(&path_buf).is_ok()
 }
 
+/// File::list_dir(path) -> Vec<String>
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_file_list_dir(path: *const c_char) -> *mut crate::string_ffi::VecStruct {
+    unsafe {
+        let layout = std::alloc::Layout::new::<crate::string_ffi::VecStruct>();
+        let vec_ptr = std::alloc::alloc(layout) as *mut crate::string_ffi::VecStruct;
+
+        if path.is_null() {
+            (*vec_ptr).ptr = std::ptr::null_mut();
+            (*vec_ptr).cap = 0;
+            (*vec_ptr).len = 0;
+            return vec_ptr;
+        }
+
+        let path_str = CStr::from_ptr(path).to_string_lossy();
+        let path_buf = expand_path(&path_str);
+        
+        let mut entries = Vec::new();
+        if let Ok(read_dir) = std::fs::read_dir(&path_buf) {
+            for entry in read_dir {
+                if let Ok(entry) = entry {
+                    let name = entry.file_name().to_string_lossy().into_owned();
+                    entries.push(name);
+                }
+            }
+        }
+        
+        let count = entries.len() as i64;
+        if count == 0 {
+            (*vec_ptr).ptr = std::ptr::null_mut();
+            (*vec_ptr).cap = 0;
+            (*vec_ptr).len = 0;
+            return vec_ptr;
+        }
+        
+        let ptr_size = std::mem::size_of::<*mut crate::string_ffi::StringStruct>();
+        let array_layout = std::alloc::Layout::from_size_align(ptr_size * entries.len(), 8).unwrap();
+        let array_ptr = std::alloc::alloc(array_layout) as *mut *mut crate::string_ffi::StringStruct;
+
+        for (i, name) in entries.into_iter().enumerate() {
+            let str_ptr = crate::string_ffi::make_string_struct(name);
+            *array_ptr.add(i) = str_ptr;
+        }
+
+        (*vec_ptr).ptr = array_ptr as *mut u8;
+        (*vec_ptr).cap = count;
+        (*vec_ptr).len = count;
+        vec_ptr
+    }
+}
+
 /// Path::parent() -> String — 親ディレクトリのパス
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_path_parent(p: *mut PathStruct) -> *mut StringStruct {

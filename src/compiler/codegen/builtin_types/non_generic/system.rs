@@ -28,6 +28,20 @@ pub fn register_system_types(manager: &mut TypeManager) {
         vec![Type::I64],
         Type::Void
     );
+    // System::platform() -> String
+    system.register_evaluated_static_method(
+        "platform",
+        compile_system_platform,
+        vec![],
+        Type::String("String".to_string())
+    );
+    // System::command(cmd: String) -> String
+    system.register_evaluated_static_method(
+        "command",
+        compile_system_command,
+        vec![Type::String("String".to_string())],
+        Type::String("String".to_string())
+    );
     
     // Memory / Stats
     // System::memory_mb() -> f64
@@ -225,6 +239,52 @@ fn compile_system_exit<'ctx>(
     // Return void (unreachable ideally, but void for checks)
     let void_val = codegen.context.i64_type().const_int(0, false).into();
     Ok((void_val, Type::Void))
+}
+
+// Helper for System::platform
+fn compile_system_platform<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if !args.is_empty() { return Err("System::platform takes no arguments".into()); }
+    let fn_val = codegen.module.get_function("tl_system_platform").ok_or("tl_system_platform not found")?;
+    let call = codegen.builder.build_call(fn_val, &[], "sys_platform").map_err(|e| e.to_string())?;
+    let res = match call.try_as_basic_value() {
+        inkwell::values::ValueKind::Basic(v) => v,
+        _ => return Err("Invalid return from System::platform".into()),
+    };
+    Ok((res, Type::String("String".to_string())))
+}
+
+// Helper for System::command
+fn compile_system_command<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 1 { return Err("System::command requires 1 argument (cmd)".into()); }
+    let fn_val = codegen.module.get_function("tl_system_command").ok_or("tl_system_command not found")?;
+    
+    let (cmd_val, cmd_ty) = &args[0];
+    let cmd_ptr_val = if matches!(cmd_ty, Type::String(_)) {
+        let struct_ty = Type::String("String".to_string());
+        codegen.load_struct_i64_field(*cmd_val, &struct_ty, "ptr")?.into_int_value()
+    } else {
+        return Err(format!("Expected String argument, got {:?}", cmd_ty));
+    };
+    let cmd_ptr = codegen.builder.build_int_to_ptr(
+        cmd_ptr_val,
+        codegen.context.ptr_type(inkwell::AddressSpace::default()),
+        "cmd_ptr"
+    ).map_err(|e| e.to_string())?;
+
+    let call = codegen.builder.build_call(fn_val, &[cmd_ptr.into()], "sys_command").map_err(|e| e.to_string())?;
+    let res = match call.try_as_basic_value() {
+        inkwell::values::ValueKind::Basic(v) => v,
+        _ => return Err("Invalid return from System::command".into()),
+    };
+    Ok((res, Type::String("String".to_string())))
 }
 
 // Helper for 0-arg I64 return functions

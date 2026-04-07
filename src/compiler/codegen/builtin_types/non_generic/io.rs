@@ -59,6 +59,34 @@ pub fn register_io_types(manager: &mut TypeManager) {
         vec![string_type.clone()],
         Type::Struct("Vec".to_string(), vec![Type::U8])
     );
+    // File::append(path: String, content: String) -> Bool
+    file.register_evaluated_static_method(
+        "append", 
+        compile_file_append, 
+        vec![string_type.clone(), string_type.clone()],
+        Type::Bool
+    );
+    // File::delete(path: String) -> Bool
+    file.register_evaluated_static_method(
+        "delete", 
+        compile_file_delete, 
+        vec![string_type.clone()],
+        Type::Bool
+    );
+    // File::create_dir(path: String) -> Bool
+    file.register_evaluated_static_method(
+        "create_dir", 
+        compile_file_create_dir, 
+        vec![string_type.clone()],
+        Type::Bool
+    );
+    // File::list_dir(path: String) -> Vec<String>
+    file.register_evaluated_static_method(
+        "list_dir", 
+        compile_file_list_dir, 
+        vec![string_type.clone()],
+        Type::Struct("Vec".to_string(), vec![string_type.clone()])
+    );
 
     // File.read_string() -> String
     file.register_evaluated_instance_method(
@@ -107,6 +135,11 @@ pub fn register_io_types(manager: &mut TypeManager) {
     path.register_instance_signature("is_file", vec![], Type::Bool);
     path.register_instance_signature("exists", vec![], Type::Bool);
     path.register_instance_signature("to_string", vec![], string_type.clone());
+
+    // Evaluated instance methods for Path
+    path.register_evaluated_instance_method("parent", compile_path_parent, vec![], string_type.clone());
+    path.register_evaluated_instance_method("file_name", compile_path_file_name, vec![], string_type.clone());
+    path.register_evaluated_instance_method("extension", compile_path_extension, vec![], string_type.clone());
     manager.register_type(path);
 
     // Env
@@ -626,4 +659,159 @@ pub fn compile_file_close<'ctx>(
         codegen.context.i64_type().const_int(0, false).into(),
         Type::Void,
     ))
+}
+
+pub fn compile_file_append<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 2 { return Err("File::append requires 2 arguments".into()); }
+    let extract_ptr = |codegen: &mut CodeGenerator<'ctx>, val: BasicValueEnum<'ctx>, ty: &Type| -> Result<inkwell::values::BasicMetadataValueEnum<'ctx>, String> {
+        let ptr_int_val = if matches!(ty, Type::String(_)) {
+            let struct_ty = Type::String("String".to_string());
+            codegen.load_struct_i64_field(val, &struct_ty, "ptr")?.into_int_value()
+        } else {
+            return Err("Expected String".into());
+        };
+        Ok(codegen.builder.build_int_to_ptr(
+            ptr_int_val, codegen.context.ptr_type(inkwell::AddressSpace::default()), "str_ptr"
+        ).map_err(|e| e.to_string())?.into())
+    };
+
+    let path_ptr = extract_ptr(codegen, args[0].0, &args[0].1)?;
+    let content_ptr = extract_ptr(codegen, args[1].0, &args[1].1)?;
+
+    let fn_val = codegen.module.get_function("tl_file_append").ok_or("tl_file_append not found")?;
+    let call = codegen.builder.build_call(fn_val, &[path_ptr, content_ptr], "file_append").map_err(|e| e.to_string())?;
+    let res = match call.try_as_basic_value() {
+        inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+        _ => return Err("Invalid return from File::append".into()),
+    };
+    Ok((res.into(), Type::Bool))
+}
+
+pub fn compile_file_delete<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 1 { return Err("File::delete requires 1 argument".into()); }
+    let fn_val = codegen.module.get_function("tl_file_delete").ok_or("tl_file_delete not found")?;
+    let (path_val, path_ty) = &args[0];
+    let ptr_int = if matches!(path_ty, Type::String(_)) {
+        codegen.load_struct_i64_field(*path_val, &Type::String("String".to_string()), "ptr")?.into_int_value()
+    } else { return Err("Expected String".into()); };
+    let path_ptr = codegen.builder.build_int_to_ptr(ptr_int, codegen.context.ptr_type(inkwell::AddressSpace::default()), "path_ptr").unwrap();
+    
+    let call = codegen.builder.build_call(fn_val, &[path_ptr.into()], "file_delete").unwrap();
+    let res = match call.try_as_basic_value() {
+        inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+        _ => return Err("Invalid return from File::delete".into()),
+    };
+    Ok((res.into(), Type::Bool))
+}
+
+pub fn compile_file_create_dir<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 1 { return Err("File::create_dir requires 1 argument".into()); }
+    let fn_val = codegen.module.get_function("tl_file_create_dir").ok_or("tl_file_create_dir not found")?;
+    let (path_val, path_ty) = &args[0];
+    let ptr_int = if matches!(path_ty, Type::String(_)) {
+        codegen.load_struct_i64_field(*path_val, &Type::String("String".to_string()), "ptr")?.into_int_value()
+    } else { return Err("Expected String".into()); };
+    let path_ptr = codegen.builder.build_int_to_ptr(ptr_int, codegen.context.ptr_type(inkwell::AddressSpace::default()), "path_ptr").unwrap();
+    
+    let call = codegen.builder.build_call(fn_val, &[path_ptr.into()], "file_create_dir").unwrap();
+    let res = match call.try_as_basic_value() {
+        inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+        _ => return Err("Invalid return from File::create_dir".into()),
+    };
+    Ok((res.into(), Type::Bool))
+}
+
+pub fn compile_file_list_dir<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 1 { return Err("File::list_dir requires 1 argument".into()); }
+    let fn_val = codegen.module.get_function("tl_file_list_dir").ok_or("tl_file_list_dir not found")?;
+    let (path_val, path_ty) = &args[0];
+    let ptr_int = if matches!(path_ty, Type::String(_)) {
+        codegen.load_struct_i64_field(*path_val, &Type::String("String".to_string()), "ptr")?.into_int_value()
+    } else { return Err("Expected String".into()); };
+    let path_ptr = codegen.builder.build_int_to_ptr(ptr_int, codegen.context.ptr_type(inkwell::AddressSpace::default()), "path_ptr").unwrap();
+    
+    let call = codegen.builder.build_call(fn_val, &[path_ptr.into()], "file_list_dir").unwrap();
+    let res = match call.try_as_basic_value() {
+        inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
+        _ => return Err("Invalid return from File::list_dir".into()),
+    };
+    
+    // Cast appropriately
+    let vec_ty_name = "Vec[String]";
+    let vec_struct_ty = if let Some(ty) = codegen.struct_types.get(vec_ty_name) {
+        *ty
+    } else {
+        let vec_str_generics = vec![Type::String("String".to_string())];
+        codegen.monomorphize_struct("Vec", &vec_str_generics).map_err(|e| e.to_string())?
+    };
+    let vec_ptr_ty = vec_struct_ty.ptr_type(inkwell::AddressSpace::default());
+    let vec_ptr = codegen.builder.build_pointer_cast(res, vec_ptr_ty, "vec_cast").unwrap();
+
+    Ok((vec_ptr.into(), Type::Struct("Vec".to_string(), vec![Type::String("String".to_string())])))
+}
+
+// Helper for Path instance methods
+fn compile_path_instance_method<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    instance_val: BasicValueEnum<'ctx>,
+    fn_name: &str,
+    res_name: &str,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let fn_val = codegen.module.get_function(fn_name).ok_or(format!("{} not found", fn_name))?;
+    
+    let ptr = codegen.builder.build_ptr_to_int(instance_val.into_pointer_value(), codegen.context.i64_type(), "path_ptr_int").unwrap();
+    let path_ptr = codegen.builder.build_int_to_ptr(ptr, codegen.context.ptr_type(inkwell::AddressSpace::default()), "path_ptr").unwrap();
+    
+    let call = codegen.builder.build_call(fn_val, &[path_ptr.into()], res_name).unwrap();
+    let res = match call.try_as_basic_value() {
+        inkwell::values::ValueKind::Basic(v) => v,
+        _ => return Err("Invalid return from Path method".into()),
+    };
+    Ok((res, Type::String("String".to_string())))
+}
+
+pub fn compile_path_parent<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    instance_val: BasicValueEnum<'ctx>,
+    _instance_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if !args.is_empty() { return Err("Path.parent takes no arguments".into()); }
+    compile_path_instance_method(codegen, instance_val, "tl_path_parent", "path_parent_str")
+}
+
+pub fn compile_path_file_name<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    instance_val: BasicValueEnum<'ctx>,
+    _instance_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if !args.is_empty() { return Err("Path.file_name takes no arguments".into()); }
+    compile_path_instance_method(codegen, instance_val, "tl_path_file_name", "path_filename_str")
+}
+
+pub fn compile_path_extension<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    instance_val: BasicValueEnum<'ctx>,
+    _instance_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if !args.is_empty() { return Err("Path.extension takes no arguments".into()); }
+    compile_path_instance_method(codegen, instance_val, "tl_path_extension", "path_ext_str")
 }
