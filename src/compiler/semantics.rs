@@ -1427,7 +1427,9 @@ impl SemanticAnalyzer {
                         collect_vars(b, out);
                     }
                 }
+                ExprKind::TypeOf(inner, _) => collect_vars(inner, out),
                 ExprKind::As(inner, _) => collect_vars(inner, out),
+                ExprKind::TypeOf(inner, _) => collect_vars(inner, out),
                 _ => {}
             }
         }
@@ -6222,6 +6224,11 @@ impl SemanticAnalyzer {
                 // End of ExprKind::IfExpr
             }
 
+            ExprKind::TypeOf(inner_expr, opt_ty) => {
+                let inner_inferred = self.check_expr(inner_expr)?;
+                *opt_ty = Some(inner_inferred);
+                Ok(Type::Struct("Type".to_string(), vec![]))
+            }
             ExprKind::As(expr, target_type) => {
                 let source_type = self.check_expr(expr)?;
 
@@ -7372,6 +7379,9 @@ impl SemanticAnalyzer {
                     self.collect_indices(arg, indices);
                 }
             }
+            ExprKind::TypeOf(expr, _) => {
+                self.collect_indices(expr, indices);
+            }
             ExprKind::As(expr, _) => {
                 self.collect_indices(expr, indices);
             }
@@ -7674,6 +7684,9 @@ impl SemanticAnalyzer {
             ExprKind::Range(start, end) => {
                 if let Some(s) = start { Self::collect_variable_refs_expr(s, out); }
                 if let Some(e) = end { Self::collect_variable_refs_expr(e, out); }
+            }
+            ExprKind::TypeOf(inner, _) => {
+                // do nothing or iterate inner
             }
             ExprKind::As(e, _) => {
                 Self::collect_variable_refs_expr(e, out);

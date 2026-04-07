@@ -689,7 +689,11 @@ fn parse_postfix(input: Input, allow_struct: bool) -> IResult<Input, Expr, Parse
                     expr = Spanned::new(ExprKind::MethodCall(obj, method, args), span);
                 }
                 ExprKind::Variable(name) => {
-                    expr = Spanned::new(ExprKind::FnCall(name, args), span);
+                    if name == "typeof" && args.len() == 1 {
+                        expr = Spanned::new(ExprKind::TypeOf(Box::new(args.into_iter().next().unwrap()), None), span);
+                    } else {
+                        expr = Spanned::new(ExprKind::FnCall(name, args), span);
+                    }
                 }
                 _ => {
                     // Indirect call? ExprKind::FnCall expects String name.

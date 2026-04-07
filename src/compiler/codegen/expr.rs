@@ -2233,6 +2233,61 @@ impl<'ctx> CodeGenerator<'ctx> {
             ExprKind::Range(_, _) => {
                 Err("ExprKind::Range should only appear in For loops".to_string())
             }
+
+            ExprKind::TypeOf(inner_expr, opt_ty) => {
+                let inner_ty = opt_ty.as_ref().expect("typeof type must be inferred by semantic analyzer");
+                
+                // Pack into Type struct
+                let type_name = format!("{:?}", inner_ty);
+                let is_primitive = matches!(inner_ty, Type::I64 | Type::I32 | Type::F64 | Type::F32 | Type::Bool | Type::String(_));
+                let is_ref_counted = matches!(inner_ty, Type::String(_) | Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::GradTensor(_, _));
+                let size = 8; // placeholder size
+
+                let struct_type = self.module.get_struct_type("Type").unwrap();
+                
+                // Heap allocate the struct
+                let size_val_alloc = struct_type.size_of().unwrap();
+                let size_i64 = if size_val_alloc.get_type() == self.context.i32_type() {
+                     self.builder.build_int_z_extend(size_val_alloc, self.context.i64_type(), "size_i64").unwrap()
+                } else {
+                     size_val_alloc
+                };
+                let malloc_fn = self.module.get_function("malloc").unwrap();
+                let call = self.builder.build_call(malloc_fn, &[size_i64.into()], "typeof_malloc").unwrap();
+                let struct_ptr = match call.try_as_basic_value() {
+                     inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
+                     _ => panic!("malloc returned void"),
+                 };
+
+                // Build name (String)
+                let (str_val, _) = self.compile_string_literal(&type_name).map_err(|e| e.to_string())?;
+
+                // size
+                let size_val = self.context.i64_type().const_int(size as u64, false);
+                
+                // is_primitive
+                let is_prim_val = self.context.bool_type().const_int(if is_primitive { 1 } else { 0 }, false);
+
+                // is_ref_counted
+                let is_ref_val = self.context.bool_type().const_int(if is_ref_counted { 1 } else { 0 }, false);
+
+                // Set fields
+                // name: 0, size: 1, is_primitive: 2, is_ref_counted: 3
+                let name_ptr = self.builder.build_struct_gep(struct_type, struct_ptr, 0, "name_ptr").unwrap();
+                self.builder.build_store(name_ptr, str_val).unwrap();
+
+                let size_ptr = self.builder.build_struct_gep(struct_type, struct_ptr, 1, "size_ptr").unwrap();
+                self.builder.build_store(size_ptr, size_val).unwrap();
+
+                let prim_ptr = self.builder.build_struct_gep(struct_type, struct_ptr, 2, "prim_ptr").unwrap();
+                self.builder.build_store(prim_ptr, is_prim_val).unwrap();
+
+                let ref_ptr = self.builder.build_struct_gep(struct_type, struct_ptr, 3, "ref_ptr").unwrap();
+                self.builder.build_store(ref_ptr, is_ref_val).unwrap();
+
+                Ok((struct_ptr.into(), Type::Struct("Type".to_string(), vec![])))
+            }
+
             ExprKind::As(expr, target_type) => {
                 let target_type = self.substitute_current_generics(target_type);
                 let (val, source_type) = self.compile_expr(expr)?;

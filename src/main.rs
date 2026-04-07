@@ -717,6 +717,7 @@ fn load_builtins() -> Result<tl_lang::compiler::ast::Module> {
         builtin_types::result::SOURCE,
         builtin_types::llm::SOURCE,
         builtin_types::generic::mutex::SOURCE,
+        builtin_types::non_generic::type_info::SOURCE,
     ];
 
     let mut combined = tl_lang::compiler::ast::Module {

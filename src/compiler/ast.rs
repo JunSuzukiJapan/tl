@@ -495,6 +495,7 @@ pub enum ExprKind {
 
     // Cast: expr as Type
     As(Box<Expr>, Type),
+    TypeOf(Box<Expr>, Option<Type>),
 
     // Control
     IfExpr(Box<Expr>, Vec<Stmt>, Option<Vec<Stmt>>),
