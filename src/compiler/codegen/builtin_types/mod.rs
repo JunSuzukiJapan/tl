@@ -124,13 +124,30 @@ pub fn load_all_builtins(codegen: &mut CodeGenerator) {
     }
     codegen.generic_impls.entry("Mutex".to_string()).or_default().extend(mutex_data.impl_blocks);
 
+    // Channel
+    let channel_data = generic::channel::load_channel_data();
+    codegen.type_manager.register_builtin(channel_data.clone());
+    if let Some(def) = channel_data.struct_def {
+        codegen.struct_defs.insert(def.name.clone(), def);
+    }
+    codegen.generic_impls.entry("Channel".to_string()).or_default().extend(channel_data.impl_blocks);
+
     // 2. Register Non-Generic Types (IO, System, LLM, Tensor, Param, Primitives)
     // These register directly into TypeManager
     non_generic::primitives::register_primitive_types(&mut codegen.type_manager);
     io::register_io_types(&mut codegen.type_manager);
     system::register_system_types(&mut codegen.type_manager);
     non_generic::regex::register_regex_types(&mut codegen.type_manager);
-    type_info::register_type_struct(&mut codegen.type_manager);
+    non_generic::type_info::register_type_struct(&mut codegen.type_manager);
+    let i64_data = non_generic::atomic_types::load_atomic_i64();
+    codegen.type_manager.register_builtin(i64_data.clone());
+    if let Some(def) = i64_data.struct_def.clone() { codegen.struct_defs.insert(def.name.clone(), def); }
+    codegen.generic_impls.entry("AtomicI64".to_string()).or_default().extend(i64_data.impl_blocks);
+    
+    let i32_data = non_generic::atomic_types::load_atomic_i32();
+    codegen.type_manager.register_builtin(i32_data.clone());
+    if let Some(def) = i32_data.struct_def.clone() { codegen.struct_defs.insert(def.name.clone(), def); }
+    codegen.generic_impls.entry("AtomicI32".to_string()).or_default().extend(i32_data.impl_blocks);
     // Thread is now fully generic and natively evaluated in expr.rs
     // Register LLM Structs (from source)
     let llm_data = llm::load_llm_data();

@@ -176,7 +176,7 @@ impl LivenessAnalyzer {
             ExprKind::TupleAccess(val, _) | ExprKind::FieldAccess(val, _) => {
                 self.visit_expr(val);
             }
-            ExprKind::TypeOf(inner, _) => {
+            ExprKind::TypeOf(_inner, _) => {
                 // do nothing or iterate inner
             }
             ExprKind::As(val, _) => {

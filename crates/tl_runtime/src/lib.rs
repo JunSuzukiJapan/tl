@@ -27,6 +27,8 @@ pub mod image_ffi;
 pub mod data_ffi;
 pub mod regex_ffi;
 pub mod thread_ffi;
+pub mod channel_ffi;
+pub mod atomic_ffi;
 pub mod mutex_ffi;
 // autograd_registry は MetalTensor 統合により廃止
 

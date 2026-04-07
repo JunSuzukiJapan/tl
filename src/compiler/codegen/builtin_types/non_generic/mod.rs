@@ -15,3 +15,4 @@ pub mod primitive_methods;
 pub mod param;
 pub mod regex;
 pub mod type_info;
+pub mod atomic_types;

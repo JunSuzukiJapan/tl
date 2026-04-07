@@ -638,6 +638,93 @@ pub fn declare_runtime_functions<'ctx>(
         execution_engine.add_global_mapping(&f, runtime::checkpoint::tl_checkpoint as *const () as usize);
     }
 
+    // --- Channel and Atomic FFI ---
+    // Channel FFI
+    let channel_new_type = i64_type.fn_type(&[i64_type.into()], false);
+    add_fn("tl_channel_new", channel_new_type);
+    
+    let channel_send_type = context.bool_type().fn_type(&[i64_type.into(), i64_type.into()], false);
+    add_fn("tl_channel_send", channel_send_type);
+    
+    let channel_recv_type = i64_type.fn_type(&[i64_type.into()], false);
+    add_fn("tl_channel_recv", channel_recv_type);
+    
+    let channel_try_recv_type = i64_type.fn_type(&[i64_type.into(), context.ptr_type(AddressSpace::default()).into()], false);
+    add_fn("tl_channel_try_recv", channel_try_recv_type);
+
+    add_fn("tl_channel_clone", clone_type);
+    add_fn("tl_channel_free", free_type);
+
+    if let Some(f) = module.get_function("tl_channel_new") { execution_engine.add_global_mapping(&f, runtime::channel_ffi::tl_channel_new as *const () as usize); }
+    if let Some(f) = module.get_function("tl_channel_send") { execution_engine.add_global_mapping(&f, runtime::channel_ffi::tl_channel_send as *const () as usize); }
+    if let Some(f) = module.get_function("tl_channel_recv") { execution_engine.add_global_mapping(&f, runtime::channel_ffi::tl_channel_recv as *const () as usize); }
+    if let Some(f) = module.get_function("tl_channel_try_recv") { execution_engine.add_global_mapping(&f, runtime::channel_ffi::tl_channel_try_recv as *const () as usize); }
+    if let Some(f) = module.get_function("tl_channel_clone") { execution_engine.add_global_mapping(&f, runtime::channel_ffi::tl_channel_clone as *const () as usize); }
+    if let Some(f) = module.get_function("tl_channel_free") { execution_engine.add_global_mapping(&f, runtime::channel_ffi::tl_channel_free as *const () as usize); }
+
+    // Atomic I64
+    let atomic_new_type = i64_type.fn_type(&[i64_type.into()], false);
+    add_fn("tl_atomic_i64_new", atomic_new_type);
+    
+    let atomic_load_type = i64_type.fn_type(&[i64_type.into()], false);
+    add_fn("tl_atomic_i64_load", atomic_load_type);
+    
+    let atomic_store_type = void_type.fn_type(&[i64_type.into(), i64_type.into()], false);
+    add_fn("tl_atomic_i64_store", atomic_store_type);
+    
+    let atomic_op_type = i64_type.fn_type(&[i64_type.into(), i64_type.into()], false);
+    add_fn("tl_atomic_i64_add", atomic_op_type);
+    add_fn("tl_atomic_i64_sub", atomic_op_type);
+    add_fn("tl_atomic_i64_swap", atomic_op_type);
+    
+    let atomic_cmpxchg_type = context.bool_type().fn_type(&[i64_type.into(), i64_type.into(), i64_type.into()], false);
+    add_fn("tl_atomic_i64_compare_exchange", atomic_cmpxchg_type);
+    
+    add_fn("tl_atomic_i64_clone", clone_type);
+    add_fn("tl_atomic_i64_free", free_type);
+
+    if let Some(f) = module.get_function("tl_atomic_i64_new") { execution_engine.add_global_mapping(&f, runtime::atomic_ffi::tl_atomic_i64_new as *const () as usize); }
+    if let Some(f) = module.get_function("tl_atomic_i64_load") { execution_engine.add_global_mapping(&f, runtime::atomic_ffi::tl_atomic_i64_load as *const () as usize); }
+    if let Some(f) = module.get_function("tl_atomic_i64_store") { execution_engine.add_global_mapping(&f, runtime::atomic_ffi::tl_atomic_i64_store as *const () as usize); }
+    if let Some(f) = module.get_function("tl_atomic_i64_add") { execution_engine.add_global_mapping(&f, runtime::atomic_ffi::tl_atomic_i64_add as *const () as usize); }
+    if let Some(f) = module.get_function("tl_atomic_i64_sub") { execution_engine.add_global_mapping(&f, runtime::atomic_ffi::tl_atomic_i64_sub as *const () as usize); }
+    if let Some(f) = module.get_function("tl_atomic_i64_swap") { execution_engine.add_global_mapping(&f, runtime::atomic_ffi::tl_atomic_i64_swap as *const () as usize); }
+    if let Some(f) = module.get_function("tl_atomic_i64_compare_exchange") { execution_engine.add_global_mapping(&f, runtime::atomic_ffi::tl_atomic_i64_compare_exchange as *const () as usize); }
+    if let Some(f) = module.get_function("tl_atomic_i64_clone") { execution_engine.add_global_mapping(&f, runtime::atomic_ffi::tl_atomic_i64_clone as *const () as usize); }
+    if let Some(f) = module.get_function("tl_atomic_i64_free") { execution_engine.add_global_mapping(&f, runtime::atomic_ffi::tl_atomic_i64_free as *const () as usize); }
+
+    // Atomic I32
+    let atomic_i32_new_type = i64_type.fn_type(&[i32_type.into()], false);
+    add_fn("tl_atomic_i32_new", atomic_i32_new_type);
+    
+    let atomic_i32_load_type = i32_type.fn_type(&[i64_type.into()], false);
+    add_fn("tl_atomic_i32_load", atomic_i32_load_type);
+    
+    let atomic_i32_store_type = void_type.fn_type(&[i64_type.into(), i32_type.into()], false);
+    add_fn("tl_atomic_i32_store", atomic_i32_store_type);
+    
+    let atomic_i32_op_type = i32_type.fn_type(&[i64_type.into(), i32_type.into()], false);
+    add_fn("tl_atomic_i32_add", atomic_i32_op_type);
+    add_fn("tl_atomic_i32_sub", atomic_i32_op_type);
+    add_fn("tl_atomic_i32_swap", atomic_i32_op_type);
+    
+    let atomic_i32_cmpxchg_type = context.bool_type().fn_type(&[i64_type.into(), i32_type.into(), i32_type.into()], false);
+    add_fn("tl_atomic_i32_compare_exchange", atomic_i32_cmpxchg_type);
+    
+    add_fn("tl_atomic_i32_clone", clone_type);
+    add_fn("tl_atomic_i32_free", free_type);
+
+    if let Some(f) = module.get_function("tl_atomic_i32_new") { execution_engine.add_global_mapping(&f, runtime::atomic_ffi::tl_atomic_i32_new as *const () as usize); }
+    if let Some(f) = module.get_function("tl_atomic_i32_load") { execution_engine.add_global_mapping(&f, runtime::atomic_ffi::tl_atomic_i32_load as *const () as usize); }
+    if let Some(f) = module.get_function("tl_atomic_i32_store") { execution_engine.add_global_mapping(&f, runtime::atomic_ffi::tl_atomic_i32_store as *const () as usize); }
+    if let Some(f) = module.get_function("tl_atomic_i32_add") { execution_engine.add_global_mapping(&f, runtime::atomic_ffi::tl_atomic_i32_add as *const () as usize); }
+    if let Some(f) = module.get_function("tl_atomic_i32_sub") { execution_engine.add_global_mapping(&f, runtime::atomic_ffi::tl_atomic_i32_sub as *const () as usize); }
+    if let Some(f) = module.get_function("tl_atomic_i32_swap") { execution_engine.add_global_mapping(&f, runtime::atomic_ffi::tl_atomic_i32_swap as *const () as usize); }
+    if let Some(f) = module.get_function("tl_atomic_i32_compare_exchange") { execution_engine.add_global_mapping(&f, runtime::atomic_ffi::tl_atomic_i32_compare_exchange as *const () as usize); }
+    if let Some(f) = module.get_function("tl_atomic_i32_clone") { execution_engine.add_global_mapping(&f, runtime::atomic_ffi::tl_atomic_i32_clone as *const () as usize); }
+    if let Some(f) = module.get_function("tl_atomic_i32_free") { execution_engine.add_global_mapping(&f, runtime::atomic_ffi::tl_atomic_i32_free as *const () as usize); }
+
+
     if let Some(f) = module.get_function("tl_set_device") {
         execution_engine.add_global_mapping(&f, runtime::tl_set_device as *const () as usize);
     }

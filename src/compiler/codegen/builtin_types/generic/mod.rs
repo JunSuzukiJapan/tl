@@ -8,3 +8,4 @@ pub mod btreemap;
 pub mod string_builder;
 pub mod traits;
 pub mod mutex;
+pub mod channel;

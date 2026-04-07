@@ -387,6 +387,14 @@ impl SemanticAnalyzer {
         // We defined `struct Mutex<T> { id: i64 }` in mutex.tl. So we need a generic data loader like BTreeMap.
         let mutex_data = crate::compiler::codegen::builtin_types::mutex::load_mutex_data();
         self.register_builtin_data(mutex_data);
+        let channel_data = crate::compiler::codegen::builtin_types::generic::channel::load_channel_data();
+        self.register_builtin_data(channel_data);
+        
+        let i64_data = crate::compiler::codegen::builtin_types::non_generic::atomic_types::load_atomic_i64();
+        self.register_builtin_data(i64_data);
+        
+        let i32_data = crate::compiler::codegen::builtin_types::non_generic::atomic_types::load_atomic_i32();
+        self.register_builtin_data(i32_data);
     }
 
     fn register_builtin_data(&mut self, data: BuiltinTypeData) {
@@ -1429,7 +1437,6 @@ impl SemanticAnalyzer {
                 }
                 ExprKind::TypeOf(inner, _) => collect_vars(inner, out),
                 ExprKind::As(inner, _) => collect_vars(inner, out),
-                ExprKind::TypeOf(inner, _) => collect_vars(inner, out),
                 _ => {}
             }
         }
@@ -7685,7 +7692,8 @@ impl SemanticAnalyzer {
                 if let Some(s) = start { Self::collect_variable_refs_expr(s, out); }
                 if let Some(e) = end { Self::collect_variable_refs_expr(e, out); }
             }
-            ExprKind::TypeOf(inner, _) => {
+            ExprKind::TypeOf(inner_expr, _) => {
+                Self::collect_variable_refs_expr(&inner_expr, out);
                 // do nothing or iterate inner
             }
             ExprKind::As(e, _) => {

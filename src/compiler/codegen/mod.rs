@@ -187,6 +187,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 .get_function::<unsafe extern "C" fn() -> u64>(function_name)
                 .map_err(|e| format!("JIT compile error: {}", e))?;
             eprintln!("[DEBUG jit_execute] function obtained, calling...");
+            self.module.print_to_file("debug.ll").ok();
             let result = function.call();
             eprintln!("[DEBUG jit_execute] function returned: {}", result);
             Ok(result)
@@ -1621,6 +1622,9 @@ impl<'ctx> CodeGenerator<'ctx> {
             while !self.pending_functions.is_empty() {
                 let batch = std::mem::take(&mut self.pending_functions);
                 for (func, subst) in batch {
+                    if func.is_extern {
+                        continue;
+                    }
                     self.current_method_generics = subst;
                     self.compile_fn(&func, &[])?;
                     self.current_method_generics = None;
@@ -1717,8 +1721,11 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
         };
 
-        let val = self.module.add_function(&func.name, fn_type, None);
-
+        let val = if let Some(existing) = self.module.get_function(&func.name) {
+            existing
+        } else {
+            self.module.add_function(&func.name, fn_type, None)
+        };
         // Add param names for debug
         let param_offset = if uses_sret { 1 } else { 0 };
         if uses_sret {

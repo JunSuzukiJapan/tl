@@ -4754,6 +4754,37 @@ impl<'ctx> CodeGenerator<'ctx> {
             };
             return Ok((val, grad_ty));
         }
+        
+        let is_channel_call = struct_name.starts_with("Channel") || type_name == "Channel";
+        if is_channel_call && method == "new" {
+            if args.len() != 1 {
+                return Err("Channel::new requires 1 argument (capacity)".into());
+            }
+            let (capacity_val, _) = self.compile_expr(&args[0])?;
+            let capacity_i64 = capacity_val.into_int_value();
+            
+            let new_fn = self.module.get_function("tl_channel_new").ok_or("tl_channel_new not found")?;
+            let call = self.builder.build_call(new_fn, &[capacity_i64.into()], "call_channel_new").unwrap();
+            let id_val = match call.try_as_basic_value() {
+                inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+                _ => return Err("tl_channel_new returned void".into()),
+            };
+            let type_args_vec = if let Type::Struct(_, targs) = target_type { targs.clone() } else { vec![] };
+            let type_args = type_args_vec.as_slice();
+            let struct_name = self.mangle_type_name("Channel", type_args);
+            let llvm_struct_ty = self.context.get_struct_type(&struct_name).unwrap();
+            let malloc_fn = self.module.get_function("malloc").ok_or("malloc not found")?;
+            let size_val = llvm_struct_ty.size_of().unwrap();
+            let call_malloc = self.builder.build_call(malloc_fn, &[size_val.into()], "malloc_ch").unwrap();
+            let raw_ptr = match call_malloc.try_as_basic_value() {
+                inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
+                _ => return Err("malloc returned void".into()),
+            };
+            let struct_ptr = self.builder.build_pointer_cast(raw_ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "struct_ptr").unwrap();
+            let id_ptr = self.builder.build_struct_gep(llvm_struct_ty, struct_ptr, 0, "id_ptr").unwrap();
+            self.builder.build_store(id_ptr, id_val).unwrap();
+            return Ok((struct_ptr.into(), target_type.clone()));
+        }
 
         let is_thread_call = struct_name.starts_with("Thread") || type_name == "Thread";
         if is_thread_call && method == "spawn" {
@@ -6601,6 +6632,230 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
         }
         
+
+        // === Channel.send(val: T) -> bool ===
+        if method == "send" && args.len() == 1 {
+            if let Type::Struct(name, type_args) = &obj_ty {
+                if mangle_base_name(name) == "Channel" {
+                    let struct_name = if type_args.is_empty() { name.clone() } else { self.mangle_type_name("Channel", type_args) };
+                    let llvm_struct_ty = self.context.get_struct_type(&struct_name).unwrap();
+                    let id_val = if obj_val.is_pointer_value() {
+                        let id_ptr = self.builder.build_struct_gep(llvm_struct_ty, obj_val.into_pointer_value(), 0, "id_ptr").unwrap();
+                        self.builder.build_load(self.context.i64_type(), id_ptr, "id").unwrap()
+                    } else if obj_val.is_struct_value() {
+                        self.builder.build_extract_value(obj_val.into_struct_value(), 0, "id").unwrap().into_int_value().into()
+                    } else {
+                        return Err("Channel obj_val is neither pointer nor struct".into());
+                    };
+
+                    let (arg_val, _) = self.compile_expr(&args[0])?;
+                    
+                    let arg_i64 = match arg_val {
+                        inkwell::values::BasicValueEnum::IntValue(v) => {
+                            if v.get_type().get_bit_width() == 64 { v }
+                            else { self.builder.build_int_z_extend(v, self.context.i64_type(), "zext").unwrap() }
+                        },
+                        inkwell::values::BasicValueEnum::FloatValue(v) => {
+                            if v.get_type() == self.context.f64_type() {
+                                self.builder.build_bit_cast(v, self.context.i64_type(), "bitcast_f64").unwrap().into_int_value()
+                            } else {
+                                let ext = self.builder.build_float_ext(v, self.context.f64_type(), "fext").unwrap();
+                                self.builder.build_bit_cast(ext, self.context.i64_type(), "bitcast").unwrap().into_int_value()
+                            }
+                        },
+                        inkwell::values::BasicValueEnum::PointerValue(v) => {
+                            self.builder.build_ptr_to_int(v, self.context.i64_type(), "ptr_to_int").unwrap()
+                        },
+                        _ => return Err("Unsupported Channel generic type".into()),
+                    };
+
+                    let send_fn = self.module.get_function("tl_channel_send").ok_or("tl_channel_send not found")?;
+                    let call = self.builder.build_call(send_fn, &[id_val.into(), arg_i64.into()], "send_ret").unwrap();
+                    let res_val = match call.try_as_basic_value() {
+                        inkwell::values::ValueKind::Basic(v) => v,
+                        _ => return Err("tl_channel_send returned void".into()),
+                    };
+                    
+                    // tl_channel_send returns u64 boolean (wait, it returns bool! we declared it as returning bool?)
+                    // FFI says `fn tl_channel_send(...) -> bool`. In C ABI, Rust `bool` is usually i8.
+                    let bool_val = self.builder.build_int_truncate(res_val.into_int_value(), self.context.bool_type(), "trunc").unwrap();
+                    
+                    return Ok((bool_val.into(), Type::Bool));
+                }
+            }
+        }
+
+        // === Channel.recv() -> T ===
+        if method == "recv" && args.len() == 0 {
+            if let Type::Struct(name, type_args) = &obj_ty {
+                if mangle_base_name(name) == "Channel" {
+                    let inner_ty = if type_args.len() == 1 { type_args[0].clone() } else { Type::I64 }; // Hack for now
+                    let struct_name = if type_args.is_empty() { name.clone() } else { self.mangle_type_name("Channel", type_args) };
+                    let llvm_struct_ty = self.context.get_struct_type(&struct_name).unwrap();
+                    let id_val = if obj_val.is_pointer_value() {
+                        let id_ptr = self.builder.build_struct_gep(llvm_struct_ty, obj_val.into_pointer_value(), 0, "id_ptr").unwrap();
+                        self.builder.build_load(self.context.i64_type(), id_ptr, "id").unwrap()
+                    } else if obj_val.is_struct_value() {
+                        self.builder.build_extract_value(obj_val.into_struct_value(), 0, "id").unwrap().into_int_value().into()
+                    } else {
+                        return Err("Channel obj_val is neither pointer nor struct".into());
+                    };
+
+                    let recv_fn = self.module.get_function("tl_channel_recv").ok_or("tl_channel_recv not found")?;
+                    let call = self.builder.build_call(recv_fn, &[id_val.into()], "recv_ret").unwrap();
+                    let raw_i64 = match call.try_as_basic_value() {
+                        inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+                        _ => return Err("tl_channel_recv returned void".into()),
+                    };
+                    
+                    let target_ty = self.get_llvm_type(&inner_ty)?;
+                    let final_val: inkwell::values::BasicValueEnum<'ctx> = if target_ty.is_pointer_type() {
+                        self.builder.build_int_to_ptr(raw_i64, target_ty.into_pointer_type(), "int_to_ptr").unwrap().into()
+                    } else if target_ty.is_float_type() {
+                        if target_ty.into_float_type() == self.context.f64_type() {
+                            self.builder.build_bit_cast(raw_i64, target_ty, "bitcast").unwrap().into()
+                        } else {
+                            let f64_val = self.builder.build_bit_cast(raw_i64, self.context.f64_type(), "bitcast").unwrap().into_float_value();
+                            self.builder.build_float_trunc(f64_val, target_ty.into_float_type(), "ftrunc").unwrap().into()
+                        }
+                    } else if target_ty.is_int_type() {
+                        let width = target_ty.into_int_type().get_bit_width();
+                        if width < 64 {
+                            self.builder.build_int_truncate(raw_i64, target_ty.into_int_type(), "trunc").unwrap().into()
+                        } else {
+                            raw_i64.into()
+                        }
+                    } else {
+                        return Err("Unsupported Channel output type".into());
+                    };
+
+                    return Ok((final_val, inner_ty.clone()));
+                }
+            }
+        }
+        
+        // === Channel.try_recv() -> Result<T, String> ===
+        if method == "try_recv" && args.len() == 0 {
+            if let Type::Struct(name, type_args) = &obj_ty {
+                if mangle_base_name(name) == "Channel" {
+                    let inner_ty = if type_args.len() == 1 { type_args[0].clone() } else { Type::I64 };
+                    let struct_name = if type_args.is_empty() { name.clone() } else { self.mangle_type_name("Channel", type_args) };
+                    let llvm_struct_ty = self.context.get_struct_type(&struct_name).unwrap();
+                    let id_val = if obj_val.is_pointer_value() {
+                        let id_ptr = self.builder.build_struct_gep(llvm_struct_ty, obj_val.into_pointer_value(), 0, "id_ptr").unwrap();
+                        self.builder.build_load(self.context.i64_type(), id_ptr, "id").unwrap()
+                    } else if obj_val.is_struct_value() {
+                        self.builder.build_extract_value(obj_val.into_struct_value(), 0, "id").unwrap().into_int_value().into()
+                    } else {
+                        return Err("Channel obj_val is neither pointer nor struct".into());
+                    };
+
+                    let success_alloc = self.builder.build_alloca(self.context.bool_type(), "success_out").unwrap();
+                    let recv_fn = self.module.get_function("tl_channel_try_recv").ok_or("tl_channel_try_recv not found")?;
+                    let call = self.builder.build_call(recv_fn, &[id_val.into(), success_alloc.into()], "recv_ret").unwrap();
+                    let raw_i64 = match call.try_as_basic_value() {
+                        inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+                        _ => return Err("tl_channel_try_recv returned void".into()),
+                    };
+                    
+                    let target_ty = self.get_llvm_type(&inner_ty)?;
+                    let final_val: inkwell::values::BasicValueEnum<'ctx> = if target_ty.is_pointer_type() {
+                        self.builder.build_int_to_ptr(raw_i64, target_ty.into_pointer_type(), "int_to_ptr").unwrap().into()
+                    } else if target_ty.is_float_type() {
+                        if target_ty.into_float_type() == self.context.f64_type() {
+                            self.builder.build_bit_cast(raw_i64, target_ty, "bitcast").unwrap().into()
+                        } else {
+                            let f64_val = self.builder.build_bit_cast(raw_i64, self.context.f64_type(), "bitcast").unwrap().into_float_value();
+                            self.builder.build_float_trunc(f64_val, target_ty.into_float_type(), "ftrunc").unwrap().into()
+                        }
+                    } else if target_ty.is_int_type() {
+                        let width = target_ty.into_int_type().get_bit_width();
+                        if width < 64 {
+                            self.builder.build_int_truncate(raw_i64, target_ty.into_int_type(), "trunc").unwrap().into()
+                        } else {
+                            raw_i64.into()
+                        }
+                    } else {
+                        return Err("Unsupported Channel output type".into());
+                    };
+
+                    let is_success = self.builder.build_load(self.context.bool_type(), success_alloc, "is_success").unwrap().into_int_value();
+                    
+                    let res_ty = Type::Enum("Option".to_string(), vec![inner_ty.clone()]);
+                    let llvm_res_ty = self.get_llvm_type(&res_ty)?;
+                    let res_mangled = self.mangle_type_name("Option", &[inner_ty.clone()]);
+                    
+                    // Ensure the enum is monomorphized and compiled
+                    let enum_struct_ty = if let Some(ty) = self.enum_types.get(&res_mangled) {
+                        *ty
+                    } else {
+                        self.monomorphize_enum("Option", &[inner_ty.clone()]).unwrap();
+                        *self.enum_types.get(&res_mangled).ok_or("Failed to monomorphize Option")?
+                    };
+
+                    let res_alloc = self.builder.build_alloca(llvm_res_ty, "res_alloc").unwrap();
+                    
+                    let ok_bb = self.context.append_basic_block(self.builder.get_insert_block().unwrap().get_parent().unwrap(), "recv_ok");
+                    let err_bb = self.context.append_basic_block(self.builder.get_insert_block().unwrap().get_parent().unwrap(), "recv_err");
+                    let cont_bb = self.context.append_basic_block(self.builder.get_insert_block().unwrap().get_parent().unwrap(), "recv_cont");
+                    
+                    self.builder.build_conditional_branch(is_success, ok_bb, err_bb).unwrap();
+                    
+                    let malloc_fn = self.module.get_function("malloc").ok_or("malloc not found")?;
+                    let reg_fn = self.module.get_function("tl_mem_register_struct_named").ok_or("tl_mem_register_struct_named not found")?;
+                    let unreg_fn = self.module.get_function("tl_mem_unregister").ok_or("tl_mem_unregister not found")?;
+                    
+                    let size_ptr = unsafe { self.builder.build_gep(enum_struct_ty, self.context.ptr_type(inkwell::AddressSpace::default()).const_null(), &[self.context.i64_type().const_int(1, false)], "size_ptr").unwrap() };
+                    let size = self.builder.build_ptr_to_int(size_ptr, self.context.i64_type(), "enum_size").unwrap();
+                    let name_ptr = self.builder.build_global_string_ptr(&res_mangled, "enum_name").unwrap().as_pointer_value();
+
+                    // OK block
+                    self.builder.position_at_end(ok_bb);
+                    let call_ok = self.builder.build_call(malloc_fn, &[size.into()], "ok_malloc").unwrap();
+                    let ok_malloc = match call_ok.try_as_basic_value() {
+                        inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
+                        _ => return Err("malloc returned void".into()),
+                    };
+                    self.builder.build_call(reg_fn, &[ok_malloc.into(), name_ptr.into()], "").unwrap();
+                    
+                    let tag_ptr = self.builder.build_struct_gep(enum_struct_ty, ok_malloc, 0, "tag_ptr").unwrap();
+                    self.builder.build_store(tag_ptr, self.context.i32_type().const_int(0, false)).unwrap(); // Some(0)
+                    let payload_ptr = self.builder.build_struct_gep(enum_struct_ty, ok_malloc, 1, "payload_ptr").unwrap();
+                    let typed_payload_ptr = self.builder.build_pointer_cast(payload_ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "typed_payload").unwrap();
+                    self.builder.build_store(typed_payload_ptr, final_val).unwrap();
+                    self.builder.build_store(res_alloc, ok_malloc).unwrap();
+                    self.builder.build_unconditional_branch(cont_bb).unwrap();
+                    
+                    // ERR block
+                    self.builder.position_at_end(err_bb);
+                    let call_err = self.builder.build_call(malloc_fn, &[size.into()], "err_malloc").unwrap();
+                    let err_malloc = match call_err.try_as_basic_value() {
+                        inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
+                        _ => return Err("malloc returned void".into()),
+                    };
+                    self.builder.build_call(reg_fn, &[err_malloc.into(), name_ptr.into()], "").unwrap();
+                    
+                    let tag_ptr = self.builder.build_struct_gep(enum_struct_ty, err_malloc, 0, "tag_ptr").unwrap();
+                    self.builder.build_store(tag_ptr, self.context.i32_type().const_int(1, false)).unwrap(); // None(1)
+                    self.builder.build_store(res_alloc, err_malloc).unwrap();
+                    self.builder.build_unconditional_branch(cont_bb).unwrap();
+                    
+                    self.builder.position_at_end(cont_bb);
+                    let final_res = self.builder.build_load(llvm_res_ty, res_alloc, "res").unwrap();
+                    
+                    // Shallow Unregister: Transfer ownership to caller
+                    self.builder.build_call(unreg_fn, &[final_res.into()], "").unwrap();
+                    
+                    return Ok((final_res, res_ty));
+                }
+            }
+        }
+
+                    // We must allocate a new String! But wait, 'tl_string_new' was used earlier!
+                    // I will just use a null pointer for String and assume it's just meant as "Empty". Actually, we can return Option<T> instead of Result!
+                    // Wait, `try_recv` usually returns Option<T> in TL?
+                    // Oh, TL standard Option has tag 0 for Some, 1 for None. Let's make it Option<T> !!
+
         // === Thread.join() -> Result<T, String> ===
         if method == "join" && args.len() == 0 {
             let is_thread = match &obj_ty {

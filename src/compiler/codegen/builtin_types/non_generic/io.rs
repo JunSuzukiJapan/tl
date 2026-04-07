@@ -598,7 +598,7 @@ pub fn compile_file_read_binary<'ctx>(
         codegen.monomorphize_struct("Vec", &vec_u8_generics)
             .map_err(|e| format!("Failed to monomorphize Vec<u8>: {}", e))?
     };
-    let vec_ptr_ty = vec_struct_ty.ptr_type(inkwell::AddressSpace::default());
+    let vec_ptr_ty = codegen.context.ptr_type(inkwell::AddressSpace::default());
     let vec_ptr = codegen.builder.build_pointer_cast(
         res.into_pointer_value(),
         vec_ptr_ty,
@@ -760,7 +760,7 @@ pub fn compile_file_list_dir<'ctx>(
         let vec_str_generics = vec![Type::String("String".to_string())];
         codegen.monomorphize_struct("Vec", &vec_str_generics).map_err(|e| e.to_string())?
     };
-    let vec_ptr_ty = vec_struct_ty.ptr_type(inkwell::AddressSpace::default());
+    let vec_ptr_ty = codegen.context.ptr_type(inkwell::AddressSpace::default());
     let vec_ptr = codegen.builder.build_pointer_cast(res, vec_ptr_ty, "vec_cast").unwrap();
 
     Ok((vec_ptr.into(), Type::Struct("Vec".to_string(), vec![Type::String("String".to_string())])))
