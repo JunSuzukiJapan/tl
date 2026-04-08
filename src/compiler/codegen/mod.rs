@@ -1501,14 +1501,26 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 self.exit_scope(); // End method scope
 
-                if let Type::Void = method.return_type {
-                    let is_terminated = self
-                        .builder
-                        .get_insert_block()
-                        .map(|b| b.get_terminator().is_some())
-                        .unwrap_or(false);
-                    if !is_terminated {
+                let is_terminated = self
+                    .builder
+                    .get_insert_block()
+                    .map(|b| b.get_terminator().is_some())
+                    .unwrap_or(false);
+                if !is_terminated {
+                    let ret_ty = self.get_llvm_type(&method.return_type).unwrap_or(self.context.i8_type().into());
+                    if let Type::Void = method.return_type {
                         self.builder.build_return(None).unwrap();
+                    } else if ret_ty.is_struct_type() {
+                        let s = ret_ty.into_struct_type().const_zero();
+                        self.builder.build_return(Some(&s)).unwrap();
+                    } else if ret_ty.is_pointer_type() {
+                        self.builder.build_return(Some(&ret_ty.into_pointer_type().const_null())).unwrap();
+                    } else if ret_ty.is_int_type() {
+                        self.builder.build_return(Some(&ret_ty.into_int_type().const_zero())).unwrap();
+                    } else if ret_ty.is_float_type() {
+                        self.builder.build_return(Some(&ret_ty.into_float_type().const_zero())).unwrap();
+                    } else {
+                        self.builder.build_unreachable().unwrap();
                     }
                 }
 
@@ -1944,7 +1956,19 @@ impl<'ctx> CodeGenerator<'ctx> {
             if i == body_len - 1 && func.return_type != Type::Void {
                 // Check if it's an expression that should be returned
                 if let StmtKind::Expr(expr) = &stmt.inner {
-                    let (val, ty) = self.compile_expr(expr)?;
+                    let (mut val, mut ty) = self.compile_expr(expr)?;
+
+                    // Implicit TraitObject Upcast for implicit Return
+                    let current_ret_is_trait = if let Some(Type::TraitObject(trait_name)) = &self.current_fn_return_type {
+                        Some(trait_name.clone())
+                    } else { None };
+
+                    if let Some(trait_name) = current_ret_is_trait {
+                        if let Type::Struct(struct_name, _) = &ty {
+                            val = self.emit_trait_object_upcast(val, struct_name, &trait_name)?;
+                            ty = Type::TraitObject(trait_name);
+                        }
+                    }
 
                     // FIX: Logic parity with StmtKind::Return
                     // Ensure the returned value is NOT cleaned up by emit_all_scopes_cleanup.
@@ -2052,9 +2076,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                              self.builder.build_call(exit_fn, &[], "").unwrap();
                         }
 
-                        self.builder
-                            .build_return(Some(&final_val))
-                            .map_err(|e| e.to_string())?;
+                        if ty == Type::Void && func.return_type != Type::Void {
+                            self.builder.build_unreachable().unwrap();
+                        } else {
+                            self.builder
+                                .build_return(Some(&final_val))
+                                .map_err(|e| e.to_string())?;
+                        }
                     }
                                 self.current_fn_return_type = old_ret_type;
                     return Ok(()); // RETURN EARLY - Function is done
@@ -2093,9 +2121,21 @@ impl<'ctx> CodeGenerator<'ctx> {
                   self.builder.build_call(exit_fn, &[], "").unwrap();
              }
 
-             // Add implicit return void if needed (not perfect but ok for now)
+             let ret_ty = self.get_llvm_type(&func.return_type).unwrap_or(self.context.i8_type().into());
+             println!("DEBUG TERMINATOR FALLBACK for {}: func.return_type = {:?}, ret_ty = {:?}", func.name, func.return_type, ret_ty);
              if func.return_type == Type::Void {
                  self.builder.build_return(None).map_err(|e| e.to_string())?;
+             } else if ret_ty.is_struct_type() {
+                 let s = ret_ty.into_struct_type().const_zero();
+                 self.builder.build_return(Some(&s)).unwrap();
+             } else if ret_ty.is_pointer_type() {
+                 self.builder.build_return(Some(&ret_ty.into_pointer_type().const_null())).unwrap();
+             } else if ret_ty.is_int_type() {
+                 self.builder.build_return(Some(&ret_ty.into_int_type().const_zero())).unwrap();
+             } else if ret_ty.is_float_type() {
+                 self.builder.build_return(Some(&ret_ty.into_float_type().const_zero())).unwrap();
+             } else {
+                 self.builder.build_unreachable().unwrap();
              }
         }
 

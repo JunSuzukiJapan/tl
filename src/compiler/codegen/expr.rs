@@ -1122,7 +1122,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
             let mut fn_ptrs = Vec::new();
             for m in &trait_def.methods {
-                let mangled_name = format!("{}_{}", struct_name, m.name);
+                let mangled_name = format!("tl_{}_{}", struct_name, m.name);
                 let fn_val = self.module.get_function(&mangled_name).ok_or_else(|| format!("Missing implementation of {} for trait {} in struct {}: looking for {}", m.name, trait_name, struct_name, mangled_name))?;
                 fn_ptrs.push(fn_val.as_global_value().as_pointer_value());
             }
@@ -6685,6 +6685,44 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
 
         let (obj_val, obj_ty) = self.compile_expr(obj)?;
+
+        // Trait Object Dynamic Dispatch
+        if let Type::TraitObject(trait_name) = &obj_ty {
+            let fat_ptr = obj_val.into_struct_value();
+            let data_ptr = self.builder.build_extract_value(fat_ptr, 0, "dyn_data_ptr").unwrap().into_pointer_value();
+            let vtable_ptr = self.builder.build_extract_value(fat_ptr, 1, "dyn_vtable_ptr").unwrap().into_pointer_value();
+            
+            let trait_def = self.trait_defs.get(trait_name).ok_or_else(|| format!("Trait {} not found", trait_name))?.clone();
+            let method_idx = trait_def.methods.iter().position(|m| m.name == method).ok_or_else(|| format!("Method {} not found in trait {}", method, trait_name))?;
+            let method_sig = &trait_def.methods[method_idx];
+
+            let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
+            let fn_ptr_ptr = unsafe {
+                self.builder.build_gep(ptr_type, vtable_ptr, &[self.context.i32_type().const_int(method_idx as u64, false)], "fn_ptr_ptr").map_err(|e| e.to_string())?
+            };
+            let fn_ptr = self.builder.build_load(ptr_type, fn_ptr_ptr, "fn_ptr").map_err(|e| e.to_string())?.into_pointer_value();
+
+            let mut compiled_args: Vec<inkwell::values::BasicMetadataValueEnum<'ctx>> = Vec::new();
+            let mut param_types: Vec<inkwell::types::BasicTypeEnum> = Vec::new();
+            
+            compiled_args.push(data_ptr.into());
+            param_types.push(ptr_type.into());
+            for arg_expr in args {
+                let (arg_val, arg_ty) = self.compile_expr(arg_expr)?;
+                compiled_args.push(arg_val.into());
+                let arg_llvm_ty = self.get_llvm_type(&arg_ty).unwrap_or(self.context.i64_type().into());
+                param_types.push(arg_llvm_ty);
+            }
+
+            let ret_llvm_ty = self.get_llvm_type(&method_sig.return_type).unwrap_or_else(|_| self.context.i8_type().into());
+            let fn_type = ret_llvm_ty.fn_type(&param_types.iter().map(|&t| t.into()).collect::<Vec<_>>(), false);
+            let call_site = self.builder.build_indirect_call(fn_type, fn_ptr, &compiled_args, "dyn_call").map_err(|e| e.to_string())?;
+            let ret_val = match call_site.try_as_basic_value() {
+                inkwell::values::ValueKind::Basic(v) => v,
+                _ => self.context.i8_type().const_zero().into(),
+            };
+            return Ok((ret_val, method_sig.return_type.clone()));
+        }
 
         // === Vec.join(sep: String) -> String ===
         if method == "join" && args.len() == 1 {

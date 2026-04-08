@@ -44,12 +44,12 @@ fn main() {
     println(s1);
     println(s2);
 
-    assert(s1 == "Rex says Woof!");
-    assert(s2 == "Luna says Meow!");
+    assert(s1 == "Rex says Woof!", "Assertion failed");
+    assert(s2 == "Luna says Meow!", "Assertion failed");
 
     // Pass as parameter
-    assert(test_animal(a1) == "Rex says Woof!");
-    assert(test_animal(a2) == "Luna says Meow!");
+    assert(test_animal(a1) == "Rex says Woof!", "Assertion failed");
+    assert(test_animal(a2) == "Luna says Meow!", "Assertion failed");
     
     println("dyn Trait test passed!");
 }

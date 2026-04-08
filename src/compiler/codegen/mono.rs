@@ -590,9 +590,15 @@ impl<'ctx> CodeGenerator<'ctx> {
                 Ok(self.context.struct_type(&[ptr_ty.into(), ptr_ty.into()], false).into())
             }
             
+            Type::TraitObject(_) => {
+                // Fat pointer: {data_ptr, vtable_ptr} struct
+                let ptr_ty = self.context.ptr_type(AddressSpace::default());
+                Ok(self.context.struct_type(&[ptr_ty.into(), ptr_ty.into()], false).into())
+            }
+            
             _ => {
-                // Default to i64 for unknown types
-                Ok(self.context.i64_type().into())
+                // strict NO IMPLICIT FALLBACK rule: returning explicitly failed types to prevent undefined behavior
+                Err(format!("get_llvm_type: compilation error, unhandled or unresolved type {:?}", ty))
             }
         }
     }
