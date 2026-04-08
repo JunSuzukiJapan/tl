@@ -1854,7 +1854,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 generics: original_generics,
                 payload,
             } => {
-                let generics: Vec<Type> = original_generics.iter().map(|ty| self.substitute_current_generics(ty)).collect();
+                let generics: Vec<Type> = original_generics.clone();
                 // 0. specialized name handling
                 // Extract base name from mangled name (e.g., "Option_i64" -> "Option")
                 // and parse generics from mangled suffix if generics is empty
@@ -1888,15 +1888,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // If the found enum_def is still generic, monomorphize with inferred or default types
                 if !enum_def.generics.is_empty() {
                     let mut actual_generics = inferred_generics.clone();
+                    // Generate generic array logic removed. Assuming AOT provides concrete types.
                     if actual_generics.is_empty() {
-                        // Check expected_type_stack for a concrete Generic Type context
-                        if let Some(Some(expected_type)) = self.expected_type_stack.last() {
-                            if let Some((target_name, target_args)) = expected_type.as_named_type() {
-                                if target_name == base_name || target_name.starts_with(&base_name) {
-                                    actual_generics = target_args.to_vec();
-                                }
-                            }
-                        }
+                         return Err(format!("codegen error: Enum {}::{} lacks generic parameters and type inference could not resolve them. AOT is missing generics.", base_name, variant_name));
                     }
 
                     if actual_generics.is_empty() {
@@ -2339,7 +2333,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
 
             ExprKind::As(expr, target_type) => {
-                let target_type = self.substitute_current_generics(target_type);
+                let target_type = target_type.clone();
                 let (val, source_type) = self.compile_expr(expr)?;
                 if source_type == target_type {
                     return Ok((val, source_type));
@@ -3250,7 +3244,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
             ExprKind::StructInit(ty, fields) => {
                  // Substitute with current method generics if available
-                 let ty = self.substitute_current_generics(ty);
+                 let ty = ty.clone();
 
                  // Normalize Path types to Struct/Enum
                  let normalized_ty = self.normalize_type(&ty);
@@ -3260,20 +3254,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                       _ => panic!("StructInit type must be Struct or Enum (after normalization), found {:?} (original: {:?})", normalized_ty, ty),
                  };
                  
-                 // [CONTEXT INHERITANCE]
-                 if let Some(Some(raw_expected)) = self.expected_type_stack.last() {
-                     let expected = self.normalize_type(raw_expected);
-                     if let Some((exp_name, exp_args)) = expected.as_named_type() {
-                         if name == exp_name && generics.is_empty() && !exp_args.is_empty() {
-                             generics = exp_args.to_vec();
-                         }
-                     }
-                 }
+                 // [CONTEXT INHERITANCE] Logic removed. Assuming AOT resolving.
 
                  self.compile_struct_init(&name, &generics, fields)
             },
             ExprKind::StaticMethodCall(original_type_ty, method_name, args) => {
-                let type_ty = self.substitute_current_generics(original_type_ty);
+                let type_ty = original_type_ty.clone();
                 
                 if method_name == "sizeof" {
                      // For Enum types, we need to get the actual data struct size, not pointer size
@@ -4804,15 +4790,6 @@ impl<'ctx> CodeGenerator<'ctx> {
         let normalized_target = self.normalize_type(target_type);
         let mut target_type = normalized_target.clone();
 
-        // [CONTEXT INHERITANCE] Inherit generic args from left-hand side if missing
-        if let Some(Some(raw_expected)) = self.expected_type_stack.last() {
-            let expected = self.normalize_type(raw_expected);
-            if let (Some((base, targs)), Some((exp_base, exp_args))) = (target_type.as_named_type(), expected.as_named_type()) {
-                if base == exp_base && targs.is_empty() && !exp_args.is_empty() {
-                    target_type = expected.clone();
-                }
-            }
-        }
         let target_type = &target_type;
         
         // Compatibility aliases for existing logic
@@ -7364,33 +7341,11 @@ impl<'ctx> CodeGenerator<'ctx> {
             (type_name.clone(), vec![])
         };
 
-        let generic_func = if self.generic_impls.contains_key(&base_type_name) {
-             // Prioritize obj_ty for type args - it has complete type information
-             // String parser (inferred_generics) may lose nested generic info (e.g. Entry<K,V> -> Entry)
-             let generics = match &obj_ty {
-                 Type::Struct(_, args) | Type::Enum(_, args) | Type::Path(_, args) if !args.is_empty() => args.clone(),
-                 _ => if !inferred_generics.is_empty() { inferred_generics.clone() } else { vec![] },
-             };
-
-             // Try monomorphize
-             match self.monomorphize_method(&base_type_name, method, &generics) {
-                 Ok(name) => {
-                     let f = self.module.get_function(&name).ok_or(format!("{} not found", name))?;
-                     Some((f, name))
-                 },
-                 Err(e) => return Err(e),
-             }
-        } else {
-             None
-        };
-
         let mangled_name = format!("tl_{}_{}", simple_struct_name, method);
         // Fallback to lowercase
         let stdlib_name = format!("tl_{}_{}", simple_struct_name.to_lowercase(), method);
 
-        let (func_val, final_name) = if let Some(res) = generic_func {
-            res
-        } else if let Some(f) = self.module.get_function(&mangled_name) {
+        let (func_val, final_name) = if let Some(f) = self.module.get_function(&mangled_name) {
             (f, mangled_name)
         } else if let Some(f) = self.module.get_function(&stdlib_name) {
             (f, stdlib_name)

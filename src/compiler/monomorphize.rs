@@ -129,6 +129,39 @@ impl Monomorphizer {
     }
 
     fn scan_module(&mut self, module: &mut Module) {
+        // 0. Process non-generic structs and enums to resolve their fields
+        let mut concrete_structs = Vec::new();
+        for mut s in module.structs.drain(..) {
+            if s.generics.is_empty() {
+                for (_, ty) in &mut s.fields {
+                    *ty = self.resolve_type(ty);
+                }
+                concrete_structs.push(s);
+            }
+        }
+        self.concrete_structs.extend(concrete_structs);
+
+        let mut concrete_enums = Vec::new();
+        for mut e in module.enums.drain(..) {
+            if e.generics.is_empty() {
+                for variant in &mut e.variants {
+                    if let crate::compiler::ast::VariantKind::Tuple(types) = &mut variant.kind {
+                        for ty in types {
+                            *ty = self.resolve_type(ty);
+                        }
+                    } else if let crate::compiler::ast::VariantKind::Struct(fields) = &mut variant.kind {
+                        for (_, ty) in fields {
+                            *ty = self.resolve_type(ty);
+                        }
+                    } else if let crate::compiler::ast::VariantKind::Array(ty, _) = &mut variant.kind {
+                        *ty = self.resolve_type(ty);
+                    }
+                }
+                concrete_enums.push(e);
+            }
+        }
+        self.concrete_enums.extend(concrete_enums);
+
         // 1. Process impls logic FIRST so they are available for resolution
         for mut impl_block in module.impls.drain(..) {
             let is_generic_target = if let Type::Struct(name, _) | Type::Enum(name, _) = &impl_block.target_type {
@@ -149,6 +182,13 @@ impl Monomorphizer {
                 };
                 
                 for method in &mut impl_block.methods {
+                    for (_, ty) in &mut method.args {
+                        *ty = self.substitute_type(ty, &subst);
+                        *ty = self.resolve_type(ty);
+                    }
+                    method.return_type = self.substitute_type(&method.return_type, &subst);
+                    method.return_type = self.resolve_type(&method.return_type);
+
                     for stmt in &mut method.body {
                         self.rewrite_stmt(&mut stmt.inner, &subst, None);
                     }
@@ -162,6 +202,11 @@ impl Monomorphizer {
         let empty_subst = HashMap::new();
         for f in &mut module.functions {
             if f.generics.is_empty() {
+                 for (_, ty) in &mut f.args {
+                     *ty = self.resolve_type(ty);
+                 }
+                 f.return_type = self.resolve_type(&f.return_type);
+                 
                  self.rewrite_function_body(f, &empty_subst);
             }
         }
@@ -521,20 +566,18 @@ impl Monomorphizer {
                    if needs_inference {
                         // Handle both Type::Enum and Type::Struct (mangled enums may come as Struct)
                         if let Some(Type::Enum(expected_name, expected_args)) | Some(Type::Struct(expected_name, expected_args)) = expected_type {
-                            if expected_name == enum_name && !expected_args.is_empty() {
-                                // Case 1: Expected type matches our enum and has generics
+                            println!("Monomorphize EnumInit: enum={}, expected={:?}", enum_name, expected_type); if expected_name == enum_name && !expected_args.is_empty() {
+                                // Case 1: Expected type matches our enum and has generics (unmangled)
                                 *generics = expected_args.clone();
 
-                            } else if MANGLER.starts_with_mangled(expected_name, enum_name) && expected_args.is_empty() {
+                            } else if MANGLER.starts_with_mangled(expected_name, enum_name) {
                                 // Case 2: Expected type is already mangled (e.g. Option_i64 or Entry_i64_i64)
-                                // We cannot use generics.clear() because codegen strictly checks original_generics.len()
-                                // We need to extract the type arguments from the mangled name if possible,
-                                // but for now we simply fall back to letting the unresolved type pass if we must, 
-                                // or try to extract from the environment.
-                                // Actually, setting enum_name avoids needing inference if codegen trusts it?
-                                // No, codegen strict checks it. So we must put something in generics.
-                                // We will leave it as Undefined, which will be caught below if unresolved.
-                                *enum_name = expected_name.clone();
+                                // Extract the generic arguments from it and copy them.
+                                if !expected_args.is_empty() {
+                                    *generics = expected_args.clone();
+                                }
+                                // We don't overwrite enum_name here yet because under it, there is `request_enum_instantiation(enum_name, generics)`
+                                // which expects the base name to build the mangled name properly and register the enum.
                             }
                         }
                     }
@@ -549,7 +592,7 @@ impl Monomorphizer {
                    if generics.iter().any(|t| matches!(t, Type::Undefined(_))) {
                         // In case of a partially resolved expected_type
                         if let Some(Type::Enum(expected_name, expected_args)) | Some(Type::Struct(expected_name, expected_args)) = expected_type {
-                            if expected_name == enum_name || MANGLER.starts_with_mangled(expected_name, enum_name) {
+                            println!("Monomorphize EnumInit: enum={}, expected={:?}", enum_name, expected_type); if expected_name == enum_name || MANGLER.starts_with_mangled(expected_name, enum_name) {
                                 for (i, ty) in generics.iter_mut().enumerate() {
                                     if matches!(ty, Type::Undefined(_)) && i < expected_args.len() {
                                         *ty = expected_args[i].clone();
@@ -630,7 +673,7 @@ impl Monomorphizer {
                       }
                   }
               }
-              ExprKind::StaticMethodCall(type_ty, method_name, args) => {
+              ExprKind::StaticMethodCall(type_ty, method_name, args) => { println!("Mono StaticMethodCall: ty={:?}, method={}", type_ty, method_name);
                           *type_ty = self.substitute_type(type_ty, subst);
                           *type_ty = self.resolve_type(type_ty);
                           for arg in args.iter_mut() {

@@ -52,12 +52,12 @@ pub fn register_io_types(manager: &mut TypeManager) {
         Type::Bool
     );
 
-    // File::read_binary(path: String) -> Vec<u8>
+    // File::read_binary(path: String) -> Result<Vec<u8>, String>
     file.register_evaluated_static_method(
         "read_binary",
         compile_file_read_binary,
         vec![string_type.clone()],
-        Type::Struct("Vec".to_string(), vec![Type::U8])
+        Type::Enum("Result".to_string(), vec![Type::Struct("Vec".to_string(), vec![Type::U8]), Type::String("String".to_string())])
     );
     // File::append(path: String, content: String) -> Bool
     file.register_evaluated_static_method(
@@ -581,31 +581,76 @@ pub fn compile_file_read_binary<'ctx>(
     
     let fn_val = codegen.module.get_function("tl_file_read_binary_all").ok_or("tl_file_read_binary_all not found")?;
     let call = codegen.builder.build_call(fn_val, &[path_ptr.into()], "file_read_binary_all").map_err(|e| e.to_string())?;
-    let res = match call.try_as_basic_value() {
-        inkwell::values::ValueKind::Basic(v) => v,
+    let raw_ptr = match call.try_as_basic_value() {
+        inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
         _ => return Err("Invalid return from File::read_binary".into()),
     };
+
+    let vec_ty = Type::Struct("Vec".to_string(), vec![Type::U8]);
+    let err_ty = Type::String("String".to_string());
+    let res_ty = Type::Enum("Result".to_string(), vec![vec_ty.clone(), err_ty.clone()]);
     
-    // Cast void* to Vec*
-    // Vec is a generic type, so we need to ensure it's monomorphized first
-    // Note: mangle_type_name returns "Vec[u8]" format (square brackets)
-    let vec_ty_name = "Vec[u8]";
-    let vec_struct_ty = if let Some(ty) = codegen.struct_types.get(vec_ty_name) {
+    let ok_ty_llvm = codegen.get_llvm_type(&vec_ty)?;
+    let err_ty_llvm = codegen.get_llvm_type(&err_ty)?;
+
+    let ok_variant_ty = codegen.context.struct_type(&[ok_ty_llvm], false);
+    let err_variant_ty = codegen.context.struct_type(&[err_ty_llvm], false);
+
+    // Get Struct type for Enum Result[Vec[u8],String]
+    let mangled = codegen.mangle_type_name("Result", &[vec_ty.clone(), err_ty.clone()]);
+    let enum_llvm_ty = if let Some(ty) = codegen.enum_types.get(&mangled) {
         *ty
     } else {
-        // Monomorphize Vec<u8> on-demand
-        let vec_u8_generics = vec![Type::U8];
-        codegen.monomorphize_struct("Vec", &vec_u8_generics)
-            .map_err(|e| format!("Failed to monomorphize Vec<u8>: {}", e))?
+        codegen.monomorphize_enum("Result", &[vec_ty.clone(), err_ty.clone()]).map_err(|e| e.to_string())?;
+        *codegen.enum_types.get(&mangled).unwrap()
     };
-    let vec_ptr_ty = codegen.context.ptr_type(inkwell::AddressSpace::default());
-    let vec_ptr = codegen.builder.build_pointer_cast(
-        res.into_pointer_value(),
-        vec_ptr_ty,
-        "vec_cast"
-    ).map_err(|e| e.to_string())?;
 
-    Ok((vec_ptr.into(), Type::Struct("Vec".to_string(), vec![Type::U8])))
+    let res_alloca = codegen.create_entry_block_alloca(
+        codegen.builder.get_insert_block().unwrap().get_parent().unwrap(),
+        "res_alloca",
+        &res_ty
+    )?;
+
+    let is_null = codegen.builder.build_is_null(raw_ptr, "is_null").unwrap();
+    let current_block = codegen.builder.get_insert_block().unwrap();
+    let func = current_block.get_parent().unwrap();
+    let ok_block = codegen.context.append_basic_block(func, "read_ok");
+    let err_block = codegen.context.append_basic_block(func, "read_err");
+    let merge_block = codegen.context.append_basic_block(func, "read_merge");
+
+    codegen.builder.build_conditional_branch(is_null, err_block, ok_block).unwrap();
+
+    // === OK BLOCK ===
+    codegen.builder.position_at_end(ok_block);
+    let tag_ptr_ok = codegen.builder.build_struct_gep(enum_llvm_ty, res_alloca, 0, "tag_ptr").unwrap();
+    codegen.builder.build_store(tag_ptr_ok, codegen.context.i32_type().const_int(0, false)).unwrap(); // 0 is Ok
+
+    let payload_ptr_raw_ok = codegen.builder.build_struct_gep(enum_llvm_ty, res_alloca, 1, "payload_ptr_raw").unwrap();
+    let payload_ptr_ok = codegen.builder.build_pointer_cast(payload_ptr_raw_ok, codegen.context.ptr_type(inkwell::AddressSpace::default()), "payload_ptr").unwrap();
+    
+    let field_ptr_ok = codegen.builder.build_struct_gep(ok_variant_ty, payload_ptr_ok, 0, "field_ptr").unwrap();
+    codegen.builder.build_store(field_ptr_ok, raw_ptr).unwrap();
+    codegen.builder.build_unconditional_branch(merge_block).unwrap();
+
+    // === ERR BLOCK ===
+    codegen.builder.position_at_end(err_block);
+    let tag_ptr_err = codegen.builder.build_struct_gep(enum_llvm_ty, res_alloca, 0, "tag_ptr_err").unwrap();
+    codegen.builder.build_store(tag_ptr_err, codegen.context.i32_type().const_int(1, false)).unwrap(); // 1 is Err
+
+    // Create Error String
+    let (err_str_val, _) = codegen.compile_string_literal("Failed to read binary file")?;
+    
+    let payload_ptr_raw_err = codegen.builder.build_struct_gep(enum_llvm_ty, res_alloca, 1, "payload_ptr_raw_err").unwrap();
+    let payload_ptr_err = codegen.builder.build_pointer_cast(payload_ptr_raw_err, codegen.context.ptr_type(inkwell::AddressSpace::default()), "payload_ptr_err").unwrap();
+    
+    let field_ptr_err = codegen.builder.build_struct_gep(err_variant_ty, payload_ptr_err, 0, "field_ptr_err").unwrap();
+    codegen.builder.build_store(field_ptr_err, err_str_val).unwrap();
+    codegen.builder.build_unconditional_branch(merge_block).unwrap();
+
+    // === MERGE BLOCK ===
+    codegen.builder.position_at_end(merge_block);
+
+    Ok((res_alloca.into(), res_ty))
 }
 
 pub fn compile_file_read_string<'ctx>(

@@ -1962,7 +1962,6 @@ impl SemanticAnalyzer {
                     let resolved_ann = self.resolve_user_type(ann);
                     *ann = resolved_ann;
 
-
                     let refined_inferred_type = inferred_type.clone();
                     if self.are_types_compatible(ann, &refined_inferred_type) {
                         match &mut value.inner {
@@ -2005,7 +2004,6 @@ impl SemanticAnalyzer {
                     ann.clone()
                 } else {
                     // No annotation: Keep inferred type (which may contain Undefined(id))
-                    *ann_opt = Some(inferred_type.clone());
                     inferred_type
                 };
 
@@ -2100,16 +2098,15 @@ impl SemanticAnalyzer {
                 Ok(())
             }
             StmtKind::Return(expr_opt) => {
-                let expected_ty = self.current_return_type.clone();
                 let found_type = if let Some(expr) = expr_opt {
-                    self.check_expr_with_expected(expr, expected_ty.as_ref())?
+                    self.check_expr(expr)?
                 } else {
                     Type::Void
                 };
 
                 // Check against function return type
-                if let Some(mut expected) = expected_ty {
-                    if !self.unify(&mut expected, &found_type) {
+                if let Some(expected) = self.current_return_type.clone() {
+                    if !self.are_types_compatible(&expected, &found_type) {
                         return Err(SemanticError::TypeMismatch {
                             expected: expected,
                             found: found_type,
@@ -3114,17 +3111,6 @@ impl SemanticAnalyzer {
                                 _ => {}
                             }
 
-                            // If expected_type is provided (e.g. Option<V>), extract generics to augment inference_map
-                            if let Some(Type::Enum(expected_name, expected_args)) = expected_type {
-                                if expected_name == enum_name && expected_args.len() == enum_def.generics.len() {
-                                    for (i, g_name) in enum_def.generics.iter().enumerate() {
-                                        if !inference_map.contains_key(g_name) {
-                                            inference_map.insert(g_name.clone(), expected_args[i].clone());
-                                        }
-                                    }
-                                }
-                            }
-
                             // Construct concrete args in order
                             let mut final_generics = Vec::new();
                             for g_name in &enum_def.generics {
@@ -3158,7 +3144,6 @@ impl SemanticAnalyzer {
                                 generics: final_generics.clone(),
                                 payload,
                             };
-                            println!("SEMANTICS PARSED ENUMINIT: enum={}, final_generics.len()={}", enum_name, final_generics.len());
 
                             return Ok(Type::Enum(enum_name.clone(), final_generics));
                         }
@@ -3433,15 +3418,8 @@ impl SemanticAnalyzer {
                         if self.enums.contains_key(&first) {
                             // This is an enum variant init, convert to EnumInit
                             let variant_name = path.last().unwrap().clone();
-                            let mut resolved_args: Vec<Type> =
+                            let resolved_args: Vec<Type> =
                                 args.iter().map(|a| self.resolve_user_type(a)).collect();
-
-                            let enum_def = self.enums.get(&first).unwrap().clone();
-                            if resolved_args.is_empty() && !enum_def.generics.is_empty() {
-                                for _ in &enum_def.generics {
-                                    resolved_args.push(Type::Undefined(self.get_next_undefined_id()));
-                                }
-                            }
 
                             // Transform the expression to EnumInit
                             *expr = Spanned::new(
@@ -3469,20 +3447,12 @@ impl SemanticAnalyzer {
                     if let Type::Path(path, _) = type_node {
                         if path.len() >= 2 {
                             let variant_name = path.last().unwrap().clone();
-                            
-                            let mut final_generics = generics.clone();
-                            let enum_def = self.enums.get(enum_name).unwrap().clone();
-                            if final_generics.is_empty() && !enum_def.generics.is_empty() {
-                                for _ in &enum_def.generics {
-                                    final_generics.push(Type::Undefined(self.get_next_undefined_id()));
-                                }
-                            }
 
                             *expr = Spanned::new(
                                 ExprKind::EnumInit {
                                     enum_name: enum_name.clone(),
                                     variant_name: variant_name.clone(),
-                                    generics: final_generics,
+                                    generics: generics.clone(),
                                     payload: crate::compiler::ast::EnumVariantInit::Struct(
                                         fields.clone(),
                                     ),
@@ -3662,11 +3632,7 @@ impl SemanticAnalyzer {
                     let generic_args: Vec<Type> = if !explicit_generics.is_empty() {
                         explicit_generics.iter().map(|t| t.clone()).collect()
                     } else {
-                        let mut inferred = Vec::new();
-                        for _ in &enum_def.generics {
-                            inferred.push(Type::Undefined(self.get_next_undefined_id()));
-                        }
-                        inferred
+                        vec![]
                     };
 
                     let fields_owned = std::mem::take(fields);
@@ -4091,14 +4057,10 @@ impl SemanticAnalyzer {
                             Some(expr.span.clone()),
                         );
                     }
-                    let mut final_generics = Vec::new();
-                    for _ in &enum_def.generics {
-                        final_generics.push(Type::Undefined(self.get_next_undefined_id()));
-                    }
                     expr.inner = ExprKind::EnumInit {
                         enum_name: enum_def.name.clone(),
                         variant_name: variant_def.name.clone(),
-                        generics: final_generics,
+                        generics: vec![], // Unknown/Empty for now unless we do bidirectional inference
                         payload: crate::compiler::ast::EnumVariantInit::Unit,
                     };
                     return self.check_expr(expr);
@@ -7710,6 +7672,11 @@ impl SemanticAnalyzer {
                     }
                     crate::compiler::ast::EnumVariantInit::Struct(fields) => {
                         for (_, e) in fields {
+                            self.resolve_expr_types(e);
+                        }
+                    }
+                    crate::compiler::ast::EnumVariantInit::Array(args) => {
+                        for e in args {
                             self.resolve_expr_types(e);
                         }
                     }

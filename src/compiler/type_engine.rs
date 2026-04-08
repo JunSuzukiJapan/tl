@@ -111,8 +111,8 @@ impl TypeEngine {
                 res
             }
             (Type::Tensor(inner1, r1), Type::Tensor(inner2, r2)) => {
-                let res = r1 == r2 && self.unify(&inner1, &inner2);
-                if !res { eprintln!("DEBUG: unify failed! tensor mismatch"); }
+                let res = (r1 == r2 || r1 == 0 || r2 == 0) && self.unify(&inner1, &inner2);
+                if !res { eprintln!("DEBUG: unify failed! tensor mismatch {} != {}", r1, r2); }
                 res
             }
             (Type::Ptr(i1), Type::Ptr(i2)) => self.unify(&i1, &i2),

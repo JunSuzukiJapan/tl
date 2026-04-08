@@ -61,15 +61,15 @@ fn read_i32_be(vec: Vec<u8>, offset: i64) -> i64 {
     b0 * 16777216 + b1 * 65536 + b2 * 256 + b3
 }
 
-fn load_mnist_images(path: String) -> Tensor<f32, 2> {
+fn load_mnist_images(path: String) -> Result<Tensor<f32, 2>, String> {
     println("Loading images from: {}", path);
-    let vec = File::read_binary(path);
-    let len = vec.len();
-    if len == 0 {
-        print("Error: Failed to read file or empty file: " + path);
-        let t = Tensor::zeros([1, 784], false);
-        return t;
-    }
+    let res = File::read_binary(path);
+    let vec = match res {
+        Result::Ok(v) => v,
+        Result::Err(e) => {
+            return Result::Err("Failed to read file: " + e + " at " + path);
+        }
+    };
 
     let magic = read_i32_be(vec, 0);
     let count = read_i32_be(vec, 4);
@@ -88,18 +88,18 @@ fn load_mnist_images(path: String) -> Tensor<f32, 2> {
     // Normalize to 0.0 - 1.0
     let result = result_raw / 255.0;
     
-    result
+    Result::Ok(result)
 }
 
-fn load_mnist_labels(path: String) -> Tensor<f32, 1> {
+fn load_mnist_labels(path: String) -> Result<Tensor<f32, 1>, String> {
     println("Loading labels from: {}", path);
-    let vec = File::read_binary(path);
-    let len = vec.len();
-    if len == 0 {
-        print("Error: Failed to read file: " + path);
-        let t = Tensor::zeros([1], false);
-        return t;
-    }
+    let res = File::read_binary(path);
+    let vec = match res {
+        Result::Ok(v) => v,
+        Result::Err(e) => {
+            return Result::Err("Failed to read file: " + e + " at " + path);
+        }
+    };
     
     let magic = read_i32_be(vec, 0);
     let count = read_i32_be(vec, 4);
@@ -108,5 +108,5 @@ fn load_mnist_labels(path: String) -> Tensor<f32, 1> {
     // Read labels manually from offset 8
     let result = Tensor::from_vec_u8_offset(vec, [count], 8);
     
-    result
+    Result::Ok(result)
 }
