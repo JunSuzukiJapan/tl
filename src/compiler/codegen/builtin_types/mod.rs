@@ -148,6 +148,34 @@ pub fn load_all_builtins(codegen: &mut CodeGenerator) {
     codegen.type_manager.register_builtin(i32_data.clone());
     if let Some(def) = i32_data.struct_def.clone() { codegen.struct_defs.insert(def.name.clone(), def); }
     codegen.generic_impls.entry("AtomicI32".to_string()).or_default().extend(i32_data.impl_blocks);
+
+    // Duration
+    let duration_data = non_generic::time_types::load_duration();
+    codegen.type_manager.register_builtin(duration_data.clone());
+    for def in duration_data.extra_structs {
+        codegen.struct_defs.insert(def.name.clone(), def);
+    }
+    if let Some(def) = duration_data.struct_def.clone() { codegen.struct_defs.insert(def.name.clone(), def); }
+    codegen.generic_impls.entry("Duration".to_string()).or_default().extend(duration_data.impl_blocks);
+
+    // Instant
+    let instant_data = non_generic::time_types::load_instant();
+    codegen.type_manager.register_builtin(instant_data.clone());
+    for def in instant_data.extra_structs {
+        codegen.struct_defs.insert(def.name.clone(), def);
+    }
+    if let Some(def) = instant_data.struct_def.clone() { codegen.struct_defs.insert(def.name.clone(), def); }
+    codegen.generic_impls.entry("Instant".to_string()).or_default().extend(instant_data.impl_blocks);
+
+    // DateTime
+    let datetime_data = non_generic::time_types::load_datetime();
+    codegen.type_manager.register_builtin(datetime_data.clone());
+    for def in datetime_data.extra_structs {
+        codegen.struct_defs.insert(def.name.clone(), def);
+    }
+    if let Some(def) = datetime_data.struct_def.clone() { codegen.struct_defs.insert(def.name.clone(), def); }
+    codegen.generic_impls.entry("DateTime".to_string()).or_default().extend(datetime_data.impl_blocks);
+
     // Thread is now fully generic and natively evaluated in expr.rs
     // Register LLM Structs (from source)
     let llm_data = llm::load_llm_data();

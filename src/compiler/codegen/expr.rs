@@ -5121,6 +5121,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         let mangled_name = format!("tl_{}_{}", simple_type_name, method);
         let stdlib_name = format!("tl_{}_{}", simple_type_name.to_lowercase(), method);
 
+        println!("[DEBUG] compile_static_method_call: mangled={} stdlib={}", mangled_name, stdlib_name);
         let (func, actual_name) = if let Some((f, name)) = generic_result {
              (f, name)
         } else if let Some(f) = self.module.get_function(&mangled_name) {
@@ -7194,7 +7195,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             Type::Path(segments, _) => if let Some(n) = segments.last() { n.clone() } else { return Err("Empty path".into()) },
             Type::Tensor(_, _) => "Tensor".to_string(),
             Type::String(_) => "String".to_string(),
-            _ => return Err(format!("Method {} not found on type {:?}", method, obj_ty)),
+            _ => panic!("PANIC_METHOD_NOT_FOUND: obj_ty={:?} method={}", obj_ty, method),
         };
 
         let type_name = struct_name.clone();

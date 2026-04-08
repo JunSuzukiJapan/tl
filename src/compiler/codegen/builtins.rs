@@ -724,6 +724,60 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_atomic_i32_clone") { execution_engine.add_global_mapping(&f, runtime::atomic_ffi::tl_atomic_i32_clone as *const () as usize); }
     if let Some(f) = module.get_function("tl_atomic_i32_free") { execution_engine.add_global_mapping(&f, runtime::atomic_ffi::tl_atomic_i32_free as *const () as usize); }
 
+    // --- Time FFI (Duration, Instant, DateTime) ---
+    // Duration: (i64) -> i64
+    let duration_fn_type = i64_type.fn_type(&[i64_type.into()], false);
+    add_fn("tl_rt_duration_from_secs", duration_fn_type);
+    add_fn("tl_rt_duration_from_millis", duration_fn_type);
+    add_fn("tl_rt_duration_from_nanos", duration_fn_type);
+    add_fn("tl_rt_duration_as_secs", duration_fn_type);
+    add_fn("tl_rt_duration_as_millis", duration_fn_type);
+
+    // Instant: () -> i64, (i64) -> i64
+    let instant_now_type = i64_type.fn_type(&[], false);
+    add_fn("tl_rt_instant_now", instant_now_type);
+    add_fn("tl_rt_instant_elapsed", duration_fn_type);
+
+    // DateTime
+    let datetime_now_type = i64_type.fn_type(&[context.ptr_type(AddressSpace::default()).into()], false);
+    add_fn("tl_rt_datetime_now", datetime_now_type);
+    add_fn("tl_rt_datetime_utc_now", instant_now_type); // () -> i64
+    add_fn("tl_rt_datetime_from_timestamp", duration_fn_type); // (i64) -> i64
+    add_fn("tl_rt_datetime_local_offset", instant_now_type); // () -> i64
+    let datetime_component_type = i64_type.fn_type(&[i64_type.into(), i64_type.into()], false);
+    add_fn("tl_rt_datetime_year", datetime_component_type);
+    add_fn("tl_rt_datetime_month", datetime_component_type);
+    add_fn("tl_rt_datetime_day", datetime_component_type);
+    add_fn("tl_rt_datetime_hour", datetime_component_type);
+    add_fn("tl_rt_datetime_minute", datetime_component_type);
+    add_fn("tl_rt_datetime_second", datetime_component_type);
+    // format: (i64, i64, ptr) -> ptr
+    let datetime_format_type = void_ptr.fn_type(&[i64_type.into(), i64_type.into(), void_ptr.into()], false);
+    add_fn("tl_rt_datetime_format", datetime_format_type);
+
+    // Duration mappings
+    if let Some(f) = module.get_function("tl_rt_duration_from_secs") { execution_engine.add_global_mapping(&f, runtime::time_ffi::tl_rt_duration_from_secs as *const () as usize); }
+    if let Some(f) = module.get_function("tl_rt_duration_from_millis") { execution_engine.add_global_mapping(&f, runtime::time_ffi::tl_rt_duration_from_millis as *const () as usize); }
+    if let Some(f) = module.get_function("tl_rt_duration_from_nanos") { execution_engine.add_global_mapping(&f, runtime::time_ffi::tl_rt_duration_from_nanos as *const () as usize); }
+    if let Some(f) = module.get_function("tl_rt_duration_as_secs") { execution_engine.add_global_mapping(&f, runtime::time_ffi::tl_rt_duration_as_secs as *const () as usize); }
+    if let Some(f) = module.get_function("tl_rt_duration_as_millis") { execution_engine.add_global_mapping(&f, runtime::time_ffi::tl_rt_duration_as_millis as *const () as usize); }
+
+    // Instant mappings
+    if let Some(f) = module.get_function("tl_rt_instant_now") { execution_engine.add_global_mapping(&f, runtime::time_ffi::tl_rt_instant_now as *const () as usize); }
+    if let Some(f) = module.get_function("tl_rt_instant_elapsed") { execution_engine.add_global_mapping(&f, runtime::time_ffi::tl_rt_instant_elapsed as *const () as usize); }
+
+    // DateTime mappings
+    if let Some(f) = module.get_function("tl_rt_datetime_now") { execution_engine.add_global_mapping(&f, runtime::time_ffi::tl_rt_datetime_now as *const () as usize); }
+    if let Some(f) = module.get_function("tl_rt_datetime_utc_now") { execution_engine.add_global_mapping(&f, runtime::time_ffi::tl_rt_datetime_utc_now as *const () as usize); }
+    if let Some(f) = module.get_function("tl_rt_datetime_from_timestamp") { execution_engine.add_global_mapping(&f, runtime::time_ffi::tl_rt_datetime_from_timestamp as *const () as usize); }
+    if let Some(f) = module.get_function("tl_rt_datetime_local_offset") { execution_engine.add_global_mapping(&f, runtime::time_ffi::tl_rt_datetime_local_offset as *const () as usize); }
+    if let Some(f) = module.get_function("tl_rt_datetime_year") { execution_engine.add_global_mapping(&f, runtime::time_ffi::tl_rt_datetime_year as *const () as usize); }
+    if let Some(f) = module.get_function("tl_rt_datetime_month") { execution_engine.add_global_mapping(&f, runtime::time_ffi::tl_rt_datetime_month as *const () as usize); }
+    if let Some(f) = module.get_function("tl_rt_datetime_day") { execution_engine.add_global_mapping(&f, runtime::time_ffi::tl_rt_datetime_day as *const () as usize); }
+    if let Some(f) = module.get_function("tl_rt_datetime_hour") { execution_engine.add_global_mapping(&f, runtime::time_ffi::tl_rt_datetime_hour as *const () as usize); }
+    if let Some(f) = module.get_function("tl_rt_datetime_minute") { execution_engine.add_global_mapping(&f, runtime::time_ffi::tl_rt_datetime_minute as *const () as usize); }
+    if let Some(f) = module.get_function("tl_rt_datetime_second") { execution_engine.add_global_mapping(&f, runtime::time_ffi::tl_rt_datetime_second as *const () as usize); }
+    if let Some(f) = module.get_function("tl_rt_datetime_format") { execution_engine.add_global_mapping(&f, runtime::time_ffi::tl_rt_datetime_format as *const () as usize); }
 
     if let Some(f) = module.get_function("tl_set_device") {
         execution_engine.add_global_mapping(&f, runtime::tl_set_device as *const () as usize);

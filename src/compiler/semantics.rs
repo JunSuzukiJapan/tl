@@ -395,6 +395,15 @@ impl SemanticAnalyzer {
         
         let i32_data = crate::compiler::codegen::builtin_types::non_generic::atomic_types::load_atomic_i32();
         self.register_builtin_data(i32_data);
+
+        let duration_data = crate::compiler::codegen::builtin_types::non_generic::time_types::load_duration();
+        self.register_builtin_data(duration_data);
+
+        let instant_data = crate::compiler::codegen::builtin_types::non_generic::time_types::load_instant();
+        self.register_builtin_data(instant_data);
+
+        let datetime_data = crate::compiler::codegen::builtin_types::non_generic::time_types::load_datetime();
+        self.register_builtin_data(datetime_data);
     }
 
     fn register_builtin_data(&mut self, data: BuiltinTypeData) {
@@ -6362,6 +6371,7 @@ impl SemanticAnalyzer {
 
                 // Re-derive type_ty after potential update (to ensure we use the one with Undefineds)
                 let type_ty = type_node.clone();
+                println!("[DEBUG STATIC METHOD] type_name={}, method_name={}", type_node.get_base_name(), method_name);
                 let is_grad_tensor_static = type_ty.get_base_name() == "GradTensor";
                 let type_name = if is_grad_tensor_static {
                     "Tensor".to_string()
