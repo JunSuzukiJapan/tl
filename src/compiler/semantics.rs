@@ -2109,12 +2109,14 @@ impl SemanticAnalyzer {
 
                 // Check against function return type
                 if let Some(mut expected) = expected_ty {
-                    if !self.unify(&mut expected, &found_type) {
-                        return Err(SemanticError::TypeMismatch {
-                            expected: expected,
-                            found: found_type,
+                    if !self.are_types_compatible(&expected, &found_type) {
+                        if !self.unify(&mut expected, &found_type) {
+                            return Err(SemanticError::TypeMismatch {
+                                expected: expected,
+                                found: found_type,
+                            }
+                            .to_tl_error(Some(stmt.span.clone())));
                         }
-                        .to_tl_error(Some(stmt.span.clone())));
                     }
                 }
                 Ok(())
@@ -2175,7 +2177,7 @@ impl SemanticAnalyzer {
                             {
                                 args[0].clone()
                             }
-                            Type::UnifiedType { ref type_args, .. } if !type_args.is_empty() => {
+                            Type::SpecializedType { ref type_args, .. } if !type_args.is_empty() => {
                                 type_args[0].clone()
                             }
                             Type::Struct(_, _) => {
@@ -7369,7 +7371,18 @@ impl SemanticAnalyzer {
         }
         match (t1, t2) {
             (Type::TraitObject(trait_name), Type::Struct(struct_name, _)) => {
-                if let Some(trait_impls) = self.type_traits.get(struct_name) {
+                let struct_name_str = struct_name.clone();
+                eprintln!("[DEBUG ARE_TYPES_COMPATIBLE] t1=TraitObject({}), t2=Struct({}), found in type_traits={:?}", trait_name, struct_name_str, self.type_traits.get(&struct_name_str));
+                if let Some(trait_impls) = self.type_traits.get(&struct_name_str) {
+                    if trait_impls.iter().any(|t| t == trait_name) {
+                        return true;
+                    }
+                }
+                false
+            }
+            (Type::TraitObject(trait_name), Type::SpecializedType { gen_type, .. }) => {
+                let struct_name_str = gen_type.get_base_name();
+                if let Some(trait_impls) = self.type_traits.get(&struct_name_str) {
                     if trait_impls.iter().any(|t| t == trait_name) {
                         return true;
                     }
@@ -7377,7 +7390,17 @@ impl SemanticAnalyzer {
                 false
             }
             (Type::Struct(struct_name, _), Type::TraitObject(trait_name)) => {
-                if let Some(trait_impls) = self.type_traits.get(struct_name) {
+                let struct_name_str = struct_name.clone();
+                if let Some(trait_impls) = self.type_traits.get(&struct_name_str) {
+                    if trait_impls.iter().any(|t| t == trait_name) {
+                        return true;
+                    }
+                }
+                false
+            }
+            (Type::SpecializedType { gen_type, .. }, Type::TraitObject(trait_name)) => {
+                let struct_name_str = gen_type.get_base_name();
+                if let Some(trait_impls) = self.type_traits.get(&struct_name_str) {
                     if trait_impls.iter().any(|t| t == trait_name) {
                         return true;
                     }

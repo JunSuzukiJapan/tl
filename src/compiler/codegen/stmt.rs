@@ -251,12 +251,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                 
                 Ok(())
             }
-            Type::UnifiedType { base_name: _, type_args, mangled_name, is_enum } => {
-                // Flatten UnifiedType to Struct/Enum and re-dispatch
-                let flat_ty = if *is_enum {
-                    Type::Enum(mangled_name.clone(), type_args.clone())
+
+            Type::SpecializedType { gen_type, type_args, type_map: _ } => {
+                // Flatten SpecializedType to Struct/Enum and re-dispatch
+                let flat_ty = if gen_type.is_enum_type() {
+                    Type::Enum(gen_type.mangled_name_or_name().unwrap_or("").to_string(), type_args.clone())
                 } else {
-                    Type::Struct(mangled_name.clone(), type_args.clone())
+                    Type::Struct(gen_type.mangled_name_or_name().unwrap_or("").to_string(), type_args.clone())
                 };
                 self.emit_struct_copy(dst, src, &flat_ty)
             }
@@ -306,7 +307,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
                             self.context.struct_type(&[ptr_ty.into(), ptr_ty.into()], false).into()
                         },
-                        Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::UnifiedType { .. } | Type::Never | Type::Undefined(_) | Type::Range
+                        Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::SpecializedType { .. } | Type::Never | Type::Undefined(_) | Type::Range
                  => self.context.i64_type().into(),
             };
 
@@ -727,7 +728,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
                             self.context.struct_type(&[ptr_ty.into(), ptr_ty.into()], false).into()
                         },
-                        Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::UnifiedType { .. } | Type::Never | Type::Undefined(_) | Type::Range
+                        Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::SpecializedType { .. } | Type::Never | Type::Undefined(_) | Type::Range
                                  => self.context.i64_type().into(),
                             };
                             field_types.push(llvm_ty);
@@ -1171,7 +1172,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
                             self.context.struct_type(&[ptr_ty.into(), ptr_ty.into()], false).into()
                         },
-                        Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::UnifiedType { .. } | Type::Never | Type::Undefined(_) | Type::Range
+                        Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::SpecializedType { .. } | Type::Never | Type::Undefined(_) | Type::Range
                           => self.context.i64_type().into(),
                      });
                  }
@@ -1316,7 +1317,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
                             self.context.struct_type(&[ptr_ty.into(), ptr_ty.into()], false).into()
                         },
-                        Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::UnifiedType { .. } | Type::Never | Type::Undefined(_) | Type::Range
+                        Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::SpecializedType { .. } | Type::Never | Type::Undefined(_) | Type::Range
                           => self.context.i64_type().into(),
                       }
                  }).collect();
@@ -1433,7 +1434,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
                             self.context.struct_type(&[ptr_ty.into(), ptr_ty.into()], false).into()
                         },
-                        Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::UnifiedType { .. } | Type::Never | Type::Undefined(_) | Type::Range
+                        Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::SpecializedType { .. } | Type::Never | Type::Undefined(_) | Type::Range
                                            => self.context.i64_type().into(),
                                       };
                                      field_llvm_types.push(llvm_ty);
@@ -2169,8 +2170,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                            } else if let Type::Struct(name, generics) = &inner_ty {
                                 // Assuming 'set' method
                                 return self.emit_struct_set(inner_val, name, &generics, indices, val_ir);
-                           } else if let Type::UnifiedType { base_name: _, type_args, mangled_name, .. } = &inner_ty {
-                                // UnifiedType: use mangled_name for method lookup, base_name + type_args for monomorphize
+                           } else if let Type::SpecializedType { gen_type, type_args, .. } = &inner_ty {
+                                // SpecializedType: dispatch to array-like access if needed
+                                let mangled_name = gen_type.mangled_name_or_name().unwrap_or("");
                                 return self.emit_struct_set(inner_val, &mangled_name, &type_args, indices, val_ir);
                            } else {
                                 return Err(format!("Invalid assignment target inner type: {:?}", inner_ty));
@@ -2247,12 +2249,23 @@ impl<'ctx> CodeGenerator<'ctx> {
                                     _ => return Err("Invalid tensor_len return".into()),
                                 }
                             }
-                            Type::Struct(name, _) | Type::UnifiedType { base_name: name, .. } => {
-                                // Struct/UnifiedType: dispatch to len() method
-                                let mangled_name = match &iter_ty {
-                                    Type::UnifiedType { mangled_name, .. } => mangled_name.clone(),
-                                    _ => name.clone(),
-                                };
+                            Type::SpecializedType { gen_type, .. } => {
+                                // SpecializedType: dispatch to len() method
+                                let mangled_name = gen_type.mangled_name_or_name().unwrap_or("").to_string();
+                                let len_fn_name = format!("tl_{}_len", mangled_name);
+                                let len_fn = self.module.get_function(&len_fn_name)
+                                    .ok_or_else(|| format!("{} not found (does this type implement Iterable?)", len_fn_name))?;
+                                let len_call = self.builder
+                                    .build_call(len_fn, &[iter_val.into()], "struct_len")
+                                    .map_err(|e| e.to_string())?;
+                                match len_call.try_as_basic_value() {
+                                    inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+                                    _ => return Err("Invalid struct_len return".into()),
+                                }
+                            }
+                            Type::Struct(name, _) => {
+                                // Struct: dispatch to len() method
+                                let mangled_name = name.clone();
                                 let len_fn_name = format!("tl_{}_len", mangled_name);
                                 let len_fn = self.module.get_function(&len_fn_name)
                                     .ok_or_else(|| format!("{} not found (does this type implement Iterable?)", len_fn_name))?;
@@ -2428,15 +2441,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                             }
                         }
 
-                        Type::Struct(ref name, _) | Type::UnifiedType { base_name: ref name, .. } => {
+                        Type::Struct(ref name, _) => {
                             // === Vec特殊処理: data_ptrから直接アクセス ===
                             // Vec::get() は Option<T> を返すため for ループには不適。
                             // data_ptr[i] で直接要素にアクセスする。
                             // 要素型は struct_def の ptr フィールド (ptr<T> → T) から取得。
-                            let codegen_name = match &iter_ty {
-                                Type::UnifiedType { mangled_name, .. } => mangled_name.clone(),
-                                _ => name.clone(),
-                            };
+                            let codegen_name = name.clone();
                             let base_name = crate::compiler::ast::mangle_base_name(&codegen_name);
                             
                             if base_name == "Vec" {
@@ -2478,11 +2488,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 
                                 (elem_val, elem_ty)
                             } else {
-                            // Struct/UnifiedType: dispatch to get() method
-                            let mangled_name = match &iter_ty {
-                                Type::UnifiedType { mangled_name, .. } => mangled_name.clone(),
-                                _ => name.clone(),
-                            };
+                            // Struct: dispatch to get() method
+                            let mangled_name = name.clone();
                             let get_fn_name = format!("tl_{}_get", mangled_name);
                             let get_fn = self.module.get_function(&get_fn_name)
                                 .ok_or_else(|| format!("{} not found (does this type implement Iterable?)", get_fn_name))?;
@@ -4024,7 +4031,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
                             self.context.struct_type(&[ptr_ty.into(), ptr_ty.into()], false).into()
                         },
-                        Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::UnifiedType { .. } | Type::Never | Type::Undefined(_) | Type::Range
+                        Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::SpecializedType { .. } | Type::Never | Type::Undefined(_) | Type::Range
                          => self.context.i64_type().into(),
                     };
                     field_types.push(llvm_ty);
@@ -4236,7 +4243,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
                             self.context.struct_type(&[ptr_ty.into(), ptr_ty.into()], false).into()
                         },
-                        Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::UnifiedType { .. } | Type::Never | Type::Undefined(_) | Type::Range
+                        Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::SpecializedType { .. } | Type::Never | Type::Undefined(_) | Type::Range
                       => self.context.i64_type().into(),
                  };
                  Ok((self.builder.build_load(load_ty, ptr, "").unwrap(), res.1))
@@ -4262,7 +4269,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
                             self.context.struct_type(&[ptr_ty.into(), ptr_ty.into()], false).into()
                         },
-                        Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::UnifiedType { .. } | Type::Never | Type::Undefined(_) | Type::Range
+                        Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::SpecializedType { .. } | Type::Never | Type::Undefined(_) | Type::Range
                           => self.context.i64_type().into(),
                      };
                      Ok((self.builder.build_load(load_ty, ptr, "").unwrap(), res.1))

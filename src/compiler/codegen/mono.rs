@@ -436,8 +436,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                     self.mangle_type_name(name, args)
                 }
             }
-            Type::UnifiedType { mangled_name, .. } => {
-                mangled_name.clone()
+            Type::SpecializedType { gen_type, .. } => {
+                gen_type.mangled_name_or_name().unwrap_or("specialized").to_string()
             }
 
             Type::Tensor(inner, rank) => {
@@ -702,7 +702,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 inner_args.iter().any(|a| Self::is_unresolved_generic(a))
             }
             Type::Enum(_, inner_args) => inner_args.iter().any(|a| Self::is_unresolved_generic(a)),
-            Type::UnifiedType { type_args, .. } => type_args.iter().any(|a| Self::is_unresolved_generic(a)),
+            Type::SpecializedType { type_args, .. } => type_args.iter().any(|a| Self::is_unresolved_generic(a)),
             Type::Tuple(types) => types.iter().any(|a| Self::is_unresolved_generic(a)),
             Type::Undefined(_) => true,
             _ => false,
@@ -727,11 +727,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let unified_args: Vec<Type> = args.iter()
                     .map(|a| self.to_unified_type_if_generic(a.clone()))
                     .collect();
-                Type::UnifiedType {
-                    base_name: base,
+                Type::SpecializedType {
+                    gen_type: Box::new(if is_enum { Type::Enum(base, vec![]) } else { Type::Struct(base, vec![]) }),
                     type_args: unified_args,
-                    mangled_name: mangled,
-                    is_enum,
+                    type_map: vec![] // Type map is not always available here, but we pass unified_args
                 }
             }
             Type::Struct(name, args) if args.is_empty() => {
@@ -752,11 +751,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let unified_args: Vec<Type> = args.iter()
                     .map(|a| self.to_unified_type_if_generic(a.clone()))
                     .collect();
-                Type::UnifiedType {
-                    base_name: base,
+                Type::SpecializedType {
+                    gen_type: Box::new(Type::Enum(base, vec![])),
                     type_args: unified_args,
-                    mangled_name: mangled,
-                    is_enum: true,
+                    type_map: vec![]
                 }
             }
             Type::Tuple(types) => {
@@ -822,13 +820,12 @@ impl<'ctx> CodeGenerator<'ctx> {
             },
             Type::Ptr(inner) => Type::Ptr(Box::new(self.substitute_type(inner, subst))),
             Type::Array(inner, size) => Type::Array(Box::new(self.substitute_type(inner, subst)), *size),
-            Type::UnifiedType { base_name, type_args, mangled_name, is_enum } => {
+            Type::SpecializedType { gen_type, type_args, type_map } => {
                 let new_args: Vec<Type> = type_args.iter().map(|a| self.substitute_type(a, subst)).collect();
-                Type::UnifiedType {
-                    base_name: base_name.clone(),
+                Type::SpecializedType {
+                    gen_type: gen_type.clone(),
                     type_args: new_args,
-                    mangled_name: mangled_name.clone(),
-                    is_enum: *is_enum,
+                    type_map: type_map.clone(),
                 }
             }
             _ => ty.clone(),
@@ -873,14 +870,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let normalized_args: Vec<Type> = args.iter().map(|a| self.normalize_type(a)).collect();
                 Type::Enum(name.clone(), normalized_args)
             }
-            Type::UnifiedType { base_name, type_args, mangled_name: _, is_enum } => {
-                // Flatten UnifiedType to Struct/Enum.
-                // Always use base_name so that generic matching works correctly.
+            Type::SpecializedType { gen_type, type_args, type_map: _ } => {
                 let normalized_args: Vec<Type> = type_args.iter().map(|a| self.normalize_type(a)).collect();
-                if *is_enum {
-                    Type::Enum(base_name.clone(), normalized_args)
+                if gen_type.is_enum_type() {
+                    Type::Enum(gen_type.get_base_name(), normalized_args)
                 } else {
-                    Type::Struct(base_name.clone(), normalized_args)
+                    Type::Struct(gen_type.get_base_name(), normalized_args)
                 }
             }
             Type::Tensor(inner, rank) => Type::Tensor(Box::new(self.normalize_type(inner)), *rank),
@@ -1163,7 +1158,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             Type::String(_) => "String".to_string(),
             Type::Struct(name, _) => name.clone(),
             Type::Enum(name, _) => name.clone(),
-            Type::UnifiedType { base_name, .. } => base_name.clone(),
+            Type::SpecializedType { gen_type, .. } => gen_type.get_base_name(),
             _ => format!("{:?}", ty),
         }
     }

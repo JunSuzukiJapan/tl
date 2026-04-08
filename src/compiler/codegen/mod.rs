@@ -1034,7 +1034,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 .ptr_type(inkwell::AddressSpace::default())
                                 .into()
                         }
-                        Type::UnifiedType { .. } => {
+                        Type::SpecializedType { .. } => {
                             // UnifiedType (generic struct/enum) are objects, use pointer
                             self.context
                                 .ptr_type(inkwell::AddressSpace::default())

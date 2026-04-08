@@ -2007,7 +2007,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 .into(),
                             Type::Void => self.context.i8_type().into(),
                             Type::Array(inner, size) => self.get_llvm_type(&Type::Array(inner.clone(), *size)).unwrap_or(self.context.i64_type().into()),
-                            Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::UnifiedType { .. } | Type::Never | Type::Undefined(_) | Type::Range => self.context.i64_type().into(), Type::TraitObject(_) => { let p = self.context.ptr_type(inkwell::AddressSpace::default()); self.context.struct_type(&[p.into(), p.into()], false).into() },
+                            Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::SpecializedType { .. } | Type::Never | Type::Undefined(_) | Type::Range => self.context.i64_type().into(), Type::TraitObject(_) => { let p = self.context.ptr_type(inkwell::AddressSpace::default()); self.context.struct_type(&[p.into(), p.into()], false).into() },
                         };
                         field_types.push(llvm_ty);
                     }
@@ -2108,7 +2108,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                     .into(),
                                 Type::Void => self.context.i8_type().into(),
                                 Type::Array(inner, size) => self.get_llvm_type(&Type::Array(inner.clone(), *size)).unwrap_or(self.context.i64_type().into()),
-                                Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::UnifiedType { .. } | Type::Never | Type::Undefined(_) | Type::Range => self.context.i64_type().into(), Type::TraitObject(_) => { let p = self.context.ptr_type(inkwell::AddressSpace::default()); self.context.struct_type(&[p.into(), p.into()], false).into() },
+                                Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::SpecializedType { .. } | Type::Never | Type::Undefined(_) | Type::Range => self.context.i64_type().into(), Type::TraitObject(_) => { let p = self.context.ptr_type(inkwell::AddressSpace::default()); self.context.struct_type(&[p.into(), p.into()], false).into() },
                             };
                             field_types_llvm.push(llvm_ty);
                         }
@@ -2193,7 +2193,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                     .into(),
                                 Type::Void => self.context.i8_type().into(),
                                 Type::Array(inner, size) => self.get_llvm_type(&Type::Array(inner.clone(), *size)).unwrap_or(self.context.i64_type().into()),
-                                Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::UnifiedType { .. } | Type::Never | Type::Undefined(_) | Type::Range => self.context.i64_type().into(), Type::TraitObject(_) => { let p = self.context.ptr_type(inkwell::AddressSpace::default()); self.context.struct_type(&[p.into(), p.into()], false).into() },
+                                Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::SpecializedType { .. } | Type::Never | Type::Undefined(_) | Type::Range => self.context.i64_type().into(), Type::TraitObject(_) => { let p = self.context.ptr_type(inkwell::AddressSpace::default()); self.context.struct_type(&[p.into(), p.into()], false).into() },
                             };
                             field_types_llvm.push(llvm_ty);
                         }
@@ -3190,7 +3190,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         Type::TensorShaped(_, _) | Type::GradTensor(_, _)
                         | Type::Array(_, _) => self.get_llvm_type(&field_ty).unwrap_or(self.context.i64_type().into()),
                         Type::Void => self.context.i8_type().into(),
-                        Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::UnifiedType { .. } | Type::Never | Type::Undefined(_) | Type::Range => self.context.i64_type().into(), Type::TraitObject(_) => { let p = self.context.ptr_type(inkwell::AddressSpace::default()); self.context.struct_type(&[p.into(), p.into()], false).into() },
+                        Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::SpecializedType { .. } | Type::Never | Type::Undefined(_) | Type::Range => self.context.i64_type().into(), Type::TraitObject(_) => { let p = self.context.ptr_type(inkwell::AddressSpace::default()); self.context.struct_type(&[p.into(), p.into()], false).into() },
                     };
 
                     let loaded = self
@@ -3749,7 +3749,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         | Type::Enum(_, _) | Type::Tuple(_) | Type::Ptr(_) | Type::Void
                         | Type::Usize | Type::Entity | Type::Char(_) | Type::Array(_, _)
                         | Type::TensorShaped(_, _) | Type::GradTensor(_, _)
-                        | Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::UnifiedType { .. } | Type::Never | Type::Undefined(_) | Type::Range => Err(format!("Negation not supported for type {:?}", ty)), Type::TraitObject(_) => Err("Negation not supported for TraitObject".into()),
+                        | Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::SpecializedType { .. } | Type::Never | Type::Undefined(_) | Type::Range => Err(format!("Negation not supported for type {:?}", ty)), Type::TraitObject(_) => Err("Negation not supported for TraitObject".into()),
                     },
 
                     UnOp::Not => {
@@ -4135,7 +4135,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .into(),
                         Type::Void => self.context.i8_type().into(),
                         Type::Array(inner, size) => self.get_llvm_type(&Type::Array(inner.clone(), *size)).unwrap_or(self.context.i64_type().into()),
-                        Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::UnifiedType { .. } | Type::Never | Type::Undefined(_) | Type::Range => self.context.i64_type().into(), Type::TraitObject(_) => { let p = self.context.ptr_type(inkwell::AddressSpace::default()); self.context.struct_type(&[p.into(), p.into()], false).into() },
+                        Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::SpecializedType { .. } | Type::Never | Type::Undefined(_) | Type::Range => self.context.i64_type().into(), Type::TraitObject(_) => { let p = self.context.ptr_type(inkwell::AddressSpace::default()); self.context.struct_type(&[p.into(), p.into()], false).into() },
                     };
 
                     let phi = self
@@ -5855,7 +5855,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         let (subject_val, subject_ty) = self.compile_expr(subject_expr)?;
         let (enum_name, raw_generic_args) = match &subject_ty {
             Type::Enum(n, args) | Type::Struct(n, args) => (n, args.clone()),
-            Type::UnifiedType { mangled_name, type_args, .. } => (mangled_name, type_args.clone()),
+            Type::SpecializedType { gen_type, type_args, .. } => return Err("Match on SpecializedType not fully supported yet".into()),
             Type::Path(segments, args) => {
                 if let Some(n) = segments.last() {
                     (n, args.clone())
@@ -6632,11 +6632,28 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let (obj_val, obj_ty) = self.compile_expr(obj)?;
 
                 // Extract elem_ty from obj_ty's type_args (first generic parameter, except for map_err which uses the second), or fallback to closure argument type
-                let elem_ty_opt = if method == "map_err" {
-                    obj_ty.as_named_type().and_then(|(_, args)| args.get(1).cloned())
-                } else {
-                    obj_ty.as_named_type().and_then(|(_, args)| args.first().cloned())
-                }.or_else(|| closure_args.first().and_then(|(_, ty_opt)| ty_opt.clone()));
+                let mut parsed_args_storage = Vec::new(); // to store parsed args safely
+                let elem_ty_opt = obj_ty.as_named_type().and_then(|(name, args)| {
+                    let mut actual_args = args;
+                    if actual_args.is_empty() && name.contains('[') {
+                         let parsed_ty = crate::compiler::mangler::MANGLER.parse_type_str(name);
+                         match parsed_ty {
+                             Type::Struct(_, parsed_args) | Type::Enum(_, parsed_args) => {
+                                 parsed_args_storage = parsed_args;
+                                 actual_args = &parsed_args_storage;
+                             }
+                             _ => {}
+                         }
+                    }
+                    if method == "map_err" {
+                        actual_args.get(1).cloned()
+                    } else {
+                        actual_args.first().cloned()
+                    }
+                }).or_else(|| closure_args.first().and_then(|(_, ty_opt)| ty_opt.clone()));
+                
+                eprintln!("[DEBUG compile_dynamic_method_call] method={}, obj_ty={:?}, elem_ty_opt={:?}", method, obj_ty, elem_ty_opt);
+                
                 let elem_ty = elem_ty_opt.ok_or_else(|| "Could not determine element type for dynamic collection method".to_string())?;
 
                 // Dispatch: Option vs Result vs Vec vs Mutex
@@ -6648,6 +6665,15 @@ impl<'ctx> CodeGenerator<'ctx> {
                     Type::Struct(name, _) => {
                         let base = crate::compiler::ast::mangle_base_name(name);
                         (false, false, base == "Mutex")
+                    }
+                    Type::SpecializedType { gen_type, .. } => {
+                        if gen_type.is_enum_type() {
+                            let base = gen_type.get_base_name();
+                            (base == "Option", base == "Result", false)
+                        } else {
+                            let base = gen_type.get_base_name();
+                            (false, false, base == "Mutex")
+                        }
                     }
                     _ => (false, false, false),
                 };

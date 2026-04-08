@@ -152,14 +152,11 @@ pub enum Type {
     Range,
 
     /// Monomorphized generic type with complete type information.
-    /// Created during monomorphization, used exclusively in codegen.
-    /// Carries the triple (base_name, type_args, mangled_name) inline,
-    /// eliminating the need for registry lookups.
-    UnifiedType {
-        base_name: String,      // Original generic type name (e.g. "Vec")
-        type_args: Vec<Type>,   // Concrete type arguments (e.g. [I64])
-        mangled_name: String,   // Mangled name for LLVM IR (e.g. "Vec_i64")
-        is_enum: bool,          // true if enum, false if struct
+    /// Retains the original generic definition and the parameter substitution map.
+    SpecializedType {
+        gen_type: Box<Type>,                // The original generic type (e.g., Struct("Vec", [Path("T", [])]))
+        type_args: Vec<Type>,               // Concrete type arguments in original order (e.g., [I64])
+        type_map: Vec<(String, Type)>,      // Concrete type mapping (e.g., [("T", I64)])
     },
 
     Void, // For functions returning nothing
@@ -199,7 +196,7 @@ impl Type {
             Type::TensorShaped(_, _) => "Tensor".to_string(),
             Type::Struct(n, _) => n.clone(),
             Type::Enum(n, _) => n.clone(),
-            Type::UnifiedType { base_name, .. } => base_name.clone(),
+            Type::SpecializedType { gen_type, .. } => gen_type.get_base_name(),
             Type::Path(p, _) => p.last().cloned().unwrap_or_default(),
 
             Type::Tuple(_) => "Tuple".to_string(), // Or handle specially? TypeRegistry didn't support Tuple generic methods usually.
@@ -222,7 +219,7 @@ impl Type {
     pub fn as_struct_like(&self) -> Option<(&str, &[Type])> {
         match self {
             Type::Struct(name, args) => Some((name, args)),
-            Type::UnifiedType { base_name, type_args, is_enum: false, .. } => Some((base_name, type_args)),
+            Type::SpecializedType { gen_type, type_args, .. } if gen_type.is_struct_type() => Some((gen_type.mangled_name_or_name().unwrap_or(""), type_args)),
             _ => None,
         }
     }
@@ -231,7 +228,7 @@ impl Type {
     pub fn as_enum_like(&self) -> Option<(&str, &[Type])> {
         match self {
             Type::Enum(name, args) => Some((name, args)),
-            Type::UnifiedType { base_name, type_args, is_enum: true, .. } => Some((base_name, type_args)),
+            Type::SpecializedType { gen_type, type_args, .. } if gen_type.is_enum_type() => Some((gen_type.mangled_name_or_name().unwrap_or(""), type_args)),
             _ => None,
         }
     }
@@ -240,7 +237,7 @@ impl Type {
     pub fn as_named_type(&self) -> Option<(&str, &[Type])> {
         match self {
             Type::Struct(name, args) | Type::Enum(name, args) => Some((name, args)),
-            Type::UnifiedType { base_name, type_args, .. } => Some((base_name, type_args)),
+            Type::SpecializedType { gen_type, type_args, .. } => Some((gen_type.mangled_name_or_name().unwrap_or(""), type_args)),
             _ => None,
         }
     }
@@ -251,7 +248,7 @@ impl Type {
     pub fn mangled_name_or_name(&self) -> Option<&str> {
         match self {
             Type::Struct(name, _) | Type::Enum(name, _) => Some(name),
-            Type::UnifiedType { mangled_name, .. } => Some(mangled_name),
+            Type::SpecializedType { gen_type, .. } => gen_type.mangled_name_or_name(),
             _ => None,
         }
     }
@@ -265,19 +262,30 @@ impl Type {
                 Some(name.clone())
             }
             Type::Struct(name, _) | Type::Enum(name, _) => Some(name.clone()),
-            Type::UnifiedType { mangled_name, .. } => Some(mangled_name.clone()),
+            Type::SpecializedType { gen_type, type_args, .. } => {
+                let base = gen_type.mangled_name_or_name().unwrap_or("");
+                Some(MANGLER.wrap_args(base, &type_args.iter().map(|_| "".to_string()).collect::<Vec<_>>())) // This is naive, proper mangling logic in Codegen should be applied instead
+            },
             _ => None,
         }
     }
 
     /// Check if this type is an enum (either Type::Enum or Type::UnifiedType with is_enum=true).
     pub fn is_enum_type(&self) -> bool {
-        matches!(self, Type::Enum(_, _) | Type::UnifiedType { is_enum: true, .. })
+        match self {
+            Type::Enum(_, _) => true,
+            Type::SpecializedType { gen_type, .. } => gen_type.is_enum_type(),
+            _ => false,
+        }
     }
 
     /// Check if this type is a struct (either Type::Struct or Type::UnifiedType with is_enum=false).
     pub fn is_struct_type(&self) -> bool {
-        matches!(self, Type::Struct(_, _) | Type::UnifiedType { is_enum: false, .. })
+        match self {
+            Type::Struct(_, _) => true,
+            Type::SpecializedType { gen_type, .. } => gen_type.is_struct_type(),
+            _ => false,
+        }
     }
 }
 
