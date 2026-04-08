@@ -157,6 +157,7 @@ pub enum Type {
         gen_type: Box<Type>,                // The original generic type (e.g., Struct("Vec", [Path("T", [])]))
         type_args: Vec<Type>,               // Concrete type arguments in original order (e.g., [I64])
         type_map: Vec<(String, Type)>,      // Concrete type mapping (e.g., [("T", I64)])
+        mangled_name: String,               // The fully mangled name (e.g., "Option[i64]") for LLVM linkage
     },
 
     Void, // For functions returning nothing
@@ -237,7 +238,7 @@ impl Type {
     pub fn as_named_type(&self) -> Option<(&str, &[Type])> {
         match self {
             Type::Struct(name, args) | Type::Enum(name, args) => Some((name, args)),
-            Type::SpecializedType { gen_type, type_args, .. } => Some((gen_type.mangled_name_or_name().unwrap_or(""), type_args)),
+            Type::SpecializedType { mangled_name, type_args, .. } => Some((mangled_name, type_args)),
             _ => None,
         }
     }
@@ -248,7 +249,7 @@ impl Type {
     pub fn mangled_name_or_name(&self) -> Option<&str> {
         match self {
             Type::Struct(name, _) | Type::Enum(name, _) => Some(name),
-            Type::SpecializedType { gen_type, .. } => gen_type.mangled_name_or_name(),
+            Type::SpecializedType { mangled_name, .. } => Some(mangled_name),
             _ => None,
         }
     }
@@ -262,9 +263,8 @@ impl Type {
                 Some(name.clone())
             }
             Type::Struct(name, _) | Type::Enum(name, _) => Some(name.clone()),
-            Type::SpecializedType { gen_type, type_args, .. } => {
-                let base = gen_type.mangled_name_or_name().unwrap_or("");
-                Some(MANGLER.wrap_args(base, &type_args.iter().map(|_| "".to_string()).collect::<Vec<_>>())) // This is naive, proper mangling logic in Codegen should be applied instead
+            Type::SpecializedType { mangled_name, .. } => {
+                Some(mangled_name.clone())
             },
             _ => None,
         }

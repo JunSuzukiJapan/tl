@@ -252,7 +252,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 Ok(())
             }
 
-            Type::SpecializedType { gen_type, type_args, type_map: _ } => {
+            Type::SpecializedType { gen_type, type_args, type_map: _, mangled_name: _ } => {
                 // Flatten SpecializedType to Struct/Enum and re-dispatch
                 let flat_ty = if gen_type.is_enum_type() {
                     Type::Enum(gen_type.mangled_name_or_name().unwrap_or("").to_string(), type_args.clone())

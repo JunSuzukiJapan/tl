@@ -730,7 +730,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                 Type::SpecializedType {
                     gen_type: Box::new(if is_enum { Type::Enum(base, vec![]) } else { Type::Struct(base, vec![]) }),
                     type_args: unified_args,
-                    type_map: vec![] // Type map is not always available here, but we pass unified_args
+                    type_map: vec![], // Type map is not always available here, but we pass unified_args
+                    mangled_name: mangled,
                 }
             }
             Type::Struct(name, args) if args.is_empty() => {
@@ -754,7 +755,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                 Type::SpecializedType {
                     gen_type: Box::new(Type::Enum(base, vec![])),
                     type_args: unified_args,
-                    type_map: vec![]
+                    type_map: vec![],
+                    mangled_name: mangled,
                 }
             }
             Type::Tuple(types) => {
@@ -820,12 +822,13 @@ impl<'ctx> CodeGenerator<'ctx> {
             },
             Type::Ptr(inner) => Type::Ptr(Box::new(self.substitute_type(inner, subst))),
             Type::Array(inner, size) => Type::Array(Box::new(self.substitute_type(inner, subst)), *size),
-            Type::SpecializedType { gen_type, type_args, type_map } => {
+            Type::SpecializedType { gen_type, type_args, type_map, mangled_name } => {
                 let new_args: Vec<Type> = type_args.iter().map(|a| self.substitute_type(a, subst)).collect();
                 Type::SpecializedType {
                     gen_type: gen_type.clone(),
                     type_args: new_args,
                     type_map: type_map.clone(),
+                    mangled_name: mangled_name.clone(),
                 }
             }
             _ => ty.clone(),
@@ -870,7 +873,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let normalized_args: Vec<Type> = args.iter().map(|a| self.normalize_type(a)).collect();
                 Type::Enum(name.clone(), normalized_args)
             }
-            Type::SpecializedType { gen_type, type_args, type_map: _ } => {
+            Type::SpecializedType { gen_type, type_args, type_map: _, mangled_name: _ } => {
                 let normalized_args: Vec<Type> = type_args.iter().map(|a| self.normalize_type(a)).collect();
                 if gen_type.is_enum_type() {
                     Type::Enum(gen_type.get_base_name(), normalized_args)

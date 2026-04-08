@@ -63,12 +63,13 @@ impl TypeSubstitutor {
                  // at compile time where it has access to struct_defs and enum_defs
                  Type::Path(segments.clone(), new_generics)
             }
-            Type::SpecializedType { gen_type, type_args, type_map: _ } => {
+            Type::SpecializedType { gen_type, type_args, type_map: _, mangled_name } => {
                 let new_args: Vec<Type> = type_args.iter().map(|a| self.substitute_type(a)).collect();
                 Type::SpecializedType {
                     gen_type: gen_type.clone(),
                     type_args: new_args,
                     type_map: vec![], // In ast_subst we may not have the full map preservation yet, or we can just drop it
+                    mangled_name: mangled_name.clone(),
                 }
             }
             Type::Ptr(inner) => Type::Ptr(Box::new(self.substitute_type(inner))),
