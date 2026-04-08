@@ -3439,10 +3439,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                     };
                     
                     if let Ok(mangled) = self.monomorphize_method(&base_name, m_name, &type_args) {
-                        if let Some(fn_val) = self.module.get_function(&mangled) {
+                        let fn_opt = self.module.get_function(&mangled);
+                        println!("[DEBUG] trait_binop base_name={} method={} mangled={} found={}", base_name, m_name, mangled, fn_opt.is_some());
+                        if let Some(fn_val) = fn_opt {
                             
-                            // Check if method returns via sret (hidden first pointer arg)
-                            let returns_sret = fn_val.get_nth_param(0).map_or(false, |p| p.get_name().to_str().unwrap_or("") == "sret");
+                            let m_ret_ty = self.method_return_types.get(&mangled).unwrap_or(&lhs_type);
+                            let returns_sret = matches!(m_ret_ty, Type::Struct(name, _) | Type::Enum(name, _) if name != "Tensor" && name != "String");
                             
                             if returns_sret {
                                 let mut ret_ty = lhs_type.clone();

@@ -20,6 +20,13 @@ impl<'ctx> CodeGenerator<'ctx> {
             panic!("Vec_pop_K_monomorphized!!");
         }
 
+        if generic_args.is_empty() {
+            let mangled = format!("tl_{}_{}", struct_name, method_name);
+            if self.module.get_function(&mangled).is_some() {
+                return Ok(mangled);
+            }
+        }
+
         let impls = self.generic_impls.get(struct_name)
              .ok_or_else(|| format!("No generic impls found for struct {}", struct_name))?;
 

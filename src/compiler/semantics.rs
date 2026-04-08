@@ -4311,7 +4311,7 @@ impl SemanticAnalyzer {
                     }
                 }
 
-                if name == "print" || name == "println" {
+                if name == "print" || name == "println" || name == "format" {
                     if args.len() == 0 {
                         // println() with no args is valid (just newline)
                         if name == "println" {
@@ -4378,6 +4378,9 @@ impl SemanticAnalyzer {
                         // So yes, strictly ExprKind::StringLiteral.
                     }
 
+                    if name == "format" {
+                        return Ok(Type::String("String".to_string()));
+                    }
                     return Ok(Type::Void);
                 }
                 if name == "read_line" {
