@@ -6782,6 +6782,7 @@ impl SemanticAnalyzer {
 
                 // 1. Resolve type name key
                 let type_name = match &obj_type {
+                    Type::TraitObject(name) => name.clone(),
                     Type::Struct(name, _) => name.clone(),
                     Type::Enum(name, _) => name.clone(),
                     Type::GradTensor(_, _) => "Tensor".to_string(), // Tensorのメソッド定義を再利用する
@@ -6805,7 +6806,20 @@ impl SemanticAnalyzer {
                 }
 
                 // Check AST methods first, then TypeManager
-                let method_data = if let Some(methods) = self.methods.get(&type_name) {
+                let method_data = if let Type::TraitObject(trait_name) = &obj_type {
+                    if let Some(trait_def) = self.traits.get(trait_name) {
+                        trait_def.methods.iter().find(|m| m.name == *method_name).map(|m| {
+                            let mut sig_args = m.args.clone();
+                            if !sig_args.is_empty() && sig_args[0].0 == "self" {
+                                sig_args.remove(0);
+                            }
+                            // dyn Trait method resolution uses original unresolved type names for now
+                            (method_name.clone(), sig_args, m.return_type.clone())
+                        })
+                    } else {
+                        None
+                    }
+                } else if let Some(methods) = self.methods.get(&type_name) {
                     methods.get(method_name.as_str()).map(|m| {
                         let mut sig_args = m.args.clone();
                         // Filter "self" from signature args if present, as it is handled by 'obj'
@@ -7298,6 +7312,14 @@ impl SemanticAnalyzer {
             return true;
         }
         match (t1, t2) {
+            (Type::TraitObject(trait_name), Type::Struct(struct_name, _)) => {
+                if let Some(trait_impls) = self.type_traits.get(struct_name) {
+                    if trait_impls.iter().any(|t| t == trait_name) {
+                        return true;
+                    }
+                }
+                false
+            }
             // (Type::Ref(inner1), Type::Ref(inner2)) => self.are_types_compatible(inner1, inner2), // REMOVED
             (Type::Tensor(i1, r1), Type::Tensor(i2, r2)) => {
                 // If either rank is 0, we treat it as dynamic/compatible rank AND inner type

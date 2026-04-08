@@ -207,11 +207,19 @@ fn parse_fn_type(input: Input) -> IResult<Input, Type, ParserError> {
     Ok((input, Type::Fn(param_types, Box::new(ret_ty))))
 }
 
+fn parse_dyn_trait_type(input: Input) -> IResult<Input, Type, ParserError> {
+    // "dyn" Ident
+    let (input, _) = satisfy_token(|t| matches!(t, Token::Identifier(s) if s == "dyn"))(input)?;
+    let (input, tr_name) = identifier(input)?;
+    Ok((input, Type::TraitObject(tr_name)))
+}
+
 pub fn parse_type(input: Input) -> IResult<Input, Type, ParserError> {
     alt((
         parse_fn_type,
         parse_primitive_type,
         parse_tensor_type,
+        parse_dyn_trait_type,
         parse_ptr_type,
         parse_array_type,
         // Reference type: &Type - REMOVED (not in spec)

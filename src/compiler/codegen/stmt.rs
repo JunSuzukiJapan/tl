@@ -302,7 +302,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .into(),
                 Type::Void => self.context.i8_type().into(),
                 Type::Array(inner, size) => self.get_llvm_type(&Type::Array(inner.clone(), *size)).unwrap_or(self.context.i64_type().into()),
-                Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::UnifiedType { .. } | Type::Never | Type::Undefined(_) | Type::Range
+                Type::TraitObject(_) => {
+                            let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                            self.context.struct_type(&[ptr_ty.into(), ptr_ty.into()], false).into()
+                        },
+                        Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::UnifiedType { .. } | Type::Never | Type::Undefined(_) | Type::Range
                  => self.context.i64_type().into(),
             };
 
@@ -712,7 +716,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                                     .into(),
                                 Type::Void => self.context.i8_type().into(),
                                 Type::Array(inner, size) => self.get_llvm_type(&Type::Array(inner.clone(), *size)).unwrap_or(self.context.i64_type().into()),
-                                Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::UnifiedType { .. } | Type::Never | Type::Undefined(_) | Type::Range
+                                Type::TraitObject(_) => {
+                            let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                            self.context.struct_type(&[ptr_ty.into(), ptr_ty.into()], false).into()
+                        },
+                        Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::UnifiedType { .. } | Type::Never | Type::Undefined(_) | Type::Range
                                  => self.context.i64_type().into(),
                             };
                             field_types.push(llvm_ty);
@@ -1151,7 +1159,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                          | Type::String(_) | Type::Ptr(_) | Type::Tuple(_) => self.context.ptr_type(inkwell::AddressSpace::default()).into(),
                          Type::Void => self.context.i8_type().into(),
                          Type::Array(inner, size) => self.get_llvm_type(&Type::Array(inner.clone(), *size)).unwrap_or(self.context.i64_type().into()),
-                         Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::UnifiedType { .. } | Type::Never | Type::Undefined(_) | Type::Range
+                         Type::TraitObject(_) => {
+                            let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                            self.context.struct_type(&[ptr_ty.into(), ptr_ty.into()], false).into()
+                        },
+                        Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::UnifiedType { .. } | Type::Never | Type::Undefined(_) | Type::Range
                           => self.context.i64_type().into(),
                      });
                  }
@@ -1291,7 +1303,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                          | Type::String(_) | Type::Ptr(_) | Type::Tuple(_) => self.context.ptr_type(inkwell::AddressSpace::default()).into(),
                          Type::Void => self.context.i8_type().into(),
                          Type::Array(inner, size) => self.get_llvm_type(&Type::Array(inner.clone(), *size)).unwrap_or(self.context.i64_type().into()),
-                         Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::UnifiedType { .. } | Type::Never | Type::Undefined(_) | Type::Range
+                         Type::TraitObject(_) => {
+                            let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                            self.context.struct_type(&[ptr_ty.into(), ptr_ty.into()], false).into()
+                        },
+                        Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::UnifiedType { .. } | Type::Never | Type::Undefined(_) | Type::Range
                           => self.context.i64_type().into(),
                       }
                  }).collect();
@@ -1389,7 +1405,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                                               self.context.ptr_type(inkwell::AddressSpace::default()).into(),
                                           Type::Void => self.context.i8_type().into(),
                                           Type::Array(inner, size) => self.get_llvm_type(&Type::Array(inner.clone(), *size)).unwrap_or(self.context.i64_type().into()),
-                                          Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::UnifiedType { .. } | Type::Never | Type::Undefined(_) | Type::Range
+                                          Type::TraitObject(_) => {
+                            let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                            self.context.struct_type(&[ptr_ty.into(), ptr_ty.into()], false).into()
+                        },
+                        Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::UnifiedType { .. } | Type::Never | Type::Undefined(_) | Type::Range
                                            => self.context.i64_type().into(),
                                       };
                                      field_llvm_types.push(llvm_ty);
@@ -1844,7 +1864,19 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
             StmtKind::Return(expr_opt) => {
                 if let Some(expr) = expr_opt {
-                    let (val, ty) = self.compile_expr(expr)?;
+                    let (mut val, mut ty) = self.compile_expr(expr)?;
+
+                    // Implicit TraitObject Upcast for Return
+                    let current_ret_is_trait = if let Some(Type::TraitObject(trait_name)) = &self.current_fn_return_type {
+                        Some(trait_name.clone())
+                    } else { None };
+
+                    if let Some(trait_name) = current_ret_is_trait {
+                        if let Type::Struct(struct_name, _) = &ty {
+                            val = self.emit_trait_object_upcast(val, struct_name, &trait_name)?;
+                            ty = Type::TraitObject(trait_name);
+                        }
+                    }
 
                     // If returning a variable, mark it as moved (should_free = false)
                     if let ExprKind::Variable(name) = &expr.inner {
@@ -1969,7 +2001,16 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
                 let compile_res = self.compile_expr(value);
                 self.expected_type_stack.pop();
-                let (val_ir, val_ty) = compile_res?;
+                let (mut val_ir, mut val_ty) = compile_res?;
+
+                // Implicit TraitObject Upcast for Assign
+                if let Ok((_, ref check_lhs_type, _, _)) = lvalue_res {
+                    if let Type::TraitObject(trait_name) = check_lhs_type {
+                        if let Type::Struct(struct_name, _) = &val_ty {
+                            val_ir = self.emit_trait_object_upcast(val_ir, struct_name, trait_name)?;
+                        }
+                    }
+                }
 
                 if let Ok((Some(lhs_ptr), lhs_type, lhs_cleanup_mode, lhs_scope_name)) = lvalue_res {
                      // STANDARD ASSIGNMENT (Var or Field)
@@ -3946,6 +3987,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .into(),
                         Type::Void => self.context.i8_type().into(),
                         Type::Array(inner, size) => self.get_llvm_type(&Type::Array(inner.clone(), *size)).unwrap_or(self.context.i64_type().into()),
+                        Type::TraitObject(_) => {
+                            let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                            self.context.struct_type(&[ptr_ty.into(), ptr_ty.into()], false).into()
+                        },
                         Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::UnifiedType { .. } | Type::Never | Type::Undefined(_) | Type::Range
                          => self.context.i64_type().into(),
                     };
@@ -4154,7 +4199,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                      | Type::Enum(_, _) | Type::String(_) | Type::Ptr(_) | Type::Tuple(_) => self.context.ptr_type(inkwell::AddressSpace::default()).into(),
                      Type::Void => self.context.i8_type().into(),
                      Type::Array(inner, size) => self.get_llvm_type(&Type::Array(inner.clone(), *size)).unwrap_or(self.context.i64_type().into()),
-                     Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::UnifiedType { .. } | Type::Never | Type::Undefined(_) | Type::Range
+                     Type::TraitObject(_) => {
+                            let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                            self.context.struct_type(&[ptr_ty.into(), ptr_ty.into()], false).into()
+                        },
+                        Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::UnifiedType { .. } | Type::Never | Type::Undefined(_) | Type::Range
                       => self.context.i64_type().into(),
                  };
                  Ok((self.builder.build_load(load_ty, ptr, "").unwrap(), res.1))
@@ -4176,7 +4225,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                          | Type::Enum(_, _) | Type::String(_) | Type::Ptr(_) | Type::Tuple(_) => self.context.ptr_type(inkwell::AddressSpace::default()).into(),
                          Type::Void => self.context.i8_type().into(),
                          Type::Array(inner, size) => self.get_llvm_type(&Type::Array(inner.clone(), *size)).unwrap_or(self.context.i64_type().into()),
-                         Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::UnifiedType { .. } | Type::Never | Type::Undefined(_) | Type::Range
+                         Type::TraitObject(_) => {
+                            let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                            self.context.struct_type(&[ptr_ty.into(), ptr_ty.into()], false).into()
+                        },
+                        Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::UnifiedType { .. } | Type::Never | Type::Undefined(_) | Type::Range
                           => self.context.i64_type().into(),
                      };
                      Ok((self.builder.build_load(load_ty, ptr, "").unwrap(), res.1))

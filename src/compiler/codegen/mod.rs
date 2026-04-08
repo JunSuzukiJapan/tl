@@ -40,11 +40,13 @@ pub struct CodeGenerator<'ctx> {
     pub(crate) enum_defs: HashMap<String, EnumDef>,
     pub(crate) generic_fn_defs: HashMap<String, FunctionDef>,
     pub(crate) generic_impls: HashMap<String, Vec<ImplBlock>>,
+    pub(crate) trait_defs: HashMap<String, TraitDef>,
     pub(crate) fn_entry_scope_depth: usize,
     pub(crate) builtin_manager: expr::BuiltinManager,
     pub(crate) instance_methods: HashMap<String, expr::InstanceMethodManager>,
     pub(crate) static_methods: HashMap<String, expr::StaticMethodManager>,
     pub(crate) method_return_types: HashMap<String, Type>, // MangledName -> ReturnType
+    pub(crate) fn_params: HashMap<String, Vec<Type>>, // MangledName -> ParamTypes
     pub(crate) loop_stack: Vec<(
         inkwell::basic_block::BasicBlock<'ctx>,
         inkwell::basic_block::BasicBlock<'ctx>,
@@ -90,12 +92,14 @@ impl<'ctx> CodeGenerator<'ctx> {
             enum_defs: HashMap::new(),
             generic_fn_defs: HashMap::new(),
             generic_impls: HashMap::new(),
+            trait_defs: HashMap::new(),
             fn_entry_scope_depth: 0,
             builtin_manager: expr::BuiltinManager::new(),
             instance_methods: HashMap::new(),
             static_methods: HashMap::new(),
             loop_stack: Vec::new(),
             method_return_types: HashMap::new(),
+            fn_params: HashMap::new(),
             relations: std::collections::HashSet::new(),
             current_span: None,
             function_analysis: None,
@@ -863,6 +867,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .into(),
                     Type::Char(_) | Type::I32 => self.context.i32_type().into(),
                     Type::Ptr(_) | Type::Tuple(_) | Type::Path(_, _) | Type::U8 | Type::Usize => self.context.ptr_type(inkwell::AddressSpace::default()).into(),
+                    Type::TraitObject(_) => {
+                        let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                        self.context.struct_type(&[ptr_type.into(), ptr_type.into()], false).into()
+                    }
                     Type::Struct(name, _) => {
                         // Extract simple name from module path
                         let simple_name = name.as_str();
@@ -969,6 +977,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
                             .into(),
+                        Type::TraitObject(_) => {
+                            let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                            self.context.struct_type(&[ptr_type.into(), ptr_type.into()], false).into()
+                        }
                         Type::Struct(name, _) => {
                              // Extract simple name
                             let simple_name = name.as_str();
@@ -1160,6 +1172,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 // Register return type for lookups by name (Critical for SRET detection)
                 self.method_return_types.insert(mangled_name.clone(), method.return_type.clone());
+                self.fn_params.insert(mangled_name.clone(), method.args.iter().map(|a| a.1.clone()).collect());
 
                 // SRET is disabled; keep signatures simple.
                 let uses_sret = matches!(method.return_type, Type::Struct(_, _));
@@ -1196,6 +1209,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
                             .into(),
+                        Type::TraitObject(_) => {
+                            let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                            self.context.struct_type(&[ptr_type.into(), ptr_type.into()], false).into()
+                        }
                         Type::Struct(_, _) => self
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
@@ -1229,6 +1246,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
                             .fn_type(&param_types, false),
+                        Type::TraitObject(_) => {
+                            let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                            self.context.struct_type(&[ptr_type.into(), ptr_type.into()], false).fn_type(&param_types, false)
+                        }
                         Type::Struct(_, _) | Type::Tuple(_) | Type::Enum(_, _) => self
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
@@ -1513,6 +1534,11 @@ impl<'ctx> CodeGenerator<'ctx> {
             self.compile_module(submodule, sub_name)?;
         }
 
+        // Collect Traits mapping
+        for tr in &ast_module.traits {
+            self.trait_defs.insert(tr.name.clone(), tr.clone());
+        }
+
         // 1. Declare structs (types) and methods
         self.compile_struct_defs(&ast_module.structs)?;
         self.compile_enum_defs(&ast_module.enums)?;
@@ -1679,6 +1705,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         if func.name.contains("Vec") && func.name.contains("get") && func.name.contains("Entry") {
         }
         self.method_return_types.insert(func.name.clone(), func.return_type.clone());
+        self.fn_params.insert(func.name.clone(), func.args.iter().map(|a| a.1.clone()).collect());
 
 
         // Check if this function returns a struct or enum (requires sret)
@@ -1739,6 +1766,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         // Register return type for this function
         self.method_return_types.insert(func.name.clone(), func.return_type.clone());
+        self.fn_params.insert(func.name.clone(), func.args.iter().map(|a| a.1.clone()).collect());
 
         Ok(val)
     }

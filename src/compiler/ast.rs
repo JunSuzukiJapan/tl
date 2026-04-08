@@ -168,6 +168,10 @@ pub enum Type {
 
     /// Closure / function type: Fn(arg_types) -> return_type
     Fn(Vec<Type>, Box<Type>),
+
+    // Represents a dynamic trait object pointer (`dyn Trait`)
+    // V6.0 memory management handles it as a standard reference counting type
+    TraitObject(String), // Trait Name
 }
 
 impl Type {
@@ -209,6 +213,7 @@ impl Type {
             Type::Range => "Range".to_string(),
             Type::Array(inner, _) => format!("Array_{}", inner.get_base_name()),
             Type::Fn(_, _) => "Fn".to_string(),
+            Type::TraitObject(t) => format!("dyn {}", t),
         }
     }
 
