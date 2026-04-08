@@ -249,6 +249,34 @@ pub struct SemanticAnalyzer {
 }
 
 impl SemanticAnalyzer {
+    pub fn resolve_trait_method(&self, target_ty: &Type, trait_name: &str, method_name: &str) -> Option<Type> {
+        let t_name = target_ty.get_base_name();
+        if let Some(trait_impls) = self.type_traits.get(&t_name) {
+            if trait_impls.iter().any(|t| t == trait_name) {
+                // Return type is dynamically inferred by the trait methos or defaults to the object itself
+                // To fetch properly, we would look into `trait_impls` registry
+                let key = (trait_name.to_string(), t_name.clone());
+                if let Some(ti) = self.trait_impls.get(&key) {
+                    for m in &ti.methods {
+                        if m.name == method_name {
+                            return Some(m.return_type.clone());
+                        }
+                    }
+                }
+                
+                // If not found in trait impl block, look in trait definition for default methods
+                if let Some(td) = self.traits.get(trait_name) {
+                    for m in &td.methods {
+                        if m.name == method_name {
+                            return Some(m.return_type.clone());
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
     pub fn new(_source: String) -> Self {
         let mut analyzer = SemanticAnalyzer {
             scopes: vec![Scope::new()], // Global scope
@@ -4222,13 +4250,35 @@ impl SemanticAnalyzer {
                         (Type::GradTensor(_, _), Type::Struct(n, _)) if n == "Tensor" => Ok(left),
                         (Type::Struct(n, _), Type::GradTensor(_, _)) if n == "Tensor" => Ok(right),
 
-                        _ => self.err(
-                            SemanticError::TypeMismatch {
-                                expected: left,
-                                found: right,
-                            },
-                            Some(expr.span.clone()),
-                        ),
+                        _ => {
+                            let trait_name = match op {
+                                BinOp::Add => "Add",
+                                BinOp::Sub => "Sub",
+                                BinOp::Mul => "Mul",
+                                BinOp::Div => "Div",
+                                BinOp::Mod => "Rem",
+                                BinOp::Eq | BinOp::Neq => "Eq",
+                                BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => "PartialOrd",
+                                _ => "",
+                            };
+                            if !trait_name.is_empty() {
+                                let method_name = trait_name.to_lowercase(); // e.g. "add", "sub", "eq"
+                                if let Some(ret_ty) = self.resolve_trait_method(&left, trait_name, &method_name) {
+                                    if matches!(op, BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge) {
+                                        return Ok(Type::Bool); // Comparison always returns Bool for now
+                                    }
+                                    return Ok(ret_ty);
+                                }
+                            }
+
+                            self.err(
+                                SemanticError::TypeMismatch {
+                                    expected: left,
+                                    found: right,
+                                },
+                                Some(expr.span.clone()),
+                            )
+                        }
                     }
                 }
             }
@@ -6310,13 +6360,20 @@ impl SemanticAnalyzer {
                     (Type::GradTensor(inner, rank), Type::Struct(name, _)) if name == "Tensor" => {
                         Ok(Type::Tensor(inner.clone(), *rank))
                     }
-                    _ => self.err(
-                        SemanticError::TypeMismatch {
-                            expected: target_type.clone(),
-                            found: source_type,
-                        },
-                        Some(expr.span.clone()),
-                    ),
+                    _ => {
+                        // Trait dispatch fallback for `as` (From trait)
+                        if self.resolve_trait_method(&target_type, "From", "from").is_some() {
+                            return Ok(target_type.clone());
+                        }
+
+                        self.err(
+                            SemanticError::TypeMismatch {
+                                expected: target_type.clone(),
+                                found: source_type,
+                            },
+                            Some(expr.span.clone()),
+                        )
+                    }
                 }
             }
             ExprKind::StaticMethodCall(type_node, method_name, args) => {

@@ -2957,7 +2957,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
     // Helper for BinOp
     pub(crate) fn compile_bin_op(
-        &self,
+        &mut self,
         lhs: BasicValueEnum<'ctx>,
         lhs_type: Type,
         rhs: BasicValueEnum<'ctx>,
@@ -3418,10 +3418,73 @@ impl<'ctx> CodeGenerator<'ctx> {
                 self.compile_bin_op(lhs, Type::F64, r_f64.into(), Type::F64, op)
             }
 
-            _ => Err(format!(
-                "Type mismatch in BinOp {:?}: {:?} vs {:?}",
-                op, lhs_type, rhs_type
-            ))
+            _ => {
+                // Trait Operator Overloading CODEDEN Fallback
+                let method_name = match op {
+                    BinOp::Add => Some("add"),
+                    BinOp::Sub => Some("sub"),
+                    BinOp::Mul => Some("mul"),
+                    BinOp::Div => Some("div"),
+                    BinOp::Mod => Some("rem"),
+                    BinOp::Eq | BinOp::Neq => Some("eq"),
+                    BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => Some("partial_cmp"),
+                    _ => None,
+                };
+                
+                if let Some(m_name) = method_name {
+                    let base_name = lhs_type.get_base_name();
+                    let type_args = match &lhs_type {
+                        Type::Struct(_, args) | Type::Enum(_, args) => args.clone(),
+                        _ => vec![],
+                    };
+                    
+                    if let Ok(mangled) = self.monomorphize_method(&base_name, m_name, &type_args) {
+                        if let Some(fn_val) = self.module.get_function(&mangled) {
+                            
+                            // Check if method returns via sret (hidden first pointer arg)
+                            let returns_sret = fn_val.get_nth_param(0).map_or(false, |p| p.get_name().to_str().unwrap_or("") == "sret");
+                            
+                            if returns_sret {
+                                let mut ret_ty = lhs_type.clone();
+                                if let Some(registered_ty) = self.method_return_types.get(&mangled) {
+                                    ret_ty = registered_ty.clone();
+                                }
+                                
+                                let sret_alloca = self.create_entry_block_alloca(
+                                    self.builder.get_insert_block().unwrap().get_parent().unwrap(),
+                                    "sret_binop",
+                                    &ret_ty,
+                                )?;
+                                
+                                self.builder.build_call(fn_val, &[sret_alloca.into(), lhs.into(), rhs.into()], "").map_err(|e| e.to_string())?;
+                                
+                                if matches!(op, BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge) {
+                                    let bool_ty = self.context.bool_type();
+                                    return Ok((self.builder.build_load(bool_ty, sret_alloca, "bool_res").unwrap(), Type::Bool));
+                                }
+                                return Ok((sret_alloca.into(), ret_ty));
+                            } else {
+                                let call = self.builder.build_call(fn_val, &[lhs.into(), rhs.into()], "trait_binop").map_err(|e| e.to_string())?;
+                                if let inkwell::values::ValueKind::Basic(res_val) = call.try_as_basic_value() {
+                                    let mut ret_ty = lhs_type.clone();
+                                    if let Some(registered_ty) = self.method_return_types.get(&mangled) {
+                                        ret_ty = registered_ty.clone();
+                                    }
+                                    if matches!(op, BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge) {
+                                        return Ok((res_val, Type::Bool));
+                                    }
+                                    return Ok((res_val, ret_ty));
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                Err(format!(
+                    "Type mismatch in BinOp {:?}: {:?} vs {:?}",
+                    op, lhs_type, rhs_type
+                ))
+            }
         }
     }
     /// Deep clone a value (Tensor or Struct containing Tensors)

@@ -2524,10 +2524,42 @@ impl<'ctx> CodeGenerator<'ctx> {
                         }
                         _ => Err(format!("Unsupported tensor cast target: {:?}", inner_dst)),
                     },
-                    _ => Err(format!(
-                        "Unsupported cast from {:?} to {:?}",
-                        source_type, target_type
-                    )),
+                    _ => {
+                        // Trait fallback: `target_type::from(source)`
+                        let target_base_name = target_type.get_base_name();
+                        let target_generics = match &target_type {
+                            Type::Struct(_, args) | Type::Enum(_, args) => args.clone(),
+                            _ => vec![],
+                        };
+                        
+                        if let Ok(mangled) = self.monomorphize_method(&target_base_name, "from", &target_generics) {
+                            if let Some(fn_val) = self.module.get_function(&mangled) {
+                                // Check if method returns via sret (hidden first pointer arg)
+                                let returns_sret = fn_val.get_nth_param(0).map_or(false, |p| p.get_name().to_str().unwrap_or("") == "sret");
+                                
+                                if returns_sret {
+                                    let sret_alloca = self.create_entry_block_alloca(
+                                        self.builder.get_insert_block().unwrap().get_parent().unwrap(),
+                                        "sret_from",
+                                        &target_type,
+                                    )?;
+                                    
+                                    self.builder.build_call(fn_val, &[sret_alloca.into(), val.into()], "").map_err(|e| e.to_string())?;
+                                    return Ok((sret_alloca.into(), target_type.clone()));
+                                } else {
+                                    let call = self.builder.build_call(fn_val, &[val.into()], "trait_from").map_err(|e| e.to_string())?;
+                                    if let inkwell::values::ValueKind::Basic(res_val) = call.try_as_basic_value() {
+                                        return Ok((res_val, target_type.clone()));
+                                    }
+                                }
+                            }
+                        }
+
+                        Err(format!(
+                            "Unsupported cast from {:?} to {:?}",
+                            source_type, target_type
+                        ))
+                    }
                 }
             }
             ExprKind::Try(inner) => {
@@ -9862,7 +9894,31 @@ fn compile_print_common<'ctx>(
                 return Err(format!("{} not found (add to init)", fn_name).into());
             }
         },
-        _ => return Err(format!("Cannot print type {:?}", arg_type)),
+        _ => {
+            let base_name = arg_type.get_base_name();
+            let type_args = match arg_type {
+                Type::Struct(_, args) => args.clone(),
+                _ => vec![],
+            };
+            
+            if let Ok(mangled) = codegen.monomorphize_method(&base_name, "to_string", &type_args) {
+                if let Some(to_str_fn) = codegen.module.get_function(&mangled) {
+                    let call = codegen.builder.build_call(to_str_fn, &[(*arg_val).into()], "to_string_call").map_err(|e| e.to_string())?;
+                    if let inkwell::values::ValueKind::Basic(str_val) = call.try_as_basic_value() {
+                        let print_fn_name = if is_newline { "tl_print_string" } else { "tl_display_string" };
+                        let print_fn = codegen.module.get_function(print_fn_name).ok_or("print string not found")?;
+                        codegen.builder.build_call(print_fn, &[str_val.into()], "print_call").map_err(|e| e.to_string())?;
+                        
+                        return Ok((
+                            codegen.context.i64_type().const_int(0, false).into(),
+                            Type::Void,
+                        ));
+                    }
+                }
+            }
+            
+            return Err(format!("Cannot print type {:?} (does not implement Display)", arg_type))
+        }
     }
     Ok((
         codegen.context.i64_type().const_int(0, false).into(),
