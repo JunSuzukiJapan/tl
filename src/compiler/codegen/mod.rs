@@ -1405,7 +1405,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                     if i == method.body.len() - 1 && method.return_type != Type::Void {
                         // Check if it's an expression that should be returned
                         if let StmtKind::Expr(expr) = &stmt.inner {
-                            let (val, ty) = self.compile_expr(expr)?;
+                            let expected_subst = self.current_fn_return_type.clone().map(|ty| self.substitute_current_generics(&ty));
+                            self.expected_type_stack.push(expected_subst);
+                            let compiled_res = self.compile_expr(expr);
+                            self.expected_type_stack.pop();
+                            
+                            let (val, ty) = compiled_res?;
                             
                             // FIX: Logic parity with compile_function implicit return
                             // FIX: Logic parity with compile_function implicit return
@@ -1956,7 +1961,12 @@ impl<'ctx> CodeGenerator<'ctx> {
             if i == body_len - 1 && func.return_type != Type::Void {
                 // Check if it's an expression that should be returned
                 if let StmtKind::Expr(expr) = &stmt.inner {
-                    let (mut val, mut ty) = self.compile_expr(expr)?;
+                    let expected_subst = self.current_fn_return_type.clone().map(|ty| self.substitute_current_generics(&ty));
+                    self.expected_type_stack.push(expected_subst);
+                    let compiled_res = self.compile_expr(expr);
+                    self.expected_type_stack.pop();
+                    
+                    let (mut val, mut ty) = compiled_res?;
 
                     // Implicit TraitObject Upcast for implicit Return
                     let current_ret_is_trait = if let Some(Type::TraitObject(trait_name)) = &self.current_fn_return_type {

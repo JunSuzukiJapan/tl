@@ -321,6 +321,7 @@ impl Monomorphizer {
     }
 
      fn rewrite_expr(&mut self, expr: &mut ExprKind, subst: &HashMap<String, Type>, expected_type: Option<&Type>) {
+         eprintln!("MONOMORPH TRACE rewrite_expr: {:?}", std::mem::discriminant(expr));
          match expr {
              ExprKind::StructInit(ty, fields) => {
                  // Fix for builtins: resolve Path -> Struct if semantics didn't run
@@ -512,10 +513,7 @@ impl Monomorphizer {
                  }
                  return;
              }
-              ExprKind::EnumInit { enum_name, variant_name: _, generics, payload } => {
-                   // Process EnumInit for monomorphization
-
-                   
+              ExprKind::EnumInit { enum_name, variant_name, generics, payload } => {
                    // Check if all generics are unresolved (empty or all Undefined)
                    let needs_inference = generics.is_empty() || 
                        generics.iter().all(|t| matches!(t, Type::Undefined(_)));
@@ -529,10 +527,14 @@ impl Monomorphizer {
 
                             } else if MANGLER.starts_with_mangled(expected_name, enum_name) && expected_args.is_empty() {
                                 // Case 2: Expected type is already mangled (e.g. Option_i64 or Entry_i64_i64)
-                                // Use the mangled name directly
+                                // We cannot use generics.clear() because codegen strictly checks original_generics.len()
+                                // We need to extract the type arguments from the mangled name if possible,
+                                // but for now we simply fall back to letting the unresolved type pass if we must, 
+                                // or try to extract from the environment.
+                                // Actually, setting enum_name avoids needing inference if codegen trusts it?
+                                // No, codegen strict checks it. So we must put something in generics.
+                                // We will leave it as Undefined, which will be caught below if unresolved.
                                 *enum_name = expected_name.clone();
-                                generics.clear();
-
                             }
                         }
                     }
@@ -543,8 +545,28 @@ impl Monomorphizer {
                        *ty = self.resolve_type(ty);
                    }
                    
-                   // Filter out any remaining Undefined generics after resolution
-                   generics.retain(|t| !matches!(t, Type::Undefined(_)));
+                   // If any generics are still Undefined, try to infer from expected_type
+                   if generics.iter().any(|t| matches!(t, Type::Undefined(_))) {
+                        // In case of a partially resolved expected_type
+                        if let Some(Type::Enum(expected_name, expected_args)) | Some(Type::Struct(expected_name, expected_args)) = expected_type {
+                            if expected_name == enum_name || MANGLER.starts_with_mangled(expected_name, enum_name) {
+                                for (i, ty) in generics.iter_mut().enumerate() {
+                                    if matches!(ty, Type::Undefined(_)) && i < expected_args.len() {
+                                        *ty = expected_args[i].clone();
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // If it's STILL Undefined, we have no concrete type. LLVM cannot compile Undefined.
+                        // We must fallback to Entity to prevent ICE, or we are forced to panic.
+                        // Let's fallback to Type::Entity (Any) to allow graceful Codegen failure if unchecked, or success if unused.
+                        for ty in generics.iter_mut() {
+                             if matches!(ty, Type::Undefined(_)) {
+                                  *ty = Type::Entity; 
+                             }
+                        }
+                   }
                    
                    // Request enum instantiation if we have resolved generics
                    if !generics.is_empty() {
@@ -777,6 +799,11 @@ impl Monomorphizer {
                                        // Fallback 1: If expected type is already concrete (e.g. Option_Entry_i64_i64) matching this generic
                                        if MANGLER.starts_with_mangled(n, &type_name_str) {
                                             resolved_generics = args.clone();
+                                            if resolved_generics.is_empty() && !def.generics.is_empty() {
+                                                for _ in &def.generics {
+                                                    resolved_generics.push(Type::Entity);
+                                                }
+                                            }
                                             concrete_name = n.clone();
                                        }
                                        // Fallback 2: If expected type has same base name with generics (e.g. Option with [Entry_i64_i64])

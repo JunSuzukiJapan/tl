@@ -1887,11 +1887,23 @@ impl<'ctx> CodeGenerator<'ctx> {
                 
                 // If the found enum_def is still generic, monomorphize with inferred or default types
                 if !enum_def.generics.is_empty() {
-                    let actual_generics = if !inferred_generics.is_empty() {
-                        inferred_generics.clone()
-                    } else {
-                        // Default to I64 for single-param generics like Option<T>, Result<T>
-                        vec![Type::I64; enum_def.generics.len()]
+                    let mut actual_generics = inferred_generics.clone();
+                    if actual_generics.is_empty() {
+                        // Check expected_type_stack for a concrete Generic Type context
+                        if let Some(Some(expected_type)) = self.expected_type_stack.last() {
+                            if let Some((target_name, target_args)) = expected_type.as_named_type() {
+                                if target_name == base_name || target_name.starts_with(&base_name) {
+                                    actual_generics = target_args.to_vec();
+                                }
+                            }
+                        }
+                    }
+
+                    if actual_generics.is_empty() {
+                        // NOTE: If generic arguments are completely missing, they may have failed to propagate during AST substitution.
+                        // See semantics.rs `StmtKind::Return` for correct resolution propagation.
+                        eprintln!("Codegen ERROR EnumInit: base_name={}, variant={}, original_generics.len()={}", base_name, variant_name, original_generics.len()); 
+                        return Err(format!("Enum {}::{} lacks generic parameters and type inference could not resolve them. Implicit fallback is strictly prohibited.", base_name, variant_name));
                     };
                     let actual_mangled = self.mangle_type_name(&base_name, &actual_generics);
                     
@@ -5053,10 +5065,10 @@ impl<'ctx> CodeGenerator<'ctx> {
             if let Some(variant_idx) = enum_def.variants.iter().position(|v| v.name == method) {
                 // If enum_def is still generic, monomorphize with default type
                 if !enum_def.generics.is_empty() {
-                    // Use type args from target_type if available, otherwise default to I64
+                    // Use type args from target_type if available
                     let default_generics = match target_type {
                         Type::Struct(_, args) | Type::Enum(_, args) if !args.is_empty() => args.clone(),
-                        _ => vec![Type::I64; enum_def.generics.len()],
+                        _ => return Err(format!("Enum {} lacks generic parameters in compile_static_method_call. Implicit fallback is strictly prohibited.", struct_name)),
                     };
                     let mangled = self.mangle_type_name(struct_name, &default_generics);
                     if let Some(specialized) = self.enum_defs.get(&mangled) {

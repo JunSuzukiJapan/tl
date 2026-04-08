@@ -659,6 +659,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .into_int_value();
 
                 // Prepare Switch
+                let mut subst = std::collections::HashMap::new();
+                for (i, param_name) in enum_def.generics.iter().enumerate() {
+                    if let Some(concrete_ty) = generics.get(i) {
+                        subst.insert(param_name.clone(), concrete_ty.clone());
+                    }
+                }
+
                 let after_switch = self.context.append_basic_block(func, "after_enum_switch");
                 let mut cases = vec![];
 
@@ -737,9 +744,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                             )
                             .unwrap();
 
+                        let substitutor = crate::compiler::ast_subst::TypeSubstitutor::new(subst.clone());
                         for (idx, f_ty) in field_types_list.iter().enumerate() {
+                            let concrete_f_ty = substitutor.substitute_type(f_ty);
                             if matches!(
-                                f_ty,
+                                concrete_f_ty,
                                 Type::Tensor(_, _)
                                     | Type::TensorShaped(_, _) | Type::GradTensor(_, _)
                                     | Type::Struct(_, _)
@@ -767,14 +776,14 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                                 // Recursive calls use DEFAULT (FULL) cleanup for contents
                                 // Fix: Convert Struct to Enum if it's actually an Enum (e.g. Entry_i64_i64)
-                                let effective_ty = if let Type::Struct(s_name, s_args) = f_ty {
+                                let effective_ty = if let Type::Struct(s_name, s_args) = &concrete_f_ty {
                                     if self.enum_defs.contains_key(s_name) {
                                         Type::Enum(s_name.clone(), s_args.clone())
                                     } else {
-                                        f_ty.clone()
+                                        concrete_f_ty.clone()
                                     }
                                 } else {
-                                    f_ty.clone()
+                                    concrete_f_ty.clone()
                                 };
                                 self.emit_recursive_free(f_val, &effective_ty, super::CLEANUP_FULL)?;
                             }
@@ -1238,10 +1247,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                      let cast_ptr = self.builder.build_pointer_cast(ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "cast_unreg_str").unwrap();
                      self.builder.build_call(unreg_fn, &[cast_ptr.into()], "").map_err(|e| e.to_string())?;
                      return Ok(());
-                }
+                }                let simple_name = name.as_str();
 
+                println!("Codegen TRACE emit_recursive_unregister: Struct({})", name);
                 let struct_def = self.struct_defs.get(simple_name)
-                    .ok_or(format!("Struct def {} not found", name))?
+                    .ok_or_else(|| format!("Struct def {} not found", name))?
                     .clone();
                 let struct_ty = *self.struct_types.get(simple_name)
                     .ok_or(format!("Struct type {} not found", name))?;
@@ -1276,7 +1286,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 "field_val_unreg"
                             ).map_err(|e| e.to_string())?;
                             
-                            self.emit_recursive_unregister(f_val, f_ty)?;
+                            self.emit_recursive_unregister(f_val, f_ty).map_err(|e| format!("Failed unregistering field {} of struct {}: {}", i, name, e))?;
                         }
                         _ => {}
                     }
@@ -1323,6 +1333,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
 
             Type::Enum(name, generics) => {
+                 println!("Codegen TRACE emit_recursive_unregister: Enum({}, {:?})", name, generics);
                  let ptr = val.into_pointer_value();
                  let unreg_fn = self.module.get_function("tl_mem_unregister")
                     .ok_or("tl_mem_unregister not found")?;
@@ -1341,6 +1352,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                      .get(&mangled_name)
                      .or_else(|| self.enum_defs.get(name))
                      .cloned();
+                 
+                 if let Some(def) = &enum_def {
+                     if def.name != mangled_name {
+                         eprintln!("WARNING: emit_recursive_unregister fallback triggered! mangled_name={} name={}", mangled_name, name);
+                         eprintln!("EnumDef used: {:?}", def.name);
+                     }
+                 }
 
                  if let Some(enum_def) = enum_def {
                      let enum_ty = self.enum_types.get(&enum_def.name)
@@ -1364,6 +1382,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                          let tag_val = self.builder.build_load(self.context.i32_type(), tag_ptr, "tag_unreg")
                              .map_err(|e| e.to_string())?
                              .into_int_value();
+
+                         let mut subst = std::collections::HashMap::new();
+                         for (i, param_name) in enum_def.generics.iter().enumerate() {
+                             if let Some(concrete_ty) = generics.get(i) {
+                                 subst.insert(param_name.clone(), concrete_ty.clone());
+                             }
+                         }
 
                          // Build switch
                          let mut cases = vec![];
@@ -1421,8 +1446,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                                      "payload_unreg_cast",
                                  ).unwrap();
 
+                                 let substitutor = crate::compiler::ast_subst::TypeSubstitutor::new(subst.clone());
                                  for (idx, f_ty) in field_types_list.iter().enumerate() {
-                                     if matches!(f_ty, Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::GradTensor(_, _) | Type::Struct(_, _) | Type::Enum(_, _) | Type::Tuple(_)) {
+                                     let concrete_f_ty = substitutor.substitute_type(f_ty);
+                                     if matches!(concrete_f_ty, Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::GradTensor(_, _) | Type::Struct(_, _) | Type::Enum(_, _) | Type::Tuple(_)) {
                                          let f_ptr = self.builder.build_struct_gep(variant_struct_ty, payload_ptr, idx as u32, "field_unreg_ptr")
                                              .map_err(|e| e.to_string())?;
                                          let f_val = self.builder.build_load(
@@ -1430,7 +1457,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                              f_ptr,
                                              "field_unreg_val",
                                          ).map_err(|e| e.to_string())?;
-                                         self.emit_recursive_unregister(f_val, f_ty)?;
+                                         self.emit_recursive_unregister(f_val, &concrete_f_ty)?;
                                      }
                                  }
                              }
@@ -1864,7 +1891,12 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
             StmtKind::Return(expr_opt) => {
                 if let Some(expr) = expr_opt {
-                    let (mut val, mut ty) = self.compile_expr(expr)?;
+                    let expected_subst = self.current_fn_return_type.clone().map(|ty| self.substitute_current_generics(&ty));
+                    self.expected_type_stack.push(expected_subst);
+                    let compiled_res = self.compile_expr(expr);
+                    self.expected_type_stack.pop();
+                    
+                    let (mut val, mut ty) = compiled_res?;
 
                     // Implicit TraitObject Upcast for Return
                     let current_ret_is_trait = if let Some(Type::TraitObject(trait_name)) = &self.current_fn_return_type {
@@ -4070,7 +4102,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 if let Type::Struct(name, generics) = &base_ty {
                     // Lookup struct def by name (which may be a mangled name e.g. Vec_i64)
                     let struct_def = self.struct_defs.get(name.as_str())
-                        .ok_or_else(|| format!("Struct def not found: {}", name))?;
+                        .unwrap_or_else(|| panic!("Struct def not found: {}", name));
                     let idx = struct_def.fields.iter().position(|(n, _)| n == field).ok_or("Field not found")?;
                     let (_, field_ty) = &struct_def.fields[idx];
                     
