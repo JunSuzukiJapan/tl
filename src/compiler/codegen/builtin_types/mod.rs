@@ -176,6 +176,23 @@ pub fn load_all_builtins(codegen: &mut CodeGenerator) {
     if let Some(def) = datetime_data.struct_def.clone() { codegen.struct_defs.insert(def.name.clone(), def); }
     codegen.generic_impls.entry("DateTime".to_string()).or_default().extend(datetime_data.impl_blocks);
 
+    // Net
+    let (listener_data, stream_data) = non_generic::net::load_net_data();
+    
+    codegen.type_manager.register_builtin(listener_data.clone());
+    for def in listener_data.extra_structs {
+        codegen.struct_defs.insert(def.name.clone(), def);
+    }
+    if let Some(def) = listener_data.struct_def.clone() { codegen.struct_defs.insert(def.name.clone(), def); }
+    codegen.generic_impls.entry("TcpListener".to_string()).or_default().extend(listener_data.impl_blocks.clone());
+
+    codegen.type_manager.register_builtin(stream_data.clone());
+    for def in stream_data.extra_structs {
+        codegen.struct_defs.insert(def.name.clone(), def);
+    }
+    if let Some(def) = stream_data.struct_def.clone() { codegen.struct_defs.insert(def.name.clone(), def); }
+    codegen.generic_impls.entry("TcpStream".to_string()).or_default().extend(stream_data.impl_blocks.clone());
+
     // Thread is now fully generic and natively evaluated in expr.rs
     // Register LLM Structs (from source)
     let llm_data = llm::load_llm_data();

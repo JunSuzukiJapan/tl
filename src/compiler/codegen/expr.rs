@@ -2562,6 +2562,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                         }
                         _ => Err(format!("Unsupported tensor cast target: {:?}", inner_dst)),
                     },
+                    (Type::Struct(struct_name, _), Type::TraitObject(trait_name)) => {
+                        let obj = self.emit_trait_object_upcast(val, struct_name, trait_name)?;
+                        Ok((obj, target_type.clone()))
+                    }
                     _ => {
                         // Trait fallback: `target_type::from(source)`
                         let target_base_name = target_type.get_base_name();
@@ -7438,7 +7442,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         // SRET Check
         // String is a pointer (RefCounted), handled as value return, not SRET.
         let uses_sret = match &ret_ty {
-            Type::Struct(n, _) | Type::Enum(n, _) => n != "String" && n != "Tensor",
+            Type::Struct(n, _) => n != "String" && n != "Tensor",
             _ => false,
         };
         let mut sret_ptr = None;
@@ -9544,7 +9548,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Tensors are returned by pointer directly, so exclude them.
         let mut dest_val = None;
         let uses_sret = match ret_type {
-             Type::Struct(ref name, _) | Type::Enum(ref name, _) => name != "Tensor" && name != "String",
+             Type::Struct(ref name, _) => name != "Tensor" && name != "String",
              _ => false 
         };
         if uses_sret {

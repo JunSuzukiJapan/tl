@@ -52,3 +52,9 @@ trait Eq<RHS> {
 trait PartialOrd<RHS> {
     fn partial_cmp(self, rhs: RHS) -> bool;
 }
+
+// ── Error Handling Trait ──
+
+trait Error {
+    fn source(self) -> Option<dyn Error>;
+}

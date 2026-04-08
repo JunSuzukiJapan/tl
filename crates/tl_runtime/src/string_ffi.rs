@@ -562,3 +562,48 @@ pub extern "C" fn tl_string_from_chars(vec: *mut VecStruct) -> *mut StringStruct
         make_string_struct(s)
     }
 }
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_string_to_bytes(s: *mut StringStruct) -> *mut VecStruct {
+    unsafe {
+        let layout = std::alloc::Layout::new::<VecStruct>();
+        let vec_ptr = std::alloc::alloc(layout) as *mut VecStruct;
+        if s.is_null() || (*s).ptr.is_null() {
+            (*vec_ptr).ptr = std::ptr::null_mut();
+            (*vec_ptr).len = 0;
+            (*vec_ptr).cap = 0;
+            return vec_ptr;
+        }
+
+        let slice = std::slice::from_raw_parts((*s).ptr as *const u8, (*s).len as usize);
+        let mut vec = slice.to_vec();
+        
+        let len = vec.len() as i64;
+        let cap = vec.capacity() as i64;
+        let ptr = vec.as_mut_ptr();
+        std::mem::forget(vec);
+        
+        (*vec_ptr).ptr = ptr as *mut _;
+        (*vec_ptr).len = len;
+        (*vec_ptr).cap = cap;
+        vec_ptr
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_string_from_utf8(vec: *mut VecStruct) -> *mut StringStruct {
+    unsafe {
+        if vec.is_null() || (*vec).ptr.is_null() || (*vec).len == 0 {
+            return std::ptr::null_mut();
+        }
+        let slice = std::slice::from_raw_parts((*vec).ptr as *const u8, (*vec).len as usize);
+        match std::str::from_utf8(slice) {
+            Ok(valid_str) => {
+                make_string_struct(valid_str.to_string())
+            }
+            Err(_) => {
+                std::ptr::null_mut()
+            }
+        }
+    }
+}

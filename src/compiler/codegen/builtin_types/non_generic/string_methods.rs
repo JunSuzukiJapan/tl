@@ -397,3 +397,39 @@ pub fn compile_from_chars<'ctx>(
     };
     Ok((res, Type::String("String".to_string())))
 }
+
+/// String.to_bytes() -> Vec<u8>
+pub fn compile_to_bytes<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj: BasicValueEnum<'ctx>,
+    _obj_ty: Type,
+    _args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    let fn_val = codegen.module.get_function("tl_string_to_bytes")
+        .ok_or("tl_string_to_bytes not found")?;
+    let call = codegen.builder.build_call(fn_val, &[obj.into()], "to_bytes_res")
+        .map_err(|e| e.to_string())?;
+    let res = match call.try_as_basic_value() {
+        ValueKind::Basic(v) => v,
+        _ => return Err("Invalid return from String.to_bytes".into()),
+    };
+    Ok((res, Type::Struct("Vec".to_string(), vec![Type::U8])))
+}
+
+/// String::from_utf8(bytes: Vec<u8>) -> String
+pub fn compile_from_utf8<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _hint: Option<&Type>
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    if args.len() != 1 { return Err("String::from_utf8 requires 1 argument".into()); }
+    let fn_val = codegen.module.get_function("tl_string_from_utf8")
+        .ok_or("tl_string_from_utf8 not found")?;
+    let call = codegen.builder.build_call(fn_val, &[args[0].0.into()], "from_utf8_res")
+        .map_err(|e| e.to_string())?;
+    let res = match call.try_as_basic_value() {
+        ValueKind::Basic(v) => v,
+        _ => return Err("Invalid return from String::from_utf8".into()),
+    };
+    Ok((res, Type::String("String".to_string())))
+}

@@ -724,6 +724,7 @@ fn load_builtins() -> Result<tl_lang::compiler::ast::Module> {
         builtin_types::non_generic::time_types::SOURCE_DURATION,
         builtin_types::non_generic::time_types::SOURCE_INSTANT,
         builtin_types::non_generic::time_types::SOURCE_DATETIME,
+        builtin_types::non_generic::net::SOURCE,
     ];
 
     let mut combined = tl_lang::compiler::ast::Module {

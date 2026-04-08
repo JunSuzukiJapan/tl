@@ -432,6 +432,10 @@ impl SemanticAnalyzer {
 
         let datetime_data = crate::compiler::codegen::builtin_types::non_generic::time_types::load_datetime();
         self.register_builtin_data(datetime_data);
+
+        let (listener_data, stream_data) = crate::compiler::codegen::builtin_types::non_generic::net::load_net_data();
+        self.register_builtin_data(listener_data);
+        self.register_builtin_data(stream_data);
     }
 
     fn register_builtin_data(&mut self, data: BuiltinTypeData) {
@@ -6363,6 +6367,20 @@ impl SemanticAnalyzer {
                     (Type::GradTensor(inner, rank), Type::Struct(name, _)) if name == "Tensor" => {
                         Ok(Type::Tensor(inner.clone(), *rank))
                     }
+                    (Type::Struct(struct_name, _), Type::TraitObject(trait_name)) => {
+                        if let Some(trait_impls) = self.type_traits.get(struct_name) {
+                            if trait_impls.iter().any(|t| t == trait_name) {
+                                return Ok(target_type.clone());
+                            }
+                        }
+                        return self.err(
+                            SemanticError::TypeMismatch {
+                                expected: target_type.clone(),
+                                found: source_type.clone(),
+                            },
+                            Some(expr.span.clone()),
+                        );
+                    }
                     _ => {
                         // Trait dispatch fallback for `as` (From trait)
                         if self.resolve_trait_method(&target_type, "From", "from").is_some() {
@@ -7313,6 +7331,14 @@ impl SemanticAnalyzer {
         }
         match (t1, t2) {
             (Type::TraitObject(trait_name), Type::Struct(struct_name, _)) => {
+                if let Some(trait_impls) = self.type_traits.get(struct_name) {
+                    if trait_impls.iter().any(|t| t == trait_name) {
+                        return true;
+                    }
+                }
+                false
+            }
+            (Type::Struct(struct_name, _), Type::TraitObject(trait_name)) => {
                 if let Some(trait_impls) = self.type_traits.get(struct_name) {
                     if trait_impls.iter().any(|t| t == trait_name) {
                         return true;

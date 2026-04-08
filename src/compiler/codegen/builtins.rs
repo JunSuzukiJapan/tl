@@ -3608,6 +3608,20 @@ pub fn declare_runtime_functions<'ctx>(
         execution_engine.add_global_mapping(&f, runtime::stdlib::tl_string_from_chars as *const () as usize);
     }
 
+    // tl_string_to_bytes(s: *mut StringStruct) -> *mut VecStruct
+    let str_to_bytes_type = i8_ptr.fn_type(&[i8_ptr.into()], false);
+    add_fn("tl_string_to_bytes", str_to_bytes_type);
+    if let Some(f) = module.get_function("tl_string_to_bytes") {
+        execution_engine.add_global_mapping(&f, runtime::string_ffi::tl_string_to_bytes as *const () as usize);
+    }
+
+    // tl_string_from_utf8(vec: *mut VecStruct) -> *mut StringStruct
+    let str_from_utf8_type = i8_ptr.fn_type(&[i8_ptr.into()], false);
+    add_fn("tl_string_from_utf8", str_from_utf8_type);
+    if let Some(f) = module.get_function("tl_string_from_utf8") {
+        execution_engine.add_global_mapping(&f, runtime::string_ffi::tl_string_from_utf8 as *const () as usize);
+    }
+
     // Regex FFI
     let fn_regex_new_type = i64_type.fn_type(&[i8_ptr.into()], false);
     add_fn("tl_regex_new", fn_regex_new_type);

@@ -31,6 +31,8 @@ pub fn register_primitive_types(manager: &mut TypeManager) {
     string.register_evaluated_instance_method("repeat", string_methods::compile_repeat, vec![Type::I64], string_type.clone());
     string.register_evaluated_instance_method("chars", string_methods::compile_chars, vec![], Type::Struct("Vec".to_string(), vec![Type::I64]));
     string.register_evaluated_static_method("from_chars", string_methods::compile_from_chars, vec![Type::Struct("Vec".to_string(), vec![Type::I64])], string_type.clone());
+    string.register_evaluated_static_method("from_utf8", string_methods::compile_from_utf8, vec![Type::Struct("Vec".to_string(), vec![Type::U8])], string_type.clone());
+    string.register_evaluated_instance_method("to_bytes", string_methods::compile_to_bytes, vec![], Type::Struct("Vec".to_string(), vec![Type::U8]));
     manager.register_type(string);
 
     // ===== F32 =====
