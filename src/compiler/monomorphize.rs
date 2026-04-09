@@ -61,12 +61,20 @@ impl Monomorphizer {
         // 1. Collect generic definitions
         self.collect_generics(module);
         
-        let initial_structs = module.structs.len();
-        log::debug!("Generic structs collected: {}", self.generic_structs.len());
-        
         // 2. Scan for initial usages in main and non-generic functions
         log::debug!("Scanning module...");
         self.scan_module(module);
+        
+        // DEBUG PRINT
+        for imp in &self.generic_impls {
+            if let crate::compiler::ast::Type::Struct(name, _) = &imp.target_type {
+                if name.starts_with("Vec") {
+                    let mut methods = Vec::new();
+                    for m in &imp.methods { methods.push(m.name.clone()); }
+                    println!("DEBUG PRE-MONO Vec Struct methods: {:?}", methods);
+                }
+            }
+        }
 
         
         // 3. Process queue until empty
@@ -103,7 +111,7 @@ impl Monomorphizer {
         //   - compile_module (functions): generic_fn_defs に登録してスキップ
         // テンプレートを残すことで parse_mangled_type_args が arity 情報を取得できる。
         
-        log::info!("Monomorphization done. Structs: {} -> {}", initial_structs, module.structs.len());
+        log::info!("Monomorphization done. Structs: {}", module.structs.len());
         Ok(())
     }
 
@@ -229,16 +237,34 @@ impl Monomorphizer {
                  
                  if !args.is_empty() {
                      // Check if this is a generic struct instantiation
-                     if self.generic_structs.contains_key(name) {
+                     if let Some(def) = self.generic_structs.get(name).cloned() {
                          let concrete_args: Vec<Type> = args.iter().map(|a| self.resolve_type(a)).collect();
                          let mangled = self.request_struct_instantiation(name, concrete_args.clone());
-                         return Type::Struct(mangled, concrete_args);
+                         let type_map: Vec<(String, Type)> = def.generics.iter()
+                             .zip(concrete_args.iter())
+                             .map(|(g, a)| (g.clone(), a.clone()))
+                             .collect();
+                         return Type::SpecializedType {
+                             gen_type: Box::new(Type::Struct(name.clone(), vec![])),
+                             type_args: concrete_args,
+                             type_map,
+                             mangled_name: mangled,
+                         };
                      }
                      // Check enum
-                     if self.generic_enums.contains_key(name) {
+                     if let Some(def) = self.generic_enums.get(name).cloned() {
                           let concrete_args: Vec<Type> = args.iter().map(|a| self.resolve_type(a)).collect();
                           let mangled = self.request_enum_instantiation(name, concrete_args.clone());
-                          return Type::Enum(mangled, concrete_args);
+                          let type_map: Vec<(String, Type)> = def.generics.iter()
+                              .zip(concrete_args.iter())
+                              .map(|(g, a)| (g.clone(), a.clone()))
+                              .collect();
+                          return Type::SpecializedType {
+                              gen_type: Box::new(Type::Enum(name.clone(), vec![])),
+                              type_args: concrete_args,
+                              type_map,
+                              mangled_name: mangled,
+                          };
                      }
                  }
                  // Recurse for args even if not generic struct (e.g. unknown type?)
@@ -745,8 +771,8 @@ impl Monomorphizer {
                                       }
                                       
                                       if all_inferred && !type_args.is_empty() {
-                                          let concrete_name = self.request_struct_instantiation(&type_name_str, type_args);
-                                          *type_ty = Type::Struct(concrete_name, vec![]);
+                                          let concrete_name = self.request_struct_instantiation(&type_name_str, type_args.clone());
+                                          *type_ty = Type::Struct(concrete_name, type_args);
                                        }
                                   }
                               }
@@ -919,8 +945,8 @@ impl Monomorphizer {
                                        }
                                        
                                        if all_inferred && !type_args.is_empty() {
-                                           let concrete_name = self.request_enum_instantiation(&type_name_str, type_args);
-                                           *type_ty = Type::Struct(concrete_name, vec![]);
+                                           let concrete_name = self.request_enum_instantiation(&type_name_str, type_args.clone());
+                                           *type_ty = Type::Struct(concrete_name, type_args);
                                        }
                                    }
                                }
@@ -1075,10 +1101,20 @@ impl Monomorphizer {
                   // Preserve whether this is Struct or Enum
                   let is_enum = matches!(&impl_block.target_type, Type::Enum(_, _));
                   
-                  let concrete_target_type = if is_enum {
-                      Type::Enum(concrete_struct_name.clone(), vec![])
+                  let type_map: Vec<(String, Type)> = impl_block.generics.iter()
+                      .zip(args.iter())
+                      .map(|(g, a)| (g.clone(), a.clone()))
+                      .collect();
+                  let gen_type = if is_enum {
+                      Type::Enum(impl_block.target_type.get_base_name(), vec![])
                   } else {
-                      Type::Struct(concrete_struct_name.clone(), vec![])
+                      Type::Struct(impl_block.target_type.get_base_name(), vec![])
+                  };
+                  let concrete_target_type = Type::SpecializedType {
+                      gen_type: Box::new(gen_type),
+                      type_args: args.to_vec(),
+                      type_map,
+                      mangled_name: concrete_struct_name.clone(),
                   };
                   
                   subst.insert("Self".to_string(), concrete_target_type.clone());
@@ -1102,6 +1138,16 @@ impl Monomorphizer {
                  }
                  
                  new_impls.push(new_impl);
+             }
+         }
+         
+         // DEBUG: What methods are in new_impls for Vec?
+         for ni in &new_impls {
+             if let Type::Struct(n, _) = &ni.target_type {
+                 if n.starts_with("Vec") {
+                     let method_names: Vec<String> = ni.methods.iter().map(|m| m.name.clone()).collect();
+                     println!("DEBUG IN-MONO instantiated methods for {}: {:?}", n, method_names);
+                 }
              }
          }
          
@@ -1364,6 +1410,18 @@ impl Monomorphizer {
                  Type::Tuple(new_types)
              },
 
+             Type::SpecializedType { gen_type, type_args, type_map, mangled_name } => {
+                 let new_gen = Box::new(self.substitute_type(gen_type, subst));
+                 let new_args: Vec<Type> = type_args.iter().map(|a| self.substitute_type(a, subst)).collect();
+                 let new_map: Vec<(String, Type)> = type_map.iter().map(|(k, v)| (k.clone(), self.substitute_type(v, subst))).collect();
+                 Type::SpecializedType {
+                     gen_type: new_gen,
+                     type_args: new_args,
+                     type_map: new_map,
+                     mangled_name: mangled_name.clone(),
+                 }
+             }
+
              _ => ty.clone()
         }
     }
@@ -1426,6 +1484,9 @@ impl Monomorphizer {
             Type::Array(inner, size) => {
                 let args = vec![self.mangle_type(inner), size.to_string()];
                 mangle_wrap_args("Array", &args)
+            }
+            Type::SpecializedType { mangled_name, .. } => {
+                mangled_name.clone()
             }
             _ => {
                 "unknown".to_string()

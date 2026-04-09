@@ -1210,7 +1210,8 @@ fn compile_tensor_reshape<'ctx>(
           let fn_val = codegen.module.get_function("tl_tensor_reshape_dims")
                .ok_or("tl_tensor_reshape_dims not found")?;
 
-          let (data_ptr, rank_val) = if matches!(shape_ty, Type::Struct(n, _) if n.starts_with("Vec")) {
+          let shape_ty_flat = shape_ty.flatten_specialized();
+          let (data_ptr, rank_val) = if matches!(&shape_ty_flat, Type::Struct(n, _) if n.starts_with("Vec") || n.contains("Vec")) {
                // Vec
                let vec_ptr = if shape_val.is_pointer_value() {
                     shape_val.into_pointer_value()

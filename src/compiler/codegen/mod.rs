@@ -910,6 +910,18 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .into()
                     }
 
+                    Type::SpecializedType { mangled_name, .. } => {
+                        // SpecializedType (monomorphized generic) - look up by mangled name
+                        let _is_zst = if let Some(def) = self.struct_defs.get(mangled_name.as_str()) {
+                            def.fields.is_empty()
+                        } else {
+                            false // May be an enum or forward decl, just use pointer
+                        };
+                        self.context
+                            .ptr_type(inkwell::AddressSpace::default())
+                            .into()
+                    }
+
                     _ => {
                         return Err(format!(
                             "Unsupported field type in struct {}: {:?}",
@@ -1102,6 +1114,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Extract concrete type args from target_type
         let type_args = match &imp.target_type {
             Type::Struct(_, args) | Type::Enum(_, args) => args.clone(),
+            Type::SpecializedType { type_args, .. } => type_args.clone(),
             _ => vec![],
         };
 
@@ -1111,9 +1124,24 @@ impl<'ctx> CodeGenerator<'ctx> {
             let type_name = self.concrete_type_to_trait_key(&concrete_type);
 
             for bound in &pred.bounds {
-                let has_trait = self.trait_registry
+                let mut has_trait = self.trait_registry
                     .get(&type_name)
                     .map_or(false, |traits| traits.contains(&bound.trait_name));
+                    
+                // Primitive trait bound whitelist fallback
+                if !has_trait {
+                    has_trait = match type_name.as_str() {
+                        "i64" | "f64" | "i32" | "f32" | "u8" | "char" | "bool" | "String" => {
+                            match bound.trait_name.as_str() {
+                                "PartialEq" | "Clone" => true,
+                                "PartialOrd" => type_name != "String" && type_name != "bool",
+                                _ => false,
+                            }
+                        }
+                        _ => false,
+                    };
+                }
+
                 if !has_trait {
                     return true; // Bounds not satisfied, skip this method
                 }
@@ -1126,7 +1154,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Pass 1: Declare all methods (Prototypes) and register return types
         for imp in impls {
             // Check if generic impl
-            let _target_name = imp.target_type.get_base_name();
+            let _target_name = imp.target_type.mangled_name_or_name().unwrap_or("").to_string();
             
             // Skip if formal generics are present
             if !imp.generics.is_empty() {
@@ -1158,7 +1186,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     continue;
                 }
 
-                let target_name = imp.target_type.get_base_name();
+                let target_name = imp.target_type.mangled_name_or_name().unwrap_or("").to_string();
                 let simple_target = &target_name;
                 let mangled_name = if method.is_extern {
                     format!("tl_{}_{}", simple_target.to_lowercase(), method.name)
@@ -1196,7 +1224,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         }
                     } else {
                         arg_ty.clone()
-                    };
+                    }.flatten_specialized();
 
                     let ty: BasicMetadataTypeEnum = match &resolved_ty {
                         Type::F32 => self.context.f32_type().into(),
@@ -1232,7 +1260,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let fn_type = if uses_sret {
                     self.context.void_type().fn_type(&param_types, false)
                 } else {
-                    match &method.return_type {
+                    match &method.return_type.flatten_specialized() {
                         Type::F32 => self.context.f32_type().fn_type(&param_types, false),
                         Type::I64 | Type::Entity | Type::Usize => {
                             self.context.i64_type().fn_type(&param_types, false)
@@ -1248,7 +1276,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
                             self.context.struct_type(&[ptr_type.into(), ptr_type.into()], false).fn_type(&param_types, false)
                         }
-                        Type::Struct(_, _) | Type::Tuple(_) | Type::Enum(_, _) => self
+                        Type::Struct(_, _) | Type::Tuple(_) | Type::Enum(_, _) | Type::SpecializedType { .. } => self
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
                             .fn_type(&param_types, false),
@@ -1261,6 +1289,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     }
                 };
 
+                println!("DEBUG ADD_FUNCTION: {}", mangled_name);
                 let _function = self.module.add_function(&mangled_name, fn_type, None);
                 
                 // Register return type for this method
@@ -1290,7 +1319,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 if self.should_skip_concrete_method(method, imp) {
                     continue;
                 }
-                let target_name = imp.target_type.get_base_name();
+                let target_name = imp.target_type.mangled_name_or_name().unwrap_or("").to_string();
                 let simple_target = &target_name;
                 let mangled_name = if method.is_extern {
                      format!("tl_{}_{}", simple_target.to_lowercase(), method.name)
@@ -1373,7 +1402,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         }
                     } else {
                         arg_ty.clone()
-                    };
+                    }.flatten_specialized();
 
                     if let Some(param_val) = function.get_nth_param((i + param_offset) as u32) {
                         param_val.set_name(arg_name);

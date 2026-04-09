@@ -287,6 +287,24 @@ impl Type {
             _ => false,
         }
     }
+
+    /// Flatten SpecializedType to Struct/Enum(mangled_name, type_args).
+    /// This preserves both the mangled name (for LLVM symbol lookup) and the type_args
+    /// (for element type access in codegen), while converting to a form that existing
+    /// pattern matches can handle.
+    /// Non-SpecializedType values are returned as-is.
+    pub fn flatten_specialized(&self) -> Type {
+        match self {
+            Type::SpecializedType { gen_type, type_args, mangled_name, .. } => {
+                if gen_type.is_enum_type() {
+                    Type::Enum(mangled_name.clone(), type_args.clone())
+                } else {
+                    Type::Struct(mangled_name.clone(), type_args.clone())
+                }
+            }
+            _ => self.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
