@@ -107,9 +107,9 @@ impl<'ctx> CodeGenerator<'ctx> {
             let ns = full_substitutor.substitute_stmt(s);
             if let crate::compiler::ast::StmtKind::Let { name, type_annotation, .. } = &s.inner {
                  if name == "result" {
-                      println!("[MONO] var={} orig_ta={:?}", name, type_annotation);
+                      eprintln!("[MONO] var={} orig_ta={:?}", name, type_annotation);
                       if let crate::compiler::ast::StmtKind::Let { type_annotation: n_ta, .. } = &ns.inner {
-                           println!("[MONO] var={} new_ta={:?} subst={:?}", name, n_ta, subst_map);
+                           eprintln!("[MONO] var={} new_ta={:?} subst={:?}", name, n_ta, subst_map);
                       }
                  }
             }

@@ -3279,9 +3279,6 @@ impl<'ctx> CodeGenerator<'ctx> {
             },
             ExprKind::StaticMethodCall(original_type_ty, method_name, args) => {
                 let type_ty = original_type_ty.clone();
-                if type_ty.get_base_name() == "Vec" && method_name == "new" {
-                    println!("[DEBUG Vec::new]: in function {:?}, type_ty = {:?}", self.builder.get_insert_block().unwrap().get_parent().unwrap().get_name(), type_ty);
-                }
                 
                 if method_name == "sizeof" {
                      // For Enum types, we need to get the actual data struct size, not pointer size

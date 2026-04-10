@@ -2240,7 +2240,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                     }
                     _ => {
                         // Tensor, Vec, or other iterable type
-                        let (iter_val, iter_ty) = self.compile_expr(iterator)?;
+                        let (iter_val, iter_ty_raw) = self.compile_expr(iterator)?;
+                        // Normalize SpecializedType → Struct/Enum so Vec special handling works
+                        let iter_ty = self.normalize_type(&iter_ty_raw);
                         let len = match &iter_ty {
                             Type::Tensor(_, _) => {
                                 // Get tensor length

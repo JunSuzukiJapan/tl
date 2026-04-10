@@ -744,20 +744,30 @@ impl Monomorphizer {
                                           } else {
                                               // Context-based Inference (Required for static methods like Vec::new() where args don't imply generics)
                                               let mut inferred_via_context = false;
-                                              if let Some(Type::Struct(n, args)) = expected_type {
+                                              let expected_n = match expected_type {
+                                                  Some(Type::Struct(n, _)) | Some(Type::Enum(n, _)) => n.clone(),
+                                                  Some(Type::SpecializedType { gen_type, .. }) => gen_type.get_base_name(),
+                                                  _ => String::new(),
+                                              };
+                                              let expected_args = match expected_type {
+                                                  Some(Type::Struct(_, args)) | Some(Type::Enum(_, args)) | Some(Type::SpecializedType { type_args: args, .. }) => args.clone(),
+                                                  _ => Vec::new(),
+                                              };
+
+                                              if !expected_n.is_empty() {
                                                   // Case A: Generic Struct (Vec<i32>)
-                                                  if n == &type_name_str && args.len() == def.generics.len() {
+                                                  if expected_n == type_name_str && expected_args.len() == def.generics.len() {
                                                      if let Some(idx) = def.generics.iter().position(|r| r == param) {
-                                                         type_args.push(args[idx].clone());
+                                                         type_args.push(expected_args[idx].clone());
                                                          inferred_via_context = true;
                                                      }
                                                   }
                                                   // Case B: Already Monomorphized Struct (Vec[i64])
-                                                  else if n.contains("[") {
-                                                      let orig_name_str = mangle_base_name(n);
-                                                      if orig_name_str == type_name_str && args.len() == def.generics.len() {
+                                                  else if expected_n.contains("[") {
+                                                      let orig_name_str = mangle_base_name(&expected_n);
+                                                      if orig_name_str == type_name_str && expected_args.len() == def.generics.len() {
                                                           if let Some(idx) = def.generics.iter().position(|r| r == param) {
-                                                              type_args.push(args[idx].clone());
+                                                              type_args.push(expected_args[idx].clone());
                                                               inferred_via_context = true;
                                                           }
                                                       }
@@ -773,7 +783,22 @@ impl Monomorphizer {
                                       if all_inferred && !type_args.is_empty() {
                                           let concrete_name = self.request_struct_instantiation(&type_name_str, type_args.clone());
                                           *type_ty = Type::Struct(concrete_name, type_args);
-                                       }
+                                      } else if !all_inferred && type_args.is_empty() {
+                                          if let Some(Type::SpecializedType { mangled_name, type_args: e_args, .. }) = expected_type {
+                                              if MANGLER.starts_with_mangled(mangled_name, &type_name_str) {
+                                                  *type_ty = Type::SpecializedType {
+                                                      gen_type: Box::new(Type::Struct(type_name_str.clone(), vec![])),
+                                                      type_args: e_args.clone(),
+                                                      type_map: vec![],
+                                                      mangled_name: mangled_name.clone(),
+                                                  };
+                                              }
+                                          } else if let Some(Type::Struct(n, e_args)) = expected_type {
+                                              if MANGLER.starts_with_mangled(n, &type_name_str) {
+                                                  *type_ty = Type::Struct(n.clone(), e_args.clone());
+                                              }
+                                          }
+                                      }
                                   }
                               }
                            } else if let Some(def) = self.generic_enums.get(&type_name_str).cloned() {
@@ -826,18 +851,28 @@ impl Monomorphizer {
                                            // Fallback: Infer from expected_type
 
                                            let mut inferred_from_expected = None;
-                                           if let Some(Type::Enum(n, args)) | Some(Type::Struct(n, args)) = expected_type {
+                                           let expected_n = match expected_type {
+                                               Some(Type::Struct(n, _)) | Some(Type::Enum(n, _)) => n.clone(),
+                                               Some(Type::SpecializedType { gen_type, .. }) => gen_type.get_base_name(),
+                                               _ => String::new(),
+                                           };
+                                           let expected_args = match expected_type {
+                                               Some(Type::Struct(_, args)) | Some(Type::Enum(_, args)) | Some(Type::SpecializedType { type_args: args, .. }) => args.clone(),
+                                               _ => Vec::new(),
+                                           };
+
+                                           if !expected_n.is_empty() {
                                                // Case 1: Unmangled name with generics (e.g. Option with [Entry_i64_i64])
-                                               if n == &type_name_str && args.len() == def.generics.len() {
+                                               if expected_n == type_name_str && expected_args.len() == def.generics.len() {
                                                     // Find index of param
                                                     if let Some(idx) = def.generics.iter().position(|r| r == param) {
-                                                         inferred_from_expected = Some(args[idx].clone());
+                                                         inferred_from_expected = Some(expected_args[idx].clone());
                                                     }
                                                }
                                                // Case 2: Already mangled name (e.g. Option_Entry_i64_i64 with args=[])
                                                // In this case, we use the mangled name directly and don't need to infer generics
                                                // since codegen will look up the type by mangled name
-                                               else if MANGLER.starts_with_mangled(n, &type_name_str) && args.is_empty() {
+                                               else if MANGLER.starts_with_mangled(&expected_n, &type_name_str) && expected_args.is_empty() {
                                                    // Signal that we should use the mangled name directly
                                                    // Mark "skip" by using a special sentinel (we'll handle this below)
                                                    inferred_from_expected = Some(Type::Void);
@@ -864,21 +899,33 @@ impl Monomorphizer {
                                    if all_inferred && !type_args.is_empty() && !has_void_sentinel {
                                        resolved_generics = type_args.clone();
                                        concrete_name = self.request_enum_instantiation(&type_name_str, type_args);
-                                   } else if let Some(Type::Enum(n, args)) | Some(Type::Struct(n, args)) = expected_type {
-                                       // Fallback 1: If expected type is already concrete (e.g. Option_Entry_i64_i64) matching this generic
-                                       if MANGLER.starts_with_mangled(n, &type_name_str) {
-                                            resolved_generics = args.clone();
-                                            if resolved_generics.is_empty() && !def.generics.is_empty() {
-                                                for _ in &def.generics {
-                                                    resolved_generics.push(Type::Entity);
+                                   } else if let Some(expected_ty) = expected_type {
+                                       let expected_n = match expected_ty {
+                                           Type::Struct(n, _) | Type::Enum(n, _) => n.clone(),
+                                           Type::SpecializedType { mangled_name, .. } => mangled_name.clone(),
+                                           _ => String::new(),
+                                       };
+                                       let expected_args = match expected_ty {
+                                           Type::Struct(_, args) | Type::Enum(_, args) | Type::SpecializedType { type_args: args, .. } => args.clone(),
+                                           _ => Vec::new(),
+                                       };
+                                       
+                                       if !expected_n.is_empty() {
+                                           // Fallback 1: If expected type is already concrete (e.g. Option_Entry_i64_i64) matching this generic
+                                           if MANGLER.starts_with_mangled(&expected_n, &type_name_str) {
+                                                resolved_generics = expected_args.clone();
+                                                if resolved_generics.is_empty() && !def.generics.is_empty() {
+                                                    for _ in &def.generics {
+                                                        resolved_generics.push(Type::Entity);
+                                                    }
                                                 }
-                                            }
-                                            concrete_name = n.clone();
-                                       }
-                                       // Fallback 2: If expected type has same base name with generics (e.g. Option with [Entry_i64_i64])
-                                       else if n == &type_name_str && !args.is_empty() {
-                                            resolved_generics = args.clone();
-                                            concrete_name = self.request_enum_instantiation(&type_name_str, args.clone());
+                                                concrete_name = expected_n;
+                                           }
+                                           // Fallback 2: If expected type has same base name with generics (e.g. Option with [Entry_i64_i64])
+                                           else if expected_n == type_name_str && !expected_args.is_empty() {
+                                                resolved_generics = expected_args.clone();
+                                                concrete_name = self.request_enum_instantiation(&type_name_str, expected_args);
+                                           }
                                        }
                                    }
 
