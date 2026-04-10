@@ -7443,7 +7443,12 @@ impl<'ctx> CodeGenerator<'ctx> {
         // For Option.unwrap/unwrap_or, the return type T should be replaced with generics[0]
         // Note: Get generics from obj_ty which has the correct type from the call site
         if base_type_name == "Option" && (method == "unwrap" || method == "unwrap_or") {
-            if let Type::Enum(_, args) = &obj_ty {
+            let args = match &obj_ty {
+                Type::Enum(_, args) => Some(args.clone()),
+                Type::SpecializedType { type_args, .. } => Some(type_args.clone()),
+                _ => None,
+            };
+            if let Some(args) = args {
                 if let Some(inner_ty) = args.get(0) {
                     ret_ty = inner_ty.clone();
                 }
@@ -7452,7 +7457,12 @@ impl<'ctx> CodeGenerator<'ctx> {
         
         // For Result.unwrap, the return type T should be replaced with generics[0]
         if base_type_name == "Result" && method == "unwrap" {
-            if let Type::Enum(_, args) = &obj_ty {
+            let args = match &obj_ty {
+                Type::Enum(_, args) => Some(args.clone()),
+                Type::SpecializedType { type_args, .. } => Some(type_args.clone()),
+                _ => None,
+            };
+            if let Some(args) = args {
                 if let Some(ok_ty) = args.get(0) {
                     ret_ty = ok_ty.clone();
                 }
