@@ -71,7 +71,6 @@ impl Monomorphizer {
                 if name.starts_with("Vec") {
                     let mut methods = Vec::new();
                     for m in &imp.methods { methods.push(m.name.clone()); }
-                    println!("DEBUG PRE-MONO Vec Struct methods: {:?}", methods);
                 }
             }
         }
@@ -392,7 +391,6 @@ impl Monomorphizer {
     }
 
      fn rewrite_expr(&mut self, expr: &mut ExprKind, subst: &HashMap<String, Type>, expected_type: Option<&Type>) {
-         eprintln!("MONOMORPH TRACE rewrite_expr: {:?}", std::mem::discriminant(expr));
          match expr {
              ExprKind::StructInit(ty, fields) => {
                  // Fix for builtins: resolve Path -> Struct if semantics didn't run
@@ -603,7 +601,7 @@ impl Monomorphizer {
                    if needs_inference {
                         // Handle both Type::Enum and Type::Struct (mangled enums may come as Struct)
                         if let Some(Type::Enum(expected_name, expected_args)) | Some(Type::Struct(expected_name, expected_args)) = expected_type {
-                            println!("Monomorphize EnumInit: enum={}, expected={:?}", enum_name, expected_type); if expected_name == enum_name && !expected_args.is_empty() {
+                            if expected_name == enum_name && !expected_args.is_empty() {
                                 // Case 1: Expected type matches our enum and has generics (unmangled)
                                 *generics = expected_args.clone();
 
@@ -629,7 +627,7 @@ impl Monomorphizer {
                    if generics.iter().any(|t| matches!(t, Type::Undefined(_))) {
                         // In case of a partially resolved expected_type
                         if let Some(Type::Enum(expected_name, expected_args)) | Some(Type::Struct(expected_name, expected_args)) = expected_type {
-                            println!("Monomorphize EnumInit: enum={}, expected={:?}", enum_name, expected_type); if expected_name == enum_name || MANGLER.starts_with_mangled(expected_name, enum_name) {
+                            if expected_name == enum_name || MANGLER.starts_with_mangled(expected_name, enum_name) {
                                 for (i, ty) in generics.iter_mut().enumerate() {
                                     if matches!(ty, Type::Undefined(_)) && i < expected_args.len() {
                                         *ty = expected_args[i].clone();
@@ -710,7 +708,7 @@ impl Monomorphizer {
                       }
                   }
               }
-              ExprKind::StaticMethodCall(type_ty, method_name, args) => { println!("Mono StaticMethodCall: ty={:?}, method={}", type_ty, method_name);
+              ExprKind::StaticMethodCall(type_ty, method_name, args) => {
                           *type_ty = self.substitute_type(type_ty, subst);
                           *type_ty = self.resolve_type(type_ty);
                           for arg in args.iter_mut() {
@@ -1204,7 +1202,6 @@ impl Monomorphizer {
              if let Type::Struct(n, _) = &ni.target_type {
                  if n.starts_with("Vec") {
                      let method_names: Vec<String> = ni.methods.iter().map(|m| m.name.clone()).collect();
-                     println!("DEBUG IN-MONO instantiated methods for {}: {:?}", n, method_names);
                  }
              }
          }

@@ -1714,11 +1714,9 @@ impl<'ctx> CodeGenerator<'ctx> {
         for scope in self.variable_liveness.iter().rev() {
             if let Some(&last_use) = scope.get(name) {
                 let res = last_use != 0 && self.current_time >= last_use;
-                eprintln!("[LIVENESS] is_last_use({}): current_time={}, last_use={} -> {}", name, self.current_time, last_use, res);
                 return res;
             }
         }
-        eprintln!("[LIVENESS] is_last_use({}): NOT FOUND IN SCOPE", name);
         false
     }
 
@@ -1756,11 +1754,9 @@ impl<'ctx> CodeGenerator<'ctx> {
         
         // V6.1: Dynamically concretize type leakage from semantics phase inside generic monomorphization.
         if let Some(subst) = &self.current_method_generics {
-            eprintln!("[DEBUG] current_method_generics is SET! Subst count: {}", subst.len());
             let orig_ty = result.1.clone();
             result.1 = self.substitute_type_simple_bind(&result.1, subst);
             if orig_ty != result.1 {
-                eprintln!("[DEBUG] Concretized: {:?} -> {:?}", orig_ty, result.1);
             }
         }
         
@@ -3284,7 +3280,6 @@ impl<'ctx> CodeGenerator<'ctx> {
             ExprKind::StaticMethodCall(original_type_ty, method_name, args) => {
                 let type_ty = original_type_ty.clone();
                 if type_ty.get_base_name() == "Vec" && method_name == "new" {
-                    println!("[DEBUG Vec::new]: in function {:?}, type_ty = {:?}", self.builder.get_insert_block().unwrap().get_parent().unwrap().get_name(), type_ty);
                 }
                 
                 if method_name == "sizeof" {
@@ -5242,7 +5237,6 @@ impl<'ctx> CodeGenerator<'ctx> {
         let mangled_name = format!("tl_{}_{}", simple_type_name, method);
         let stdlib_name = format!("tl_{}_{}", simple_type_name.to_lowercase(), method);
 
-        println!("[DEBUG] compile_static_method_call: mangled={} stdlib={}", mangled_name, stdlib_name);
         let (func, actual_name) = if let Some((f, name)) = generic_result {
              (f, name)
         } else if let Some(f) = self.module.get_function(&mangled_name) {
@@ -6715,7 +6709,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                     }
                 }).or_else(|| closure_args.first().and_then(|(_, ty_opt)| ty_opt.clone()));
                 
-                eprintln!("[DEBUG compile_dynamic_method_call] method={}, obj_ty={:?}, elem_ty_opt={:?}", method, obj_ty, elem_ty_opt);
                 
                 let elem_ty = elem_ty_opt.ok_or_else(|| "Could not determine element type for dynamic collection method".to_string())?;
 

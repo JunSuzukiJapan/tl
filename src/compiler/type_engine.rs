@@ -69,33 +69,25 @@ impl TypeEngine {
             return true;
         }
         
-        eprintln!("DEBUG: ENTER MATCH t1={:?}, t2={:?}", t1, t2);
 
         match (t1, t2) {
             (Type::Undefined(id), other) => {
-                eprintln!("DEBUG: MATCHED LEFT Undefined({}) and {:?}", id, other);
                 if self.occurs(id, &other) {
-                    eprintln!("DEBUG: unify failed! occurs violation id={}, other={:?}", id, other);
                     return false; // (e.g. Type = Vec<Type>)
                 }
-                eprintln!("DEBUG: Binding Undefined({}) to {:?}", id, other);
                 self.bindings.insert(id, other);
                 true
             }
             (other, Type::Undefined(id)) => {
-                eprintln!("DEBUG: MATCHED RIGHT {:?} and Undefined({})", other, id);
                 if self.occurs(id, &other) {
-                    eprintln!("DEBUG: unify failed! occurs violation id={}, other={:?}", id, other);
                     return false; // (e.g. Type = Vec<Type>)
                 }
-                eprintln!("DEBUG: Binding Undefined({}) to {:?}", id, other);
                 self.bindings.insert(id, other);
                 true
             }
             (Type::Struct(n1, g1), Type::Struct(n2, g2)) |
             (Type::Enum(n1, g1), Type::Enum(n2, g2)) => {
                 if n1 != n2 || g1.len() != g2.len() {
-                    eprintln!("DEBUG: unify failed! struct/enum mismatch");
                     return false;
                 }
                 for (a1, a2) in g1.iter().zip(g2.iter()) {
@@ -107,38 +99,31 @@ impl TypeEngine {
             }
             (Type::Array(inner1, s1), Type::Array(inner2, s2)) => {
                 let res = s1 == s2 && self.unify(&inner1, &inner2);
-                if !res { eprintln!("DEBUG: unify failed! array mismatch"); }
                 res
             }
             (Type::Tensor(inner1, r1), Type::Tensor(inner2, r2)) => {
                 let res = (r1 == r2 || r1 == 0 || r2 == 0) && self.unify(&inner1, &inner2);
-                if !res { eprintln!("DEBUG: unify failed! tensor mismatch {} != {}", r1, r2); }
                 res
             }
             (Type::Ptr(i1), Type::Ptr(i2)) => self.unify(&i1, &i2),
             (Type::Fn(args1, ret1), Type::Fn(args2, ret2)) => {
                 if args1.len() != args2.len() {
-                    eprintln!("DEBUG: unify failed! fn arg length mismatch");
                     return false;
                 }
                 for (a1, a2) in args1.iter().zip(args2.iter()) {
                     if !self.unify(a1, a2) {
-                        eprintln!("DEBUG: unify failed! fn arg mismatch");
                         return false;
                     }
                 }
                 let res = self.unify(&ret1, &ret2);
-                if !res { eprintln!("DEBUG: unify failed! fn ret mismatch"); }
                 res
             }
             (Type::Tuple(t1), Type::Tuple(t2)) => {
                 if t1.len() != t2.len() {
-                    eprintln!("DEBUG: unify failed! tuple len mismatch");
                     return false;
                 }
                 for (a1, a2) in t1.iter().zip(t2.iter()) {
                     if !self.unify(a1, a2) {
-                        eprintln!("DEBUG: unify failed! tuple elem mismatch");
                         return false;
                     }
                 }
@@ -147,7 +132,6 @@ impl TypeEngine {
             // Dynamic language feature: Entity works with everything during compile time inference
             (Type::Entity, _) | (_, Type::Entity) => true,
             (a, b) => {
-                eprintln!("DEBUG: unify failed! generic mismatch {:?} != {:?}", a, b);
                 false
             }
         }
@@ -157,7 +141,6 @@ impl TypeEngine {
     /// avoiding infinite loops in resolution.
     fn occurs(&self, id: u64, ty: &Type) -> bool {
         let ty_res = self.resolve(ty.clone());
-        eprintln!("DEBUG: occurs id={} ty={:?} resolved={:?}", id, ty, ty_res);
         let res = match ty_res {
             Type::Undefined(other_id) => id == other_id,
             Type::Struct(_, ref generics) | Type::Enum(_, ref generics) => {
@@ -172,7 +155,6 @@ impl TypeEngine {
             Type::Tuple(ref types) => types.iter().any(|t| self.occurs(id, t)),
             _ => false,
         };
-        eprintln!("DEBUG: occurs id={} ty={:?} res={}", id, ty, res);
         res
     }
 }

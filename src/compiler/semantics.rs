@@ -326,11 +326,8 @@ impl SemanticAnalyzer {
     fn err<T>(&self, error: SemanticError, span: Option<Span>) -> Result<T, TlError> {
         if let SemanticError::TypeMismatch { expected, found } = &error {
             if let Some(s) = &span {
-                eprintln!("DEBUG: TypeMismatch expected {:?}, found {:?} at line {:?}", expected, found, s.line);
             } else {
-                eprintln!("DEBUG: TypeMismatch expected {:?}, found {:?} at unknown line", expected, found);
             }
-            eprintln!("{}", std::backtrace::Backtrace::force_capture());
         }
         Err(error.to_tl_error(span))
     }
@@ -3407,12 +3404,10 @@ impl SemanticAnalyzer {
                 self.exit_scope();
 
                 if let Some(Type::Fn(_, expected_ret)) = expected_type {
-                    eprintln!("DEBUG: Closure Unify! expected_ret={:?}, ret_ty={:?}", expected_ret, ret_ty);
                     let unify_res = self.unify(&expected_ret, &ret_ty);
                     if !unify_res {
                         let resolved_expected = self.type_engine.resolve((**expected_ret).clone());
                         let resolved_found = self.type_engine.resolve(ret_ty.clone());
-                        eprintln!("DEBUG: Real Mismatch!! expected_resolved={:?}, found_resolved={:?}", resolved_expected, resolved_found);
                         return self.err(
                             SemanticError::TypeMismatch {
                                 expected: resolved_expected,
@@ -6489,7 +6484,6 @@ impl SemanticAnalyzer {
 
                 // Re-derive type_ty after potential update (to ensure we use the one with Undefineds)
                 let type_ty = type_node.clone();
-                println!("[DEBUG STATIC METHOD] type_name={}, method_name={}", type_node.get_base_name(), method_name);
                 let is_grad_tensor_static = type_ty.get_base_name() == "GradTensor";
                 let type_name = if is_grad_tensor_static {
                     "Tensor".to_string()
@@ -7372,7 +7366,6 @@ impl SemanticAnalyzer {
         match (t1, t2) {
             (Type::TraitObject(trait_name), Type::Struct(struct_name, _)) => {
                 let struct_name_str = struct_name.clone();
-                eprintln!("[DEBUG ARE_TYPES_COMPATIBLE] t1=TraitObject({}), t2=Struct({}), found in type_traits={:?}", trait_name, struct_name_str, self.type_traits.get(&struct_name_str));
                 if let Some(trait_impls) = self.type_traits.get(&struct_name_str) {
                     if trait_impls.iter().any(|t| t == trait_name) {
                         return true;

@@ -1249,7 +1249,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                      return Ok(());
                 }                let simple_name = name.as_str();
 
-                println!("Codegen TRACE emit_recursive_unregister: Struct({})", name);
                 let struct_def = self.struct_defs.get(simple_name)
                     .ok_or_else(|| format!("Struct def {} not found", name))?
                     .clone();
@@ -1333,7 +1332,6 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
 
             Type::Enum(name, generics) => {
-                 println!("Codegen TRACE emit_recursive_unregister: Enum({}, {:?})", name, generics);
                  let ptr = val.into_pointer_value();
                  let unreg_fn = self.module.get_function("tl_mem_unregister")
                     .ok_or("tl_mem_unregister not found")?;
@@ -1743,7 +1741,6 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 if matches!(orig_val_ty, Type::Tuple(_)) || matches!(orig_val_ty, Type::Tensor(_, _)) || matches!(orig_val_ty, Type::Struct(_, _)) {
                      let func_name = self.builder.get_insert_block().and_then(|b| b.get_parent()).map(|f| f.get_name().to_string_lossy().into_owned()).unwrap_or_else(|| "unknown".to_string());
-                     println!("[DEBUG SUBSTITUTION] func={} orig={:?} after={:?} subst_map={:?}", func_name, orig_val_ty, val_ty, self.current_method_generics);
                 }
                 
                 // Ownership: Shared. The temporary (value) remains in scope and will be released at scope exit.
@@ -2066,7 +2063,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 _ => false,
                             };
                             if matches!(lhs_type, Type::Struct(_,_)) {
-                                eprintln!("[SHOULD_FREE] type={:?} cleanup={} should_free={}", lhs_type, lhs_cleanup_mode, should_free_old);
                             }
                             if should_free_old {
                                  if !val_ir.is_pointer_value() {
@@ -3538,7 +3534,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                     };
                     if self.module.get_function(&mangled).is_some() {
                         let fn_opt = self.module.get_function(&mangled);
-                        println!("[DEBUG] trait_binop base_name={} method={} mangled={} found={}", base_name, m_name, mangled, fn_opt.is_some());
                         if let Some(fn_val) = fn_opt {
                             
                             let m_ret_ty = self.method_return_types.get(&mangled).unwrap_or(&lhs_type);

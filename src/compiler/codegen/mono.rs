@@ -1278,7 +1278,6 @@ impl<'ctx> CodeGenerator<'ctx> {
         for imp in &impls {
             if base_name == "Vec" {
                 let method_names: Vec<String> = imp.methods.iter().map(|m| m.name.clone()).collect();
-                println!("DEBUG CODEGEN: methods for {}: {:?}", base_name, method_names);
             }
             for method in &imp.methods {
                 // Check trait bounds before attempting monomorphization
@@ -1321,7 +1320,6 @@ impl<'ctx> CodeGenerator<'ctx> {
     ) -> bool {
         // DEBUG
         if method.name == "index_of" || method.name == "contains" {
-            println!("DEBUG CHECK BOUNDS: method={}, generic_bounds={:?}, where_clause={:?}", method.name, method.generic_bounds, method.where_clause.is_some());
         }
         
         // If no bounds, always satisfied

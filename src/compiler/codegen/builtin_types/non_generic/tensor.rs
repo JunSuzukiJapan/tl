@@ -1345,7 +1345,6 @@ fn compile_from_vec_u8_impl<'ctx>(
     let shape_raw = args[1].0;
     let shape_ty = args[1].1.clone();
     
-    println!("DEBUG: from_vec_u8_impl shape_ty = {:?}", shape_ty);
     
     let (shape_data_ptr, rank_val, is_f32) = if matches!(shape_ty, Type::Tensor(_, _)) || matches!(shape_ty, Type::Array(_, _)) {
         

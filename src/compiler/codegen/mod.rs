@@ -151,7 +151,6 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         codegen.register_builtin_return_types();
         
-        eprintln!("DEBUG: Has KVCache in struct_defs: {}", codegen.struct_defs.contains_key("KVCache"));
 
         codegen
     }
@@ -183,15 +182,12 @@ impl<'ctx> CodeGenerator<'ctx> {
 
     pub fn jit_execute(&self, function_name: &str) -> Result<u64, String> {
         unsafe {
-            eprintln!("[DEBUG jit_execute] getting function: {}", function_name);
             let function = self
                 .execution_engine
                 .get_function::<unsafe extern "C" fn() -> u64>(function_name)
                 .map_err(|e| format!("JIT compile error: {}", e))?;
-            eprintln!("[DEBUG jit_execute] function obtained, calling...");
             self.module.print_to_file("debug.ll").ok();
             let result = function.call();
-            eprintln!("[DEBUG jit_execute] function returned: {}", result);
             Ok(result)
         }
     }
@@ -842,7 +838,6 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         // Pass 2: Body
         for s in structs {
-            if s.name == "KVCache" { eprintln!("DEBUG: Compiling body for KVCache"); }
             if !s.generics.is_empty() {
                 continue;
             }
@@ -1289,7 +1284,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                     }
                 };
 
-                println!("DEBUG ADD_FUNCTION: {}", mangled_name);
                 let _function = self.module.add_function(&mangled_name, fn_type, None);
                 
                 // Register return type for this method
@@ -1895,7 +1889,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                 analysis.last_use_times.get(&arg_time).copied().unwrap_or(0)
             } else { 0 };
             
-            eprintln!("[LIVENESS] Registering param: {}, time={}, last_use={}", arg_name, arg_time, last_use);
             self.variable_liveness
                 .last_mut()
                 .unwrap()
@@ -2129,7 +2122,6 @@ impl<'ctx> CodeGenerator<'ctx> {
              }
 
              let ret_ty = self.get_llvm_type(&func.return_type).unwrap_or(self.context.i8_type().into());
-             println!("DEBUG TERMINATOR FALLBACK for {}: func.return_type = {:?}, ret_ty = {:?}", func.name, func.return_type, ret_ty);
              if func.return_type == Type::Void {
                  self.builder.build_return(None).map_err(|e| e.to_string())?;
              } else if ret_ty.is_struct_type() {
