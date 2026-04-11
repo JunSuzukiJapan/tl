@@ -1380,7 +1380,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                      // Register SRET pointer
                      if let Some(sret_param) = function.get_nth_param(0) {
                          if sret_param.is_pointer_value() {
-                             sret_param.set_name("sret_ptr");
+                             sret_param.set_name("sret");
                              self.current_sret_dest = Some(sret_param.into_pointer_value());
                          } else {
                          }

@@ -2069,6 +2069,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 eprintln!("[SHOULD_FREE] type={:?} cleanup={} should_free={}", lhs_type, lhs_cleanup_mode, should_free_old);
                             }
                             if should_free_old {
+                                 if !val_ir.is_pointer_value() {
+                                     return Err(format!(
+                                         "Internal compiler error: Assign to {:?} expected PointerValue but got {:?}. \
+                                          This usually means SRET detection failed for the method call.",
+                                         lhs_type, val_ir
+                                     ));
+                                 }
                                  let old_val = self.builder.build_load(load_type, lhs_ptr, "old").unwrap().into_pointer_value();
                                  let null_ptr = load_type.const_null();
                                  let is_not_null = self.builder.build_int_compare(inkwell::IntPredicate::NE, old_val, null_ptr, "").unwrap();
