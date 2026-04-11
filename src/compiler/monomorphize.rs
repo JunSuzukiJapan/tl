@@ -447,9 +447,20 @@ impl Monomorphizer {
                  // 2. Try generic (if not renamed? but name is likely mangled here if we renamed it)
                  // 2. Try generic Struct
                  else if self.generic_structs.contains_key(name) {
-                     // Pre-rewrite fields to resolve generic arguments in nested structures
-                     for (_fname, val) in fields.iter_mut() {
-                         self.rewrite_expr(&mut val.inner, subst, None);
+                     // Pre-rewrite fields with field type context from struct definition
+                     // This allows StaticMethodCall like Vec::new() to infer its type args
+                     // from the field's declared type (e.g., items: Vec<T> where T is substituted)
+                     {
+                         let def_fields = self.generic_structs.get(name).map(|d| d.fields.clone()).unwrap_or_default();
+                         let field_type_hints: HashMap<String, Type> = def_fields.iter().map(|(fname, fty)| {
+                             let substituted = self.substitute_type(fty, subst);
+                             let resolved = self.resolve_type(&substituted);
+                             (fname.clone(), resolved)
+                         }).collect();
+                         for (fname, val) in fields.iter_mut() {
+                             let ctx_ty = field_type_hints.get(fname);
+                             self.rewrite_expr(&mut val.inner, subst, ctx_ty);
+                         }
                      }
 
                      if let Some(def) = self.generic_structs.get(name) {

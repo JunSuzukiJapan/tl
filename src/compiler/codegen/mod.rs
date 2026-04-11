@@ -1724,11 +1724,8 @@ impl<'ctx> CodeGenerator<'ctx> {
             panic!("COMPILE_FN_PROTO_CALLED_FOR_{}!!", func.name);
         }
         // Register return type for lookups by name (Critical for SRET detection)
-        if func.name.contains("Vec") && func.name.contains("get") && func.name.contains("Entry") {
-        }
         self.method_return_types.insert(func.name.clone(), func.return_type.clone());
         self.fn_params.insert(func.name.clone(), func.args.iter().map(|a| a.1.clone()).collect());
-
 
         // Check if this function returns a struct or enum (requires sret)
         // Let's assume Structs/Enums need SRET, but Tensors do NOT.

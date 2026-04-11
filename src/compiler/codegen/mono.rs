@@ -117,9 +117,12 @@ impl<'ctx> CodeGenerator<'ctx> {
         }).collect();
         
         // Transform StaticMethodCall to EnumInit for enum variant constructors
-
         self.transform_method_body_enum_inits(&mut new_method.body);
-        
+
+        // Transform StructInit names: resolve generic struct names to mangled concrete names
+        // e.g., StructInit(Struct("Container", []), ...) -> StructInit(Struct("Container[i64]", []), ...)
+        self.transform_method_body_struct_inits(&mut new_method.body, &full_substitutor);
+
         // Compile
         // Save current builder position
         let previous_block = self.builder.get_insert_block();
@@ -198,12 +201,15 @@ impl<'ctx> CodeGenerator<'ctx> {
         new_func.return_type = substitutor.substitute_type(&new_func.return_type);
         // Substitute body
         new_func.body = new_func.body.iter().map(|s| substitutor.substitute_stmt(s)).collect();
-        
+
+        // Transform StructInit names in generic function body
+        self.transform_method_body_struct_inits(&mut new_func.body, &substitutor);
+
         // 7. Compile
         // Need to register proto first (for recursion support etc)
         self.compile_fn_proto(&new_func)?;
         self.pending_functions.push((new_func, Some(subst_map)));
-        
+
         Ok(mangled_name)
     }
 
@@ -1054,6 +1060,205 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
             _ => {}
         }
+    }
+
+    // ========== AST Transformation for StructInit in monomorphized methods ==========
+
+    fn transform_method_body_struct_inits(&self, stmts: &mut Vec<crate::compiler::ast::Stmt>, substitutor: &TypeSubstitutor) {
+        for stmt in stmts.iter_mut() {
+            self.transform_stmt_struct_inits(stmt, substitutor);
+        }
+    }
+
+    fn transform_stmt_struct_inits(&self, stmt: &mut crate::compiler::ast::Stmt, substitutor: &TypeSubstitutor) {
+        use crate::compiler::ast::StmtKind;
+        match &mut stmt.inner {
+            StmtKind::Let { value, .. } => self.transform_expr_struct_inits(value, substitutor),
+            StmtKind::Expr(e) => self.transform_expr_struct_inits(e, substitutor),
+            StmtKind::Return(Some(e)) => self.transform_expr_struct_inits(e, substitutor),
+            StmtKind::While { cond, body } => {
+                self.transform_expr_struct_inits(cond, substitutor);
+                self.transform_method_body_struct_inits(body, substitutor);
+            }
+            StmtKind::For { iterator, body, .. } => {
+                self.transform_expr_struct_inits(iterator, substitutor);
+                self.transform_method_body_struct_inits(body, substitutor);
+            }
+            StmtKind::Loop { body } => {
+                self.transform_method_body_struct_inits(body, substitutor);
+            }
+            StmtKind::Assign { value, .. } => {
+                self.transform_expr_struct_inits(value, substitutor);
+            }
+            _ => {}
+        }
+    }
+
+    fn transform_expr_struct_inits(&self, expr: &mut crate::compiler::ast::Expr, substitutor: &TypeSubstitutor) {
+        use crate::compiler::ast::ExprKind;
+
+        match &mut expr.inner {
+            ExprKind::BinOp(l, _, r) => {
+                self.transform_expr_struct_inits(l, substitutor);
+                self.transform_expr_struct_inits(r, substitutor);
+            }
+            ExprKind::UnOp(_, e) => self.transform_expr_struct_inits(e, substitutor),
+            ExprKind::MethodCall(obj, _, args) => {
+                self.transform_expr_struct_inits(obj, substitutor);
+                for arg in args.iter_mut() {
+                    self.transform_expr_struct_inits(arg, substitutor);
+                }
+            }
+            ExprKind::FnCall(_, args) => {
+                for arg in args.iter_mut() {
+                    self.transform_expr_struct_inits(arg, substitutor);
+                }
+            }
+            ExprKind::StaticMethodCall(ty, _, args) => {
+                // Recurse into arguments
+                for arg in args.iter_mut() {
+                    self.transform_expr_struct_inits(arg, substitutor);
+                }
+                // Mangle the receiver type (e.g., Vec<T> -> Vec[i64])
+                self.transform_generic_type(ty, substitutor);
+            }
+            ExprKind::EnumInit { payload, .. } => {
+                match payload {
+                    crate::compiler::ast::EnumVariantInit::Tuple(args) => {
+                        for arg in args.iter_mut() {
+                            self.transform_expr_struct_inits(arg, substitutor);
+                        }
+                    }
+                    crate::compiler::ast::EnumVariantInit::Struct(fields) => {
+                        for (_, e) in fields.iter_mut() {
+                            self.transform_expr_struct_inits(e, substitutor);
+                        }
+                    }
+                    crate::compiler::ast::EnumVariantInit::Unit => {}
+                }
+            }
+            ExprKind::Match { expr: match_expr, arms } => {
+                self.transform_expr_struct_inits(match_expr, substitutor);
+                for (_, arm_body) in arms.iter_mut() {
+                    self.transform_expr_struct_inits(arm_body, substitutor);
+                }
+            }
+            ExprKind::Try(inner) => {
+                self.transform_expr_struct_inits(inner, substitutor);
+            }
+            ExprKind::IndexAccess(obj, indices) => {
+                self.transform_expr_struct_inits(obj, substitutor);
+                for idx in indices.iter_mut() {
+                    self.transform_expr_struct_inits(idx, substitutor);
+                }
+            }
+            ExprKind::Tuple(elems) => {
+                for e in elems.iter_mut() {
+                    self.transform_expr_struct_inits(e, substitutor);
+                }
+            }
+            ExprKind::TupleAccess(obj, _) => {
+                self.transform_expr_struct_inits(obj, substitutor);
+            }
+            ExprKind::Closure { body, .. } => {
+                self.transform_method_body_struct_inits(body, substitutor);
+            }
+            ExprKind::FieldAccess(obj, _) => self.transform_expr_struct_inits(obj, substitutor),
+            ExprKind::Block(stmts) => self.transform_method_body_struct_inits(stmts, substitutor),
+            ExprKind::IfExpr(cond, then_block, else_block) => {
+                self.transform_expr_struct_inits(cond, substitutor);
+                self.transform_method_body_struct_inits(then_block, substitutor);
+                if let Some(else_stmts) = else_block {
+                    self.transform_method_body_struct_inits(else_stmts, substitutor);
+                }
+            }
+            ExprKind::StructInit(ty, fields) => {
+                // Recurse into field expressions first
+                for (_, e) in fields.iter_mut() {
+                    self.transform_expr_struct_inits(e, substitutor);
+                }
+                // Resolve generic struct/enum name to concrete mangled name
+                self.transform_generic_type(ty, substitutor);
+            }
+            _ => {}
+        }
+    }
+
+    /// Resolve a generic type name to its concrete mangled name using the substitutor.
+    /// Works for Struct, Enum, Path, and SpecializedType variants.
+    fn transform_generic_type(&self, ty: &mut Type, substitutor: &TypeSubstitutor) {
+        // Handle Path types: convert Path(["Vec"], []) to Struct("Vec", []) first
+        if let Type::Path(segments, generics) = ty {
+            if segments.len() == 1 {
+                let name = &segments[0];
+                // Check struct_defs, enum_defs, and generic_impls (for stdlib types like Vec, HashMap)
+                if self.struct_defs.contains_key(name) || self.generic_impls.contains_key(name) {
+                    *ty = Type::Struct(name.clone(), generics.clone());
+                } else if self.enum_defs.contains_key(name) {
+                    *ty = Type::Enum(name.clone(), generics.clone());
+                }
+            }
+        }
+        let name = match ty {
+            Type::Struct(n, _) | Type::Enum(n, _) => n.clone(),
+            _ => return,
+        };
+
+        // Get generic parameter names from struct_defs, enum_defs, or generic_impls
+        let generic_params = self.get_type_generic_params(&name);
+        if generic_params.is_empty() {
+            return;
+        }
+
+        // Substitute generic params to get concrete types
+        let concrete_args: Vec<Type> = generic_params.iter()
+            .map(|g| {
+                let param_ty = Type::Path(vec![g.clone()], vec![]);
+                let substituted = substitutor.substitute_type(&param_ty);
+                self.normalize_type(&substituted)
+            })
+            .collect();
+
+        // Check if any param remained unresolved (same as input)
+        let all_resolved = concrete_args.iter().zip(generic_params.iter()).all(|(resolved, param)| {
+            !matches!(resolved, Type::Path(segs, _) if segs.len() == 1 && segs[0] == *param)
+        });
+
+        if !all_resolved {
+            return; // Some params couldn't be resolved, don't mangle
+        }
+
+        let mangled = self.mangle_type_name(&name, &concrete_args);
+        match ty {
+            Type::Struct(n, g) => { *n = mangled; g.clear(); }
+            Type::Enum(n, g) => { *n = mangled; g.clear(); }
+            _ => {}
+        }
+    }
+
+    /// Get the generic parameter names for a type from struct_defs, enum_defs, or generic_impls.
+    fn get_type_generic_params(&self, name: &str) -> Vec<String> {
+        // Check struct_defs first
+        if let Some(def) = self.struct_defs.get(name) {
+            if !def.generics.is_empty() {
+                return def.generics.clone();
+            }
+        }
+        // Check enum_defs
+        if let Some(def) = self.enum_defs.get(name) {
+            if !def.generics.is_empty() {
+                return def.generics.clone();
+            }
+        }
+        // Check generic_impls (for stdlib types like Vec, HashMap, Option)
+        if let Some(impls) = self.generic_impls.get(name) {
+            for imp in impls {
+                if !imp.generics.is_empty() {
+                    return imp.generics.clone();
+                }
+            }
+        }
+        vec![]
     }
 
     /// Generate all methods for a specialized type.

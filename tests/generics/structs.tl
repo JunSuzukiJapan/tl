@@ -1,4 +1,3 @@
-// SKIP: Known compiler issue - generic type inference
 struct Box<T> {
     inner: T,
 }

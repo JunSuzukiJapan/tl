@@ -2629,17 +2629,20 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
             }
             ExprKind::Try(inner) => {
-                let (val, ty) = self.compile_expr(inner)?;
-                
+                let (val, raw_ty) = self.compile_expr(inner)?;
+
+                // Normalize SpecializedType -> Enum for Result types
+                let ty = self.normalize_type(&raw_ty);
+
                 // We know it is Result<T, E> from semantics
                 let (ok_ty, err_ty) = if let Type::Enum(_, generics) = &ty {
                     (generics[0].clone(), generics[1].clone())
                 } else {
-                    return Err("Try operator on non-Result type in codegen (should be caught by semantics)".to_string());
+                    return Err(format!("Try operator on non-Result type in codegen: {:?} (should be caught by semantics)", ty));
                 };
-                
+
                 let ptr = val.into_pointer_value();
-                
+
                 // Get Struct Type from Type::Enum
                 let struct_ty = if let Type::Enum(name, generics) = &ty {
                      let mangled = if generics.is_empty() {
@@ -2711,11 +2714,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                 self.emit_retain(err_val, &err_ty)?;
 
                 // Construct Return Value: Result<RetOk, E>::Err(err_val)
-                let func_ret_ty = self.current_fn_return_type.clone().ok_or("Unknown function return type")?;
+                let raw_func_ret_ty = self.current_fn_return_type.clone().ok_or("Unknown function return type")?;
+                let func_ret_ty = self.normalize_type(&raw_func_ret_ty);
                 let func_ok_ty = if let Type::Enum(_, generics) = &func_ret_ty {
                     generics[0].clone()
                 } else {
-                     return Err("Function return type mismatch (expected Result)".to_string());
+                     return Err(format!("Function return type mismatch (expected Result, got {:?})", func_ret_ty));
                 };
                 
                 // We use compile_expr with EnumInit to construct the return value
@@ -4311,12 +4315,45 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         // Non-generic case
         let lookup_name = name.to_string();
-        
+
+        // If the struct is not found in struct_types, try resolving from context.
+        // This handles generic structs (e.g., Container) used inside their own monomorphized impl methods
+        // where the StructInit uses the base name without type arguments.
+        if !self.struct_types.contains_key(&lookup_name) {
+            // Infer from current function name (e.g., tl_Container[i64]_new -> Container[i64]).
+            if let Some(block) = self.builder.get_insert_block() {
+                if let Some(func) = block.get_parent() {
+                    let fn_name = func.get_name().to_str().unwrap_or("");
+                    let prefix = format!("tl_{}", lookup_name);
+                    if fn_name.starts_with(&prefix) {
+                        let after_prefix = &fn_name[prefix.len()..];
+                        if after_prefix.starts_with('[') {
+                            if let Some(bracket_end) = after_prefix.rfind(']') {
+                                let mangled = format!("{}{}", lookup_name, &after_prefix[..=bracket_end]);
+                                if let (Some(&st), Some(sd)) = (self.struct_types.get(&mangled), self.struct_defs.get(&mangled).cloned()) {
+                                    return self.compile_struct_alloc(&mangled, &[], &st, &sd, fields);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         let struct_type = *self
             .struct_types
             .get(&lookup_name)
             .ok_or_else(|| {
-                 format!("Struct type {} not found in codegen", lookup_name)
+                let fn_name = self.builder.get_insert_block()
+                    .and_then(|b| b.get_parent())
+                    .map(|f| f.get_name().to_str().unwrap_or("?").to_string())
+                    .unwrap_or_else(|| "?".to_string());
+                let struct_keys: Vec<String> = self.struct_types.keys()
+                    .filter(|k| k.starts_with(&lookup_name))
+                    .take(5)
+                    .cloned()
+                    .collect();
+                format!("Struct type {} not found in codegen (in function {}, similar keys: {:?})", lookup_name, fn_name, struct_keys)
             })?;
 
         let struct_def = self
@@ -4326,7 +4363,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                  format!("Struct definition {} not found", lookup_name)
             })?
             .clone();
-            
+
         self.compile_struct_alloc(name, generics, &struct_type, &struct_def, fields)
     }
 
@@ -7469,22 +7506,25 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
         }
 
-        // SRET Check
-        // String is a pointer (RefCounted), handled as value return, not SRET.
-        let uses_sret = match &ret_ty {
-            Type::Struct(n, _) => n != "String" && n != "Tensor",
-            _ => false,
-        };
+        // Normalize ret_ty so SpecializedType is resolved for SRET allocation
+        ret_ty = self.normalize_type(&ret_ty);
+
+        // SRET Check: Use the actual LLVM function signature for consistency.
+        // compile_fn_proto names the first parameter "sret" when SRET is used.
+        let uses_sret = func_val.count_params() > 0
+            && func_val.get_first_param()
+                .map(|p| p.get_name().to_str().unwrap_or("") == "sret")
+                .unwrap_or(false);
         let mut sret_ptr = None;
 
         if uses_sret {
              // OLD: Stack Allocation (alloca) -> Causes Stack Corruption
              // NEW: Heap Allocation (malloc + register) -> Correct for RefCounted Structs/SRET
-             
+
              // 1. Get Struct/Enum Type and Size from CodeGen struct_types map
              let (struct_name, generics) = match &ret_ty {
                  Type::Struct(n, g) | Type::Enum(n, g) => (n, g),
-                 _ => return Err("SRET used on non-aggregate type".into()),
+                 _ => return Err(format!("SRET used on non-aggregate type: {:?}", ret_ty)),
              };
              
              let mangled_name = if generics.is_empty() {
@@ -9585,7 +9625,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         let mut dest_val = None;
         let uses_sret = match ret_type {
              Type::Struct(ref name, _) => name != "Tensor" && name != "String",
-             _ => false 
+             _ => false
         };
         if uses_sret {
              if let Some(d) = dest {

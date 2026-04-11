@@ -1,4 +1,3 @@
-// SKIP: Known compiler issue - generic type inference
 struct Container<T> {
     val: T
 }
