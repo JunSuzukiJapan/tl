@@ -799,7 +799,7 @@ pub fn compile_file_list_dir<'ctx>(
     
     // Cast appropriately
     let vec_ty_name = "Vec[String]";
-    let vec_struct_ty = if let Some(ty) = codegen.struct_types.get(vec_ty_name) {
+    let _vec_struct_ty = if let Some(ty) = codegen.struct_types.get(vec_ty_name) {
         *ty
     } else {
         let vec_str_generics = vec![Type::String("String".to_string())];

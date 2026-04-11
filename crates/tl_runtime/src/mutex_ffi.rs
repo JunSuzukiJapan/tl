@@ -77,6 +77,7 @@ pub extern "C" fn tl_mutex_new(size: i64, data_ptr: *mut c_void) -> i64 {
 }
 
 /// The signature of the closure passed to `read` or `modify`
+#[allow(dead_code)]
 type MutexAccessorFn = extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void;
 // The closure returns a pointer (to the modified data) which might be an Opaque pointer or small value packed into pointer space?
 // Wait, generic TL closures return their direct value. But since LLVM doesn't know the generic 

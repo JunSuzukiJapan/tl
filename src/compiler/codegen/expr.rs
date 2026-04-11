@@ -1900,7 +1900,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 
                 // If the found enum_def is still generic, monomorphize with inferred or default types
                 if !enum_def.generics.is_empty() {
-                    let mut actual_generics = inferred_generics.clone();
+                    let actual_generics = inferred_generics.clone();
                     // Generate generic array logic removed. Assuming AOT provides concrete types.
                     if actual_generics.is_empty() {
                          return Err(format!("codegen error: Enum {}::{} lacks generic parameters and type inference could not resolve them. AOT is missing generics.", base_name, variant_name));
@@ -2292,7 +2292,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 Err("ExprKind::Range should only appear in For loops".to_string())
             }
 
-            ExprKind::TypeOf(inner_expr, opt_ty) => {
+            ExprKind::TypeOf(_inner_expr, opt_ty) => {
                 let inner_ty = opt_ty.as_ref().expect("typeof type must be inferred by semantic analyzer");
                 
                 // Pack into Type struct
@@ -3267,7 +3267,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                  // Normalize Path types to Struct/Enum
                  let normalized_ty = self.normalize_type(&ty);
-                 let (name, mut generics) = match &normalized_ty {
+                 let (name, generics) = match &normalized_ty {
                       Type::Struct(name, generics) => (name.clone(), generics.clone()),
                       Type::Enum(name, generics) => (name.clone(), generics.clone()), // Enums might use struct-init syntax?
                       _ => panic!("StructInit type must be Struct or Enum (after normalization), found {:?} (original: {:?})", normalized_ty, ty),
@@ -4848,7 +4848,7 @@ impl<'ctx> CodeGenerator<'ctx> {
     ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
         // Normalize target_type to resolve Path types to Struct/Enum
         let normalized_target = self.normalize_type(target_type);
-        let mut target_type = normalized_target.clone();
+        let target_type = normalized_target.clone();
 
         let target_type = &target_type;
         
@@ -4915,7 +4915,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             // Expected element type T
             let inner_ty = self.extract_inner_ty(&self.normalize_type(target_type));
             
-            let (closure_val, closure_ty) = self.compile_expr(&args[0])?;
+            let (closure_val, _closure_ty) = self.compile_expr(&args[0])?;
             let closure_struct = closure_val.into_struct_value();
             
             let fn_ptr = self.builder.build_extract_value(closure_struct, 0, "fn_ptr").unwrap().into_pointer_value();
@@ -5911,7 +5911,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         let subject_ty = raw_subject_ty.flatten_specialized();
         let (enum_name, raw_generic_args) = match &subject_ty {
             Type::Enum(n, args) | Type::Struct(n, args) => (n, args.clone()),
-            Type::SpecializedType { gen_type, type_args, .. } => return Err("Match on SpecializedType not fully supported yet".into()),
+            Type::SpecializedType { .. } => return Err("Match on SpecializedType not fully supported yet".into()),
             Type::Path(segments, args) => {
                 if let Some(n) = segments.last() {
                     (n, args.clone())
@@ -6400,6 +6400,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         substitutor.substitute_type(ty)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn substitute_current_generics(&self, ty: &Type) -> Type {
         if let Some(subst) = &self.current_method_generics {
             self.substitute_type_simple_bind(ty, subst)
@@ -6872,7 +6873,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         // === Channel.recv() -> T ===
         if method == "recv" && args.len() == 0 {
-            if let Type::Struct(name, type_args) = &obj_ty {
+            if let Type::Struct(name, _type_args) = &obj_ty {
                 if mangle_base_name(name) == "Channel" {
                     let inner_ty = self.extract_inner_ty(&obj_ty);
                     let struct_name = if inner_ty != Type::I64 { self.mangle_type_name("Channel", &[inner_ty.clone()]) } else { name.clone() };

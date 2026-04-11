@@ -231,6 +231,7 @@ pub struct SemanticAnalyzer {
     current_return_type: Option<Type>,             // Expected return type for current function
     current_module: String,                        // Current module prefix (e.g. "a::b")
     loop_depth: usize,      // Track nesting level of loops for break/continue
+    #[allow(dead_code)]
     undefined_counter: u64, // Counter for generating unique Undefined types
 
     // Type Registry for Builtins
@@ -324,8 +325,8 @@ impl SemanticAnalyzer {
     }
 
     fn err<T>(&self, error: SemanticError, span: Option<Span>) -> Result<T, TlError> {
-        if let SemanticError::TypeMismatch { expected, found } = &error {
-            if let Some(s) = &span {
+        if let SemanticError::TypeMismatch { expected: _, found: _ } = &error {
+            if let Some(_s) = &span {
             } else {
             }
         }

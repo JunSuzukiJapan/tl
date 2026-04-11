@@ -1740,7 +1740,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let orig_val_ty = val_ty.clone();
 
                 if matches!(orig_val_ty, Type::Tuple(_)) || matches!(orig_val_ty, Type::Tensor(_, _)) || matches!(orig_val_ty, Type::Struct(_, _)) {
-                     let func_name = self.builder.get_insert_block().and_then(|b| b.get_parent()).map(|f| f.get_name().to_string_lossy().into_owned()).unwrap_or_else(|| "unknown".to_string());
+                     let _func_name = self.builder.get_insert_block().and_then(|b| b.get_parent()).map(|f| f.get_name().to_string_lossy().into_owned()).unwrap_or_else(|| "unknown".to_string());
                 }
                 
                 // Ownership: Shared. The temporary (value) remains in scope and will be released at scope exit.
@@ -2035,7 +2035,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // 1. Try to compile as Addressable L-Value
                 let lvalue_res = self.compile_lvalue_addr(lhs);
                 
-                let (mut val_ir, mut val_ty) = self.compile_expr(value)?;
+                let (mut val_ir, val_ty) = self.compile_expr(value)?;
 
                 // Implicit TraitObject Upcast for Assign
                 if let Ok((_, ref check_lhs_type, _, _)) = lvalue_res {

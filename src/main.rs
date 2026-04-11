@@ -436,14 +436,7 @@ fn main() -> Result<()> {
             std::process::exit(1);
         }
         
-        // DEBUG PRINT
-        for imp in &combined_module.impls {
-            if let tl_lang::compiler::ast::Type::Struct(name, type_args) = &imp.target_type {
-                if name.starts_with("Vec") {
-                    let method_names: Vec<String> = imp.methods.iter().map(|m| m.name.clone()).collect();
-                }
-            }
-        }
+
         // TRACE removed;
 
         // JIT Execution

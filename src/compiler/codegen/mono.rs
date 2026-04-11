@@ -602,7 +602,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 Ok(self.context.struct_type(&[ptr_ty.into(), ptr_ty.into()], false).into())
             }
             
-            Type::SpecializedType { gen_type, mangled_name, .. } => {
+            Type::SpecializedType { gen_type, .. } => {
                 // Monomorphized generic type - dispatch based on original kind
                 if gen_type.is_enum_type() || gen_type.is_struct_type() {
                     Ok(self.context.ptr_type(AddressSpace::default()).into())
@@ -1277,7 +1277,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Generate each method
         for imp in &impls {
             if base_name == "Vec" {
-                let method_names: Vec<String> = imp.methods.iter().map(|m| m.name.clone()).collect();
+                let _method_names: Vec<String> = imp.methods.iter().map(|m| m.name.clone()).collect();
             }
             for method in &imp.methods {
                 // Check trait bounds before attempting monomorphization

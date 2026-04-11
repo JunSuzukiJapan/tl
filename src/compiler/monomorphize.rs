@@ -593,7 +593,7 @@ impl Monomorphizer {
                  }
                  return;
              }
-              ExprKind::EnumInit { enum_name, variant_name, generics, payload } => {
+              ExprKind::EnumInit { enum_name, variant_name: _, generics, payload } => {
                    // Check if all generics are unresolved (empty or all Undefined)
                    let needs_inference = generics.is_empty() || 
                        generics.iter().all(|t| matches!(t, Type::Undefined(_)));
@@ -1201,7 +1201,7 @@ impl Monomorphizer {
          for ni in &new_impls {
              if let Type::Struct(n, _) = &ni.target_type {
                  if n.starts_with("Vec") {
-                     let method_names: Vec<String> = ni.methods.iter().map(|m| m.name.clone()).collect();
+                     let _method_names: Vec<String> = ni.methods.iter().map(|m| m.name.clone()).collect();
                  }
              }
          }

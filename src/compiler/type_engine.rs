@@ -131,7 +131,7 @@ impl TypeEngine {
             }
             // Dynamic language feature: Entity works with everything during compile time inference
             (Type::Entity, _) | (_, Type::Entity) => true,
-            (a, b) => {
+            (_a, _b) => {
                 false
             }
         }
