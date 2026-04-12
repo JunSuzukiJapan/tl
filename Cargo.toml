@@ -2,6 +2,7 @@
 name = "tl-lang"
 version = "0.4.7"
 edition = "2024"
+default-run = "tl"
 build = "build.rs"
 license = "MIT"
 description = "A differentiable programming language with tensor support for machine learning"

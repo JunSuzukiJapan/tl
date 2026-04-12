@@ -231,7 +231,7 @@ pub struct SemanticAnalyzer {
     current_return_type: Option<Type>,             // Expected return type for current function
     current_module: String,                        // Current module prefix (e.g. "a::b")
     loop_depth: usize,      // Track nesting level of loops for break/continue
-    undefined_counter: u64, // Counter for generating unique Undefined types
+    // undefined_counter: u64, // Counter for generating unique Undefined types
 
     // Type Registry for Builtins
     type_manager: TypeManager,
@@ -289,7 +289,7 @@ impl SemanticAnalyzer {
             current_module: String::new(),
             loop_depth: 0,
 
-            undefined_counter: 0,
+            // undefined_counter: 0,
             type_manager: TypeManager::new(),
             type_engine: TypeEngine::new(),
             traits: HashMap::new(),

@@ -3,7 +3,7 @@ fn main() {
     let mut module = tl_lang::compiler::parser::parse_from_source(&source).unwrap();
     
     // Load builtins like main.rs
-    let mut builtins = tl_lang::compiler::parser::parse_from_source(tl_lang::compiler::codegen::builtin_types::non_generic::time_types::SOURCE_DURATION).unwrap();
+    let builtins = tl_lang::compiler::parser::parse_from_source(tl_lang::compiler::codegen::builtin_types::non_generic::time_types::SOURCE_DURATION).unwrap();
     module.structs.extend(builtins.structs);
     module.impls.extend(builtins.impls);
     module.functions.extend(builtins.functions);

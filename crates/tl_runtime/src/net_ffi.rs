@@ -1,9 +1,10 @@
 use std::collections::HashMap;
+use std::ffi::CStr;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::ffi::{CStr, CString};
+
 use crate::string_ffi::StringStruct;
 
 #[repr(C)]

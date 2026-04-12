@@ -2284,7 +2284,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 Err("ExprKind::Range should only appear in For loops".to_string())
             }
 
-            ExprKind::TypeOf(inner_expr, opt_ty) => {
+            ExprKind::TypeOf(_inner_expr, opt_ty) => {
                 let inner_ty = opt_ty.as_ref().expect("typeof type must be inferred by semantic analyzer");
                 
                 // Pack into Type struct
@@ -4882,7 +4882,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 Type::I64
             };
             
-            let (closure_val, closure_ty) = self.compile_expr(&args[0])?;
+            let (closure_val, _closure_ty) = self.compile_expr(&args[0])?;
             let closure_struct = closure_val.into_struct_value();
             
             let fn_ptr = self.builder.build_extract_value(closure_struct, 0, "fn_ptr").unwrap().into_pointer_value();

@@ -590,7 +590,7 @@ pub fn compile_file_read_binary<'ctx>(
     // Vec is a generic type, so we need to ensure it's monomorphized first
     // Note: mangle_type_name returns "Vec[u8]" format (square brackets)
     let vec_ty_name = "Vec[u8]";
-    let vec_struct_ty = if let Some(ty) = codegen.struct_types.get(vec_ty_name) {
+    let _vec_struct_ty = if let Some(ty) = codegen.struct_types.get(vec_ty_name) {
         *ty
     } else {
         // Monomorphize Vec<u8> on-demand
@@ -754,7 +754,7 @@ pub fn compile_file_list_dir<'ctx>(
     
     // Cast appropriately
     let vec_ty_name = "Vec[String]";
-    let vec_struct_ty = if let Some(ty) = codegen.struct_types.get(vec_ty_name) {
+    let _vec_struct_ty = if let Some(ty) = codegen.struct_types.get(vec_ty_name) {
         *ty
     } else {
         let vec_str_generics = vec![Type::String("String".to_string())];

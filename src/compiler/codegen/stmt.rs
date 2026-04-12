@@ -2033,7 +2033,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
                 let compile_res = self.compile_expr(value);
                 self.expected_type_stack.pop();
-                let (mut val_ir, mut val_ty) = compile_res?;
+                let (mut val_ir, val_ty) = compile_res?;
 
                 // Implicit TraitObject Upcast for Assign
                 if let Ok((_, ref check_lhs_type, _, _)) = lvalue_res {

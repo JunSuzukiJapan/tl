@@ -513,7 +513,7 @@ impl Monomorphizer {
                  }
                  return;
              }
-              ExprKind::EnumInit { enum_name, variant_name, generics, payload } => {
+              ExprKind::EnumInit { enum_name, variant_name: _, generics, payload } => {
                    // Check if all generics are unresolved (empty or all Undefined)
                    let needs_inference = generics.is_empty() || 
                        generics.iter().all(|t| matches!(t, Type::Undefined(_)));
