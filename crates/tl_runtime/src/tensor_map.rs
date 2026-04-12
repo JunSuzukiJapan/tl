@@ -163,8 +163,17 @@ pub extern "C" fn tl_tensor_map_load(path: *mut StringStruct) -> *mut OpaqueTens
         let path_str = std::str::from_utf8(slice).unwrap_or_default();
         let path_buf = crate::file_io::expand_path(path_str);
 
+        // ファイルの存在確認と読み込み
+        let file_data = match std::fs::read(&path_buf) {
+            Ok(data) => data,
+            Err(e) => {
+                eprintln!("Failed to read file {:?}: {}", path_buf, e);
+                return std::ptr::null_mut();
+            }
+        };
+
         // safetensors ファイルを読み込み
-        match safetensors::SafeTensors::deserialize(&std::fs::read(&path_buf).unwrap_or_default()) {
+        match safetensors::SafeTensors::deserialize(&file_data) {
             Ok(tensors) => {
                 let mut entries = HashMap::new();
                 for (name, view) in tensors.tensors() {
