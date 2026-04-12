@@ -2035,14 +2035,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // 1. Try to compile as Addressable L-Value
                 let lvalue_res = self.compile_lvalue_addr(lhs);
                 
-                if let Ok((_, ref lhs_type, _, _)) = lvalue_res {
-                    self.expected_type_stack.push(Some(lhs_type.clone()));
-                } else {
-                    self.expected_type_stack.push(None);
-                }
-                let compile_res = self.compile_expr(value);
-                self.expected_type_stack.pop();
-                let (mut val_ir, val_ty) = compile_res?;
+                let (mut val_ir, val_ty) = self.compile_expr(value)?;
 
                 // Implicit TraitObject Upcast for Assign
                 if let Ok((_, ref check_lhs_type, _, _)) = lvalue_res {
