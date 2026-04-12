@@ -151,6 +151,8 @@ fn inference(model: Transformer, tests: i64) {
     let P_arr = [p0, p1, p2, p3, p4, p5, p6, p7, p8, p9];
     let P_t = P_arr.reshape([1, 10]);
 
+    let mut correct_count = 0;
+
     for t in range(0, tests) {
         let d1 = get_random_digit();
         let d2 = get_random_digit();
@@ -181,7 +183,25 @@ fn inference(model: Transformer, tests: i64) {
         
         print("Model Predictions (positions 4,5,6,7):");
         print([pred_4, pred_5, pred_6, pred_7]);
+        
+        let d4_i = d4 as i64;
+        let d3_i = d3 as i64;
+        let d2_i = d2 as i64;
+        let d1_i = d1 as i64;
+        
+        if pred_4 == d4_i && pred_5 == d3_i && pred_6 == d2_i && pred_7 == d1_i {
+            print("Result: HIT");
+            correct_count = correct_count + 1;
+        } else {
+            print("Result: MISS");
+        }
     }
+
+    print("Inference Complete.");
+    print("Accuracy:");
+    print(correct_count);
+    print("Correct out of");
+    print(tests);
 }
 
 fn main() {
