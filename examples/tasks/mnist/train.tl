@@ -5,8 +5,17 @@ fn main() {
     print("=== MNIST Training (MLP) ===");
     Param::set_device(Device::Auto);
     
-    let train_x = load_mnist_images("examples/tasks/mnist/data/train-images-idx3-ubyte");
-    let train_y = load_mnist_labels("examples/tasks/mnist/data/train-labels-idx1-ubyte");
+    let mut train_img_path = "examples/tasks/mnist/data/train-images-idx3-ubyte";
+    if File::exists("data/train-images-idx3-ubyte") {
+        train_img_path = "data/train-images-idx3-ubyte";
+    }
+    let mut train_lbl_path = "examples/tasks/mnist/data/train-labels-idx1-ubyte";
+    if File::exists("data/train-labels-idx1-ubyte") {
+        train_lbl_path = "data/train-labels-idx1-ubyte";
+    }
+    
+    let train_x = load_mnist_images(train_img_path).unwrap();
+    let train_y = load_mnist_labels(train_lbl_path).unwrap();
     
     // 2-layer MLP: 784 -> 256 -> 10
     let mut model = MLP::new(784, 256, 10);

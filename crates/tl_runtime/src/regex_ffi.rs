@@ -1,7 +1,6 @@
 //! Regex FFI bindings using ID registry
 use std::collections::HashMap;
 use std::ffi::CStr;
-
 use std::sync::Mutex;
 use once_cell::sync::Lazy;
 use regex::Regex;

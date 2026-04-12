@@ -143,7 +143,7 @@ impl GPT {
     } 
 }
 
-fn inference(model: GPT, i: i64, j: i64) {
+fn inference(model: GPT, i: i64, j: i64) -> i64 {
     let sum = i + j;
     
     let i_d10 = i / 10;
@@ -192,9 +192,11 @@ fn inference(model: GPT, i: i64, j: i64) {
     print("Pred  : "); print(pred_sum);
     
     if sum == pred_sum {
-        print("Result: OK");
+        print("Result: HIT");
+        return 1;
     } else {
-        print("Result: FAIL");
+        print("Result: MISS");
+        return 0;
     }
 }
 
@@ -204,10 +206,16 @@ fn main() {
     Param::load(model, "model_add.safetensors");
     print("Model loaded successfully.");
 
-    inference(model, 12, 34);
-    inference(model, 99, 1);
-    inference(model, 45, 55);
-    inference(model, 8, 9);
-    inference(model, 73, 27);
-    inference(model, 66, 88);
+    let mut correct_count = 0;
+    correct_count = correct_count + inference(model, 12, 34);
+    correct_count = correct_count + inference(model, 99, 1);
+    correct_count = correct_count + inference(model, 45, 55);
+    correct_count = correct_count + inference(model, 8, 9);
+    correct_count = correct_count + inference(model, 73, 27);
+    correct_count = correct_count + inference(model, 66, 88);
+    
+    print("Inference Complete.");
+    print("Accuracy:");
+    print(correct_count);
+    print("Correct out of 6");
 }

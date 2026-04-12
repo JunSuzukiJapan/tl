@@ -107,9 +107,9 @@ impl<'ctx> CodeGenerator<'ctx> {
             let ns = full_substitutor.substitute_stmt(s);
             if let crate::compiler::ast::StmtKind::Let { name, type_annotation, .. } = &s.inner {
                  if name == "result" {
-                      println!("[MONO] var={} orig_ta={:?}", name, type_annotation);
+                      eprintln!("[MONO] var={} orig_ta={:?}", name, type_annotation);
                       if let crate::compiler::ast::StmtKind::Let { type_annotation: n_ta, .. } = &ns.inner {
-                           println!("[MONO] var={} new_ta={:?} subst={:?}", name, n_ta, subst_map);
+                           eprintln!("[MONO] var={} new_ta={:?} subst={:?}", name, n_ta, subst_map);
                       }
                  }
             }
@@ -117,9 +117,12 @@ impl<'ctx> CodeGenerator<'ctx> {
         }).collect();
         
         // Transform StaticMethodCall to EnumInit for enum variant constructors
-
         self.transform_method_body_enum_inits(&mut new_method.body);
-        
+
+        // Transform StructInit names: resolve generic struct names to mangled concrete names
+        // e.g., StructInit(Struct("Container", []), ...) -> StructInit(Struct("Container[i64]", []), ...)
+        self.transform_method_body_struct_inits(&mut new_method.body, &full_substitutor);
+
         // Compile
         // Save current builder position
         let previous_block = self.builder.get_insert_block();
@@ -198,12 +201,15 @@ impl<'ctx> CodeGenerator<'ctx> {
         new_func.return_type = substitutor.substitute_type(&new_func.return_type);
         // Substitute body
         new_func.body = new_func.body.iter().map(|s| substitutor.substitute_stmt(s)).collect();
-        
+
+        // Transform StructInit names in generic function body
+        self.transform_method_body_struct_inits(&mut new_func.body, &substitutor);
+
         // 7. Compile
         // Need to register proto first (for recursion support etc)
         self.compile_fn_proto(&new_func)?;
         self.pending_functions.push((new_func, Some(subst_map)));
-        
+
         Ok(mangled_name)
     }
 
@@ -436,8 +442,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                     self.mangle_type_name(name, args)
                 }
             }
-            Type::UnifiedType { mangled_name, .. } => {
-                mangled_name.clone()
+            Type::SpecializedType { gen_type, .. } => {
+                gen_type.mangled_name_or_name().unwrap_or("specialized").to_string()
             }
 
             Type::Tensor(inner, rank) => {
@@ -596,6 +602,16 @@ impl<'ctx> CodeGenerator<'ctx> {
                 Ok(self.context.struct_type(&[ptr_ty.into(), ptr_ty.into()], false).into())
             }
             
+            Type::SpecializedType { gen_type, .. } => {
+                // Monomorphized generic type - dispatch based on original kind
+                if gen_type.is_enum_type() || gen_type.is_struct_type() {
+                    Ok(self.context.ptr_type(AddressSpace::default()).into())
+                } else {
+                    // Fallback: try to resolve via mangled_name
+                    Ok(self.context.ptr_type(AddressSpace::default()).into())
+                }
+            }
+            
             _ => {
                 // strict NO IMPLICIT FALLBACK rule: returning explicitly failed types to prevent undefined behavior
                 Err(format!("get_llvm_type: compilation error, unhandled or unresolved type {:?}", ty))
@@ -702,7 +718,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 inner_args.iter().any(|a| Self::is_unresolved_generic(a))
             }
             Type::Enum(_, inner_args) => inner_args.iter().any(|a| Self::is_unresolved_generic(a)),
-            Type::UnifiedType { type_args, .. } => type_args.iter().any(|a| Self::is_unresolved_generic(a)),
+            Type::SpecializedType { type_args, .. } => type_args.iter().any(|a| Self::is_unresolved_generic(a)),
             Type::Tuple(types) => types.iter().any(|a| Self::is_unresolved_generic(a)),
             Type::Undefined(_) => true,
             _ => false,
@@ -727,11 +743,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let unified_args: Vec<Type> = args.iter()
                     .map(|a| self.to_unified_type_if_generic(a.clone()))
                     .collect();
-                Type::UnifiedType {
-                    base_name: base,
+                Type::SpecializedType {
+                    gen_type: Box::new(if is_enum { Type::Enum(base, vec![]) } else { Type::Struct(base, vec![]) }),
                     type_args: unified_args,
+                    type_map: vec![], // Type map is not always available here, but we pass unified_args
                     mangled_name: mangled,
-                    is_enum,
                 }
             }
             Type::Struct(name, args) if args.is_empty() => {
@@ -752,11 +768,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let unified_args: Vec<Type> = args.iter()
                     .map(|a| self.to_unified_type_if_generic(a.clone()))
                     .collect();
-                Type::UnifiedType {
-                    base_name: base,
+                Type::SpecializedType {
+                    gen_type: Box::new(Type::Enum(base, vec![])),
                     type_args: unified_args,
+                    type_map: vec![],
                     mangled_name: mangled,
-                    is_enum: true,
                 }
             }
             Type::Tuple(types) => {
@@ -822,13 +838,13 @@ impl<'ctx> CodeGenerator<'ctx> {
             },
             Type::Ptr(inner) => Type::Ptr(Box::new(self.substitute_type(inner, subst))),
             Type::Array(inner, size) => Type::Array(Box::new(self.substitute_type(inner, subst)), *size),
-            Type::UnifiedType { base_name, type_args, mangled_name, is_enum } => {
+            Type::SpecializedType { gen_type, type_args, type_map, mangled_name } => {
                 let new_args: Vec<Type> = type_args.iter().map(|a| self.substitute_type(a, subst)).collect();
-                Type::UnifiedType {
-                    base_name: base_name.clone(),
+                Type::SpecializedType {
+                    gen_type: gen_type.clone(),
                     type_args: new_args,
+                    type_map: type_map.clone(),
                     mangled_name: mangled_name.clone(),
-                    is_enum: *is_enum,
                 }
             }
             _ => ty.clone(),
@@ -873,14 +889,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let normalized_args: Vec<Type> = args.iter().map(|a| self.normalize_type(a)).collect();
                 Type::Enum(name.clone(), normalized_args)
             }
-            Type::UnifiedType { base_name, type_args, mangled_name: _, is_enum } => {
-                // Flatten UnifiedType to Struct/Enum.
-                // Always use base_name so that generic matching works correctly.
+            Type::SpecializedType { gen_type, type_args, type_map: _, mangled_name } => {
                 let normalized_args: Vec<Type> = type_args.iter().map(|a| self.normalize_type(a)).collect();
-                if *is_enum {
-                    Type::Enum(base_name.clone(), normalized_args)
+                if gen_type.is_enum_type() {
+                    Type::Enum(mangled_name.clone(), normalized_args)
                 } else {
-                    Type::Struct(base_name.clone(), normalized_args)
+                    Type::Struct(mangled_name.clone(), normalized_args)
                 }
             }
             Type::Tensor(inner, rank) => Type::Tensor(Box::new(self.normalize_type(inner)), *rank),
@@ -1048,6 +1062,205 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
     }
 
+    // ========== AST Transformation for StructInit in monomorphized methods ==========
+
+    fn transform_method_body_struct_inits(&self, stmts: &mut Vec<crate::compiler::ast::Stmt>, substitutor: &TypeSubstitutor) {
+        for stmt in stmts.iter_mut() {
+            self.transform_stmt_struct_inits(stmt, substitutor);
+        }
+    }
+
+    fn transform_stmt_struct_inits(&self, stmt: &mut crate::compiler::ast::Stmt, substitutor: &TypeSubstitutor) {
+        use crate::compiler::ast::StmtKind;
+        match &mut stmt.inner {
+            StmtKind::Let { value, .. } => self.transform_expr_struct_inits(value, substitutor),
+            StmtKind::Expr(e) => self.transform_expr_struct_inits(e, substitutor),
+            StmtKind::Return(Some(e)) => self.transform_expr_struct_inits(e, substitutor),
+            StmtKind::While { cond, body } => {
+                self.transform_expr_struct_inits(cond, substitutor);
+                self.transform_method_body_struct_inits(body, substitutor);
+            }
+            StmtKind::For { iterator, body, .. } => {
+                self.transform_expr_struct_inits(iterator, substitutor);
+                self.transform_method_body_struct_inits(body, substitutor);
+            }
+            StmtKind::Loop { body } => {
+                self.transform_method_body_struct_inits(body, substitutor);
+            }
+            StmtKind::Assign { value, .. } => {
+                self.transform_expr_struct_inits(value, substitutor);
+            }
+            _ => {}
+        }
+    }
+
+    fn transform_expr_struct_inits(&self, expr: &mut crate::compiler::ast::Expr, substitutor: &TypeSubstitutor) {
+        use crate::compiler::ast::ExprKind;
+
+        match &mut expr.inner {
+            ExprKind::BinOp(l, _, r) => {
+                self.transform_expr_struct_inits(l, substitutor);
+                self.transform_expr_struct_inits(r, substitutor);
+            }
+            ExprKind::UnOp(_, e) => self.transform_expr_struct_inits(e, substitutor),
+            ExprKind::MethodCall(obj, _, args) => {
+                self.transform_expr_struct_inits(obj, substitutor);
+                for arg in args.iter_mut() {
+                    self.transform_expr_struct_inits(arg, substitutor);
+                }
+            }
+            ExprKind::FnCall(_, args) => {
+                for arg in args.iter_mut() {
+                    self.transform_expr_struct_inits(arg, substitutor);
+                }
+            }
+            ExprKind::StaticMethodCall(ty, _, args) => {
+                // Recurse into arguments
+                for arg in args.iter_mut() {
+                    self.transform_expr_struct_inits(arg, substitutor);
+                }
+                // Mangle the receiver type (e.g., Vec<T> -> Vec[i64])
+                self.transform_generic_type(ty, substitutor);
+            }
+            ExprKind::EnumInit { payload, .. } => {
+                match payload {
+                    crate::compiler::ast::EnumVariantInit::Tuple(args) => {
+                        for arg in args.iter_mut() {
+                            self.transform_expr_struct_inits(arg, substitutor);
+                        }
+                    }
+                    crate::compiler::ast::EnumVariantInit::Struct(fields) => {
+                        for (_, e) in fields.iter_mut() {
+                            self.transform_expr_struct_inits(e, substitutor);
+                        }
+                    }
+                    crate::compiler::ast::EnumVariantInit::Unit => {}
+                }
+            }
+            ExprKind::Match { expr: match_expr, arms } => {
+                self.transform_expr_struct_inits(match_expr, substitutor);
+                for (_, arm_body) in arms.iter_mut() {
+                    self.transform_expr_struct_inits(arm_body, substitutor);
+                }
+            }
+            ExprKind::Try(inner) => {
+                self.transform_expr_struct_inits(inner, substitutor);
+            }
+            ExprKind::IndexAccess(obj, indices) => {
+                self.transform_expr_struct_inits(obj, substitutor);
+                for idx in indices.iter_mut() {
+                    self.transform_expr_struct_inits(idx, substitutor);
+                }
+            }
+            ExprKind::Tuple(elems) => {
+                for e in elems.iter_mut() {
+                    self.transform_expr_struct_inits(e, substitutor);
+                }
+            }
+            ExprKind::TupleAccess(obj, _) => {
+                self.transform_expr_struct_inits(obj, substitutor);
+            }
+            ExprKind::Closure { body, .. } => {
+                self.transform_method_body_struct_inits(body, substitutor);
+            }
+            ExprKind::FieldAccess(obj, _) => self.transform_expr_struct_inits(obj, substitutor),
+            ExprKind::Block(stmts) => self.transform_method_body_struct_inits(stmts, substitutor),
+            ExprKind::IfExpr(cond, then_block, else_block) => {
+                self.transform_expr_struct_inits(cond, substitutor);
+                self.transform_method_body_struct_inits(then_block, substitutor);
+                if let Some(else_stmts) = else_block {
+                    self.transform_method_body_struct_inits(else_stmts, substitutor);
+                }
+            }
+            ExprKind::StructInit(ty, fields) => {
+                // Recurse into field expressions first
+                for (_, e) in fields.iter_mut() {
+                    self.transform_expr_struct_inits(e, substitutor);
+                }
+                // Resolve generic struct/enum name to concrete mangled name
+                self.transform_generic_type(ty, substitutor);
+            }
+            _ => {}
+        }
+    }
+
+    /// Resolve a generic type name to its concrete mangled name using the substitutor.
+    /// Works for Struct, Enum, Path, and SpecializedType variants.
+    fn transform_generic_type(&self, ty: &mut Type, substitutor: &TypeSubstitutor) {
+        // Handle Path types: convert Path(["Vec"], []) to Struct("Vec", []) first
+        if let Type::Path(segments, generics) = ty {
+            if segments.len() == 1 {
+                let name = &segments[0];
+                // Check struct_defs, enum_defs, and generic_impls (for stdlib types like Vec, HashMap)
+                if self.struct_defs.contains_key(name) || self.generic_impls.contains_key(name) {
+                    *ty = Type::Struct(name.clone(), generics.clone());
+                } else if self.enum_defs.contains_key(name) {
+                    *ty = Type::Enum(name.clone(), generics.clone());
+                }
+            }
+        }
+        let name = match ty {
+            Type::Struct(n, _) | Type::Enum(n, _) => n.clone(),
+            _ => return,
+        };
+
+        // Get generic parameter names from struct_defs, enum_defs, or generic_impls
+        let generic_params = self.get_type_generic_params(&name);
+        if generic_params.is_empty() {
+            return;
+        }
+
+        // Substitute generic params to get concrete types
+        let concrete_args: Vec<Type> = generic_params.iter()
+            .map(|g| {
+                let param_ty = Type::Path(vec![g.clone()], vec![]);
+                let substituted = substitutor.substitute_type(&param_ty);
+                self.normalize_type(&substituted)
+            })
+            .collect();
+
+        // Check if any param remained unresolved (same as input)
+        let all_resolved = concrete_args.iter().zip(generic_params.iter()).all(|(resolved, param)| {
+            !matches!(resolved, Type::Path(segs, _) if segs.len() == 1 && segs[0] == *param)
+        });
+
+        if !all_resolved {
+            return; // Some params couldn't be resolved, don't mangle
+        }
+
+        let mangled = self.mangle_type_name(&name, &concrete_args);
+        match ty {
+            Type::Struct(n, g) => { *n = mangled; g.clear(); }
+            Type::Enum(n, g) => { *n = mangled; g.clear(); }
+            _ => {}
+        }
+    }
+
+    /// Get the generic parameter names for a type from struct_defs, enum_defs, or generic_impls.
+    fn get_type_generic_params(&self, name: &str) -> Vec<String> {
+        // Check struct_defs first
+        if let Some(def) = self.struct_defs.get(name) {
+            if !def.generics.is_empty() {
+                return def.generics.clone();
+            }
+        }
+        // Check enum_defs
+        if let Some(def) = self.enum_defs.get(name) {
+            if !def.generics.is_empty() {
+                return def.generics.clone();
+            }
+        }
+        // Check generic_impls (for stdlib types like Vec, HashMap, Option)
+        if let Some(impls) = self.generic_impls.get(name) {
+            for imp in impls {
+                if !imp.generics.is_empty() {
+                    return imp.generics.clone();
+                }
+            }
+        }
+        vec![]
+    }
+
     /// Generate all methods for a specialized type.
     /// This is called at the end of compilation to ensure all methods are generated.
     pub fn generate_methods_for_specialized_type(
@@ -1063,6 +1276,9 @@ impl<'ctx> CodeGenerator<'ctx> {
         
         // Generate each method
         for imp in &impls {
+            if base_name == "Vec" {
+                let _method_names: Vec<String> = imp.methods.iter().map(|m| m.name.clone()).collect();
+            }
             for method in &imp.methods {
                 // Check trait bounds before attempting monomorphization
                 if !self.check_method_trait_bounds(method, type_args, &imp.generics) {
@@ -1102,6 +1318,10 @@ impl<'ctx> CodeGenerator<'ctx> {
         type_args: &[Type],
         impl_generics: &[String],
     ) -> bool {
+        // DEBUG
+        if method.name == "index_of" || method.name == "contains" {
+        }
+        
         // If no bounds, always satisfied
         if method.generic_bounds.is_empty() {
             if let Some(ref wc) = method.where_clause {
@@ -1113,7 +1333,23 @@ impl<'ctx> CodeGenerator<'ctx> {
                     
                     for bound in &pred.bounds {
                         let trait_impls = self.trait_registry.get(&type_name);
-                        if !trait_impls.map_or(false, |traits| traits.contains(&bound.trait_name)) {
+                        let mut satisfied = trait_impls.map_or(false, |traits| traits.contains(&bound.trait_name));
+                        
+                        // Primitive trait bound whitelist fallback
+                        if !satisfied {
+                            satisfied = match type_name.as_str() {
+                                "i64" | "f64" | "i32" | "f32" | "u8" | "char" | "bool" | "String" => {
+                                    match bound.trait_name.as_str() {
+                                        "PartialEq" | "Clone" => true,
+                                        "PartialOrd" => type_name != "String" && type_name != "bool",
+                                        _ => false,
+                                    }
+                                }
+                                _ => false,
+                            };
+                        }
+                        
+                        if !satisfied {
                             return false;
                         }
                     }
@@ -1129,7 +1365,23 @@ impl<'ctx> CodeGenerator<'ctx> {
             
             for bound in bounds {
                 let trait_impls = self.trait_registry.get(&type_name);
-                if !trait_impls.map_or(false, |traits| traits.contains(&bound.trait_name)) {
+                let mut satisfied = trait_impls.map_or(false, |traits| traits.contains(&bound.trait_name));
+                
+                // Primitive trait bound whitelist fallback
+                if !satisfied {
+                    satisfied = match type_name.as_str() {
+                        "i64" | "f64" | "i32" | "f32" | "u8" | "char" | "bool" | "String" => {
+                            match bound.trait_name.as_str() {
+                                "PartialEq" | "Clone" => true,
+                                "PartialOrd" => type_name != "String" && type_name != "bool",
+                                _ => false,
+                            }
+                        }
+                        _ => false,
+                    };
+                }
+                
+                if !satisfied {
                     return false;
                 }
             }
@@ -1163,7 +1415,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             Type::String(_) => "String".to_string(),
             Type::Struct(name, _) => name.clone(),
             Type::Enum(name, _) => name.clone(),
-            Type::UnifiedType { base_name, .. } => base_name.clone(),
+            Type::SpecializedType { gen_type, .. } => gen_type.get_base_name(),
             _ => format!("{:?}", ty),
         }
     }

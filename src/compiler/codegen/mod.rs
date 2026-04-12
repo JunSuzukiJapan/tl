@@ -68,7 +68,6 @@ pub struct CodeGenerator<'ctx> {
     /// Used to check trait bounds during monomorphization.
     pub(crate) trait_registry: HashMap<String, std::collections::HashSet<String>>,
     pub(crate) closure_counter: usize,
-    pub(crate) expected_type_stack: Vec<Option<Type>>,
 }
 
 impl<'ctx> CodeGenerator<'ctx> {
@@ -125,7 +124,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                 reg
             },
             closure_counter: 0,
-            expected_type_stack: Vec::new(),
         };
 
         // Register all methods (instance and static)
@@ -153,7 +151,6 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         codegen.register_builtin_return_types();
         
-        eprintln!("DEBUG: Has KVCache in struct_defs: {}", codegen.struct_defs.contains_key("KVCache"));
 
         codegen
     }
@@ -185,15 +182,12 @@ impl<'ctx> CodeGenerator<'ctx> {
 
     pub fn jit_execute(&self, function_name: &str) -> Result<u64, String> {
         unsafe {
-            eprintln!("[DEBUG jit_execute] getting function: {}", function_name);
             let function = self
                 .execution_engine
                 .get_function::<unsafe extern "C" fn() -> u64>(function_name)
                 .map_err(|e| format!("JIT compile error: {}", e))?;
-            eprintln!("[DEBUG jit_execute] function obtained, calling...");
             self.module.print_to_file("debug.ll").ok();
             let result = function.call();
-            eprintln!("[DEBUG jit_execute] function returned: {}", result);
             Ok(result)
         }
     }
@@ -844,7 +838,6 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         // Pass 2: Body
         for s in structs {
-            if s.name == "KVCache" { eprintln!("DEBUG: Compiling body for KVCache"); }
             if !s.generics.is_empty() {
                 continue;
             }
@@ -907,6 +900,18 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                     Type::Enum(_, _) => {
                         // Enum types are always pointers
+                        self.context
+                            .ptr_type(inkwell::AddressSpace::default())
+                            .into()
+                    }
+
+                    Type::SpecializedType { mangled_name, .. } => {
+                        // SpecializedType (monomorphized generic) - look up by mangled name
+                        let _is_zst = if let Some(def) = self.struct_defs.get(mangled_name.as_str()) {
+                            def.fields.is_empty()
+                        } else {
+                            false // May be an enum or forward decl, just use pointer
+                        };
                         self.context
                             .ptr_type(inkwell::AddressSpace::default())
                             .into()
@@ -1036,7 +1041,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 .ptr_type(inkwell::AddressSpace::default())
                                 .into()
                         }
-                        Type::UnifiedType { .. } => {
+                        Type::SpecializedType { .. } => {
                             // UnifiedType (generic struct/enum) are objects, use pointer
                             self.context
                                 .ptr_type(inkwell::AddressSpace::default())
@@ -1104,6 +1109,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Extract concrete type args from target_type
         let type_args = match &imp.target_type {
             Type::Struct(_, args) | Type::Enum(_, args) => args.clone(),
+            Type::SpecializedType { type_args, .. } => type_args.clone(),
             _ => vec![],
         };
 
@@ -1113,9 +1119,24 @@ impl<'ctx> CodeGenerator<'ctx> {
             let type_name = self.concrete_type_to_trait_key(&concrete_type);
 
             for bound in &pred.bounds {
-                let has_trait = self.trait_registry
+                let mut has_trait = self.trait_registry
                     .get(&type_name)
                     .map_or(false, |traits| traits.contains(&bound.trait_name));
+                    
+                // Primitive trait bound whitelist fallback
+                if !has_trait {
+                    has_trait = match type_name.as_str() {
+                        "i64" | "f64" | "i32" | "f32" | "u8" | "char" | "bool" | "String" => {
+                            match bound.trait_name.as_str() {
+                                "PartialEq" | "Clone" => true,
+                                "PartialOrd" => type_name != "String" && type_name != "bool",
+                                _ => false,
+                            }
+                        }
+                        _ => false,
+                    };
+                }
+
                 if !has_trait {
                     return true; // Bounds not satisfied, skip this method
                 }
@@ -1128,7 +1149,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Pass 1: Declare all methods (Prototypes) and register return types
         for imp in impls {
             // Check if generic impl
-            let _target_name = imp.target_type.get_base_name();
+            let _target_name = imp.target_type.mangled_name_or_name().unwrap_or("").to_string();
             
             // Skip if formal generics are present
             if !imp.generics.is_empty() {
@@ -1160,7 +1181,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     continue;
                 }
 
-                let target_name = imp.target_type.get_base_name();
+                let target_name = imp.target_type.mangled_name_or_name().unwrap_or("").to_string();
                 let simple_target = &target_name;
                 let mangled_name = if method.is_extern {
                     format!("tl_{}_{}", simple_target.to_lowercase(), method.name)
@@ -1198,7 +1219,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         }
                     } else {
                         arg_ty.clone()
-                    };
+                    }.flatten_specialized();
 
                     let ty: BasicMetadataTypeEnum = match &resolved_ty {
                         Type::F32 => self.context.f32_type().into(),
@@ -1234,7 +1255,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let fn_type = if uses_sret {
                     self.context.void_type().fn_type(&param_types, false)
                 } else {
-                    match &method.return_type {
+                    match &method.return_type.flatten_specialized() {
                         Type::F32 => self.context.f32_type().fn_type(&param_types, false),
                         Type::I64 | Type::Entity | Type::Usize => {
                             self.context.i64_type().fn_type(&param_types, false)
@@ -1250,7 +1271,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
                             self.context.struct_type(&[ptr_type.into(), ptr_type.into()], false).fn_type(&param_types, false)
                         }
-                        Type::Struct(_, _) | Type::Tuple(_) | Type::Enum(_, _) => self
+                        Type::Struct(_, _) | Type::Tuple(_) | Type::Enum(_, _) | Type::SpecializedType { .. } => self
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
                             .fn_type(&param_types, false),
@@ -1292,7 +1313,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 if self.should_skip_concrete_method(method, imp) {
                     continue;
                 }
-                let target_name = imp.target_type.get_base_name();
+                let target_name = imp.target_type.mangled_name_or_name().unwrap_or("").to_string();
                 let simple_target = &target_name;
                 let mangled_name = if method.is_extern {
                      format!("tl_{}_{}", simple_target.to_lowercase(), method.name)
@@ -1353,7 +1374,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                      // Register SRET pointer
                      if let Some(sret_param) = function.get_nth_param(0) {
                          if sret_param.is_pointer_value() {
-                             sret_param.set_name("sret_ptr");
+                             sret_param.set_name("sret");
                              self.current_sret_dest = Some(sret_param.into_pointer_value());
                          } else {
                          }
@@ -1375,7 +1396,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         }
                     } else {
                         arg_ty.clone()
-                    };
+                    }.flatten_specialized();
 
                     if let Some(param_val) = function.get_nth_param((i + param_offset) as u32) {
                         param_val.set_name(arg_name);
@@ -1405,12 +1426,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     if i == method.body.len() - 1 && method.return_type != Type::Void {
                         // Check if it's an expression that should be returned
                         if let StmtKind::Expr(expr) = &stmt.inner {
-                            let expected_subst = self.current_fn_return_type.clone().map(|ty| self.substitute_current_generics(&ty));
-                            self.expected_type_stack.push(expected_subst);
-                            let compiled_res = self.compile_expr(expr);
-                            self.expected_type_stack.pop();
-                            
-                            let (val, ty) = compiled_res?;
+                            let (val, ty) = self.compile_expr(expr)?;
                             
                             // FIX: Logic parity with compile_function implicit return
                             // FIX: Logic parity with compile_function implicit return
@@ -1655,25 +1671,8 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
 
         // 6. Generate methods for specialized types registered in SpecializationRegistry
-        // Loop until no new specializations are added (methods may trigger new specializations)
-        while !self.specialization_registry.is_empty() {
-            let pending = self.specialization_registry.drain_pending();
-            for (base_name, type_args) in pending {
-                self.generate_methods_for_specialized_type(&base_name, &type_args)?;
-            }
-            // Also process any pending functions generated by method compilation
-            while !self.pending_functions.is_empty() {
-                let batch = std::mem::take(&mut self.pending_functions);
-                for (func, subst) in batch {
-                    if func.is_extern {
-                        continue;
-                    }
-                    self.current_method_generics = subst;
-                    self.compile_fn(&func, &[])?;
-                    self.current_method_generics = None;
-                }
-            }
-        }
+        // [DELETED in V6.0 AOT Monomorphization]: Monomorphizer now handles this entirely.
+        // Loop removed to prevent double-generation and bypass of generic resolution.
 
         // Apply LLVM optimizations
         if let Err(e) = self.module.verify() {
@@ -1719,11 +1718,8 @@ impl<'ctx> CodeGenerator<'ctx> {
             panic!("COMPILE_FN_PROTO_CALLED_FOR_{}!!", func.name);
         }
         // Register return type for lookups by name (Critical for SRET detection)
-        if func.name.contains("Vec") && func.name.contains("get") && func.name.contains("Entry") {
-        }
         self.method_return_types.insert(func.name.clone(), func.return_type.clone());
         self.fn_params.insert(func.name.clone(), func.args.iter().map(|a| a.1.clone()).collect());
-
 
         // Check if this function returns a struct or enum (requires sret)
         // Let's assume Structs/Enums need SRET, but Tensors do NOT.
@@ -1893,7 +1889,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                 analysis.last_use_times.get(&arg_time).copied().unwrap_or(0)
             } else { 0 };
             
-            eprintln!("[LIVENESS] Registering param: {}, time={}, last_use={}", arg_name, arg_time, last_use);
             self.variable_liveness
                 .last_mut()
                 .unwrap()
@@ -1961,12 +1956,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             if i == body_len - 1 && func.return_type != Type::Void {
                 // Check if it's an expression that should be returned
                 if let StmtKind::Expr(expr) = &stmt.inner {
-                    let expected_subst = self.current_fn_return_type.clone().map(|ty| self.substitute_current_generics(&ty));
-                    self.expected_type_stack.push(expected_subst);
-                    let compiled_res = self.compile_expr(expr);
-                    self.expected_type_stack.pop();
-                    
-                    let (mut val, mut ty) = compiled_res?;
+                    let (mut val, mut ty) = self.compile_expr(expr)?;
 
                     // Implicit TraitObject Upcast for implicit Return
                     let current_ret_is_trait = if let Some(Type::TraitObject(trait_name)) = &self.current_fn_return_type {
@@ -2132,7 +2122,6 @@ impl<'ctx> CodeGenerator<'ctx> {
              }
 
              let ret_ty = self.get_llvm_type(&func.return_type).unwrap_or(self.context.i8_type().into());
-             println!("DEBUG TERMINATOR FALLBACK for {}: func.return_type = {:?}, ret_ty = {:?}", func.name, func.return_type, ret_ty);
              if func.return_type == Type::Void {
                  self.builder.build_return(None).map_err(|e| e.to_string())?;
              } else if ret_ty.is_struct_type() {

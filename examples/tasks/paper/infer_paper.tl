@@ -67,6 +67,7 @@ fn main() {
     }
     
     // Autoregressive Inference Logic using PAD=12
+    let mut correct_count = 0;
     
     // Test 12 + 34 = 46 (Reverse: 6, 4, 0)
     print("Test: 12 + 34 = 46");
@@ -94,6 +95,13 @@ fn main() {
     
     print("Predicted:"); print(p1); print(p2); print(p3);
     
+    if p1 == 6 && p2 == 4 && p3 == 0 {
+         print("Result: HIT");
+         correct_count = correct_count + 1;
+    } else {
+         print("Result: MISS");
+    }
+    
     // Test 99 + 1 = 100 (Reverse: 0, 0, 1)
     print("Test: 99 + 1 = 100");
     print("Expected (Reverse): 0, 0, 1");
@@ -120,5 +128,15 @@ fn main() {
     
     print("Predicted:"); print(q1); print(q2); print(q3);
     
-    print("Done.");
+    if q1 == 0 && q2 == 0 && q3 == 1 {
+         print("Result: HIT");
+         correct_count = correct_count + 1;
+    } else {
+         print("Result: MISS");
+    }
+    
+    print("Inference Complete.");
+    print("Accuracy:");
+    print(correct_count);
+    print("Correct out of 2");
 }

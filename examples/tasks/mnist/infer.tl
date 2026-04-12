@@ -5,8 +5,17 @@ use mnist_common::*;
 fn main() {
     print("=== MNIST Inference (MLP) ===");
     
-    let test_x = load_mnist_images("examples/tasks/mnist/data/t10k-images-idx3-ubyte");
-    let test_y = load_mnist_labels("examples/tasks/mnist/data/t10k-labels-idx1-ubyte");
+    let mut test_img_path = "examples/tasks/mnist/data/t10k-images-idx3-ubyte";
+    if File::exists("data/t10k-images-idx3-ubyte") {
+        test_img_path = "data/t10k-images-idx3-ubyte";
+    }
+    let mut test_lbl_path = "examples/tasks/mnist/data/t10k-labels-idx1-ubyte";
+    if File::exists("data/t10k-labels-idx1-ubyte") {
+        test_lbl_path = "data/t10k-labels-idx1-ubyte";
+    }
+    
+    let test_x = load_mnist_images(test_img_path).unwrap();
+    let test_y = load_mnist_labels(test_lbl_path).unwrap();
     
     // Initialize model structure (must match training)
     let model = MLP::new(784, 256, 10);

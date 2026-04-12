@@ -106,7 +106,7 @@ impl GPTHeavy {
     } 
 }
 
-fn inference_tf(model: GPTHeavy, i: i64, j: i64) {
+fn inference_tf(model: GPTHeavy, i: i64, j: i64) -> i64 {
     let sum = i + j;
     
     let i_d10 = i / 10;
@@ -153,9 +153,11 @@ fn inference_tf(model: GPTHeavy, i: i64, j: i64) {
     print("Pred  : "); print(pred_sum);
     
     if sum == pred_sum {
-        print("OK");
+        print("Result: HIT");
+        return 1;
     } else {
-        print("FAIL");
+        print("Result: MISS");
+        return 0;
     }
 }
 
@@ -174,16 +176,20 @@ fn main() {
         return;
     }
     
-    inference_tf(model, 12, 34);  // 46
-    inference_tf(model, 99, 1);   // 100
-    inference_tf(model, 45, 55);  // 100
-    inference_tf(model, 8, 9);    // 17
-    inference_tf(model, 73, 27);  // 100
-    inference_tf(model, 66, 88);  // 154
-    inference_tf(model, 0, 0);    // 0
-    inference_tf(model, 50, 50);  // 100
-    inference_tf(model, 37, 48);  // 85
-    inference_tf(model, 91, 9);   // 100
+    let mut correct_count = 0;
+    correct_count = correct_count + inference_tf(model, 12, 34);  // 46
+    correct_count = correct_count + inference_tf(model, 99, 1);   // 100
+    correct_count = correct_count + inference_tf(model, 45, 55);  // 100
+    correct_count = correct_count + inference_tf(model, 8, 9);    // 17
+    correct_count = correct_count + inference_tf(model, 73, 27);  // 100
+    correct_count = correct_count + inference_tf(model, 66, 88);  // 154
+    correct_count = correct_count + inference_tf(model, 0, 0);    // 0
+    correct_count = correct_count + inference_tf(model, 50, 50);  // 100
+    correct_count = correct_count + inference_tf(model, 37, 48);  // 85
+    correct_count = correct_count + inference_tf(model, 91, 9);   // 100
     
-    print("Done.");
+    print("Inference Complete.");
+    print("Accuracy:");
+    print(correct_count);
+    print("Correct out of 10");
 }

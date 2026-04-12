@@ -1842,6 +1842,8 @@ fn parse_impl_block(input: Input) -> IResult<Input, crate::compiler::ast::ImplBl
         let (input, _) = expect_token(Token::LBrace)(input)?;
         let (input, mut methods) = many0(parse_function_def)(input)?;
         let (input, _) = expect_token(Token::RBrace)(input)?;
+        
+        let _method_names: Vec<String> = methods.iter().map(|m| m.name.clone()).collect();
 
         // Resolve `Self` in method arguments/return types
         for method in &mut methods {

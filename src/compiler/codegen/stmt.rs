@@ -251,12 +251,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                 
                 Ok(())
             }
-            Type::UnifiedType { base_name: _, type_args, mangled_name, is_enum } => {
-                // Flatten UnifiedType to Struct/Enum and re-dispatch
-                let flat_ty = if *is_enum {
-                    Type::Enum(mangled_name.clone(), type_args.clone())
+
+            Type::SpecializedType { gen_type, type_args, type_map: _, mangled_name: _ } => {
+                // Flatten SpecializedType to Struct/Enum and re-dispatch
+                let flat_ty = if gen_type.is_enum_type() {
+                    Type::Enum(gen_type.mangled_name_or_name().unwrap_or("").to_string(), type_args.clone())
                 } else {
-                    Type::Struct(mangled_name.clone(), type_args.clone())
+                    Type::Struct(gen_type.mangled_name_or_name().unwrap_or("").to_string(), type_args.clone())
                 };
                 self.emit_struct_copy(dst, src, &flat_ty)
             }
@@ -296,7 +297,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 Type::Bool => self.context.bool_type().into(),
                 Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::GradTensor(_, _)
                 | Type::Struct(_, _) | Type::Enum(_, _)
-                | Type::String(_) | Type::Ptr(_) | Type::Tuple(_) => self
+                | Type::String(_) | Type::Ptr(_) | Type::Tuple(_) | Type::SpecializedType { .. } => self
                     .context
                     .ptr_type(inkwell::AddressSpace::default())
                     .into(),
@@ -306,7 +307,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
                             self.context.struct_type(&[ptr_ty.into(), ptr_ty.into()], false).into()
                         },
-                        Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::UnifiedType { .. } | Type::Never | Type::Undefined(_) | Type::Range
+                        Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::Never | Type::Undefined(_) | Type::Range
                  => self.context.i64_type().into(),
             };
 
@@ -717,7 +718,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 Type::Bool => self.context.bool_type().into(),
                                 Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::GradTensor(_, _)
                                 | Type::Struct(_, _) | Type::Enum(_, _)
-                                | Type::String(_) | Type::Ptr(_) | Type::Tuple(_) => self
+                                | Type::String(_) | Type::Ptr(_) | Type::Tuple(_) | Type::SpecializedType { .. } => self
                                     .context
                                     .ptr_type(inkwell::AddressSpace::default())
                                     .into(),
@@ -727,7 +728,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
                             self.context.struct_type(&[ptr_ty.into(), ptr_ty.into()], false).into()
                         },
-                        Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::UnifiedType { .. } | Type::Never | Type::Undefined(_) | Type::Range
+                        Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::Never | Type::Undefined(_) | Type::Range
                                  => self.context.i64_type().into(),
                             };
                             field_types.push(llvm_ty);
@@ -915,13 +916,13 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 // Monomorphize 'free' method name if generic
                 let runtime_name_res = if !generic_args.is_empty() {
-                     self.monomorphize_method(simple_name, "free", generic_args)
+                     format!("tl_{}_free", self.mangle_type_name(simple_name, generic_args))
                 } else {
-                     self.monomorphize_method(simple_name, "free", generic_args)
+                     format!("tl_{}_free", simple_name)
                 };
 
-                let has_free_method = if let Ok(n) = &runtime_name_res {
-                     self.module.get_function(n).is_some()
+                let has_free_method = if self.module.get_function(&runtime_name_res).is_some() {
+                     true
                 } else {
                      // Check legacy
                       let legacy_name = crate::compiler::codegen::builtin_types::resolver::resolve_static_method_name(
@@ -988,13 +989,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                 self.builder.position_at_end(recurse_block);
 
                 // A. Custom Destructor (Method "free")
-                if let Ok(runtime_name) = runtime_name_res {
-                    if let Some(fn_val) = self.module.get_function(&runtime_name) {
-                         self.builder.build_call(fn_val, &[val.into()], "").map_err(|e| e.to_string())?;
-                         self.builder.build_unconditional_branch(merge_block).unwrap();
-                         self.builder.position_at_end(merge_block);
-                         return Ok(());
-                    }
+                let runtime_name = runtime_name_res.clone();
+                if let Some(fn_val) = self.module.get_function(&runtime_name) {
+                     self.builder.build_call(fn_val, &[val.into()], "").map_err(|e| e.to_string())?;
+                     self.builder.build_unconditional_branch(merge_block).unwrap();
+                     self.builder.position_at_end(merge_block);
+                     return Ok(());
                 } else {
                      let legacy_name = crate::compiler::codegen::builtin_types::resolver::resolve_static_method_name(
                           name, "free", generic_args
@@ -1048,7 +1048,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             | Type::TensorShaped(_, _) | Type::GradTensor(_, _)
                             | Type::Struct(_, _)
                             | Type::Enum(_, _)
-                            | Type::Tuple(_) => {
+                            | Type::Tuple(_) | Type::SpecializedType { .. } => {
                                 let f_ptr = self.builder.build_struct_gep(
                                     *self.struct_types.get(&mangled_name).unwrap(), // Safe: checked existence
                                     ptr, i as u32, "field_gep"
@@ -1128,7 +1128,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                  for i in 0..(*size) {
                      let elem_ptr = self.builder.build_struct_gep(llvm_arr_ty, arr_ptr, i as u32, "elem").map_err(|e| e.to_string())?;
                      match &**inner {
-                         Type::Tensor(_, _) | Type::Struct(_, _) | Type::Enum(_, _) | Type::Tuple(_) => {
+                         Type::Tensor(_, _) | Type::Struct(_, _) | Type::Enum(_, _) | Type::Tuple(_) | Type::SpecializedType { .. } => {
                              let elem_val = self.builder.build_load(self.context.ptr_type(inkwell::AddressSpace::default()), elem_ptr, "elem_load").map_err(|e| e.to_string())?;
                              self.emit_recursive_free(elem_val, inner, mode)?;
                          }
@@ -1165,14 +1165,14 @@ impl<'ctx> CodeGenerator<'ctx> {
                          Type::Bool => self.context.bool_type().into(),
                          Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::GradTensor(_, _)
                          | Type::Struct(_, _) | Type::Enum(_, _)
-                         | Type::String(_) | Type::Ptr(_) | Type::Tuple(_) => self.context.ptr_type(inkwell::AddressSpace::default()).into(),
+                         | Type::String(_) | Type::Ptr(_) | Type::Tuple(_) | Type::SpecializedType { .. } => self.context.ptr_type(inkwell::AddressSpace::default()).into(),
                          Type::Void => self.context.i8_type().into(),
                          Type::Array(inner, size) => self.get_llvm_type(&Type::Array(inner.clone(), *size)).unwrap_or(self.context.i64_type().into()),
                          Type::TraitObject(_) => {
                             let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
                             self.context.struct_type(&[ptr_ty.into(), ptr_ty.into()], false).into()
                         },
-                        Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::UnifiedType { .. } | Type::Never | Type::Undefined(_) | Type::Range
+                        Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::Never | Type::Undefined(_) | Type::Range
                           => self.context.i64_type().into(),
                      });
                  }
@@ -1249,7 +1249,6 @@ impl<'ctx> CodeGenerator<'ctx> {
                      return Ok(());
                 }                let simple_name = name.as_str();
 
-                println!("Codegen TRACE emit_recursive_unregister: Struct({})", name);
                 let struct_def = self.struct_defs.get(simple_name)
                     .ok_or_else(|| format!("Struct def {} not found", name))?
                     .clone();
@@ -1277,7 +1276,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         | Type::TensorShaped(_, _) | Type::GradTensor(_, _) 
                         | Type::Struct(_, _) 
                         | Type::Enum(_, _) 
-                        | Type::Tuple(_) => {
+                        | Type::Tuple(_) | Type::SpecializedType { .. } => {
                             let f_ptr = self.builder.build_struct_gep(struct_ty, ptr, i as u32, "field_gep_unreg")
                                 .map_err(|e| e.to_string())?;
                             let f_val = self.builder.build_load(
@@ -1310,14 +1309,14 @@ impl<'ctx> CodeGenerator<'ctx> {
                          Type::Bool => self.context.bool_type().into(),
                          Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::GradTensor(_, _)
                          | Type::Struct(_, _) | Type::Enum(_, _)
-                         | Type::String(_) | Type::Ptr(_) | Type::Tuple(_) => self.context.ptr_type(inkwell::AddressSpace::default()).into(),
+                         | Type::String(_) | Type::Ptr(_) | Type::Tuple(_) | Type::SpecializedType { .. } => self.context.ptr_type(inkwell::AddressSpace::default()).into(),
                          Type::Void => self.context.i8_type().into(),
                          Type::Array(inner, size) => self.get_llvm_type(&Type::Array(inner.clone(), *size)).unwrap_or(self.context.i64_type().into()),
                          Type::TraitObject(_) => {
                             let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
                             self.context.struct_type(&[ptr_ty.into(), ptr_ty.into()], false).into()
                         },
-                        Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::UnifiedType { .. } | Type::Never | Type::Undefined(_) | Type::Range
+                        Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::Never | Type::Undefined(_) | Type::Range
                           => self.context.i64_type().into(),
                       }
                  }).collect();
@@ -1333,7 +1332,6 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
 
             Type::Enum(name, generics) => {
-                 println!("Codegen TRACE emit_recursive_unregister: Enum({}, {:?})", name, generics);
                  let ptr = val.into_pointer_value();
                  let unreg_fn = self.module.get_function("tl_mem_unregister")
                     .ok_or("tl_mem_unregister not found")?;
@@ -1426,7 +1424,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                           Type::Bool => self.context.bool_type().into(),
                                           Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::GradTensor(_, _)
                                           | Type::Struct(_, _) | Type::Enum(_, _)
-                                          | Type::String(_) | Type::Ptr(_) | Type::Tuple(_) =>
+                                          | Type::String(_) | Type::Ptr(_) | Type::Tuple(_) | Type::SpecializedType { .. } =>
                                               self.context.ptr_type(inkwell::AddressSpace::default()).into(),
                                           Type::Void => self.context.i8_type().into(),
                                           Type::Array(inner, size) => self.get_llvm_type(&Type::Array(inner.clone(), *size)).unwrap_or(self.context.i64_type().into()),
@@ -1434,7 +1432,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
                             self.context.struct_type(&[ptr_ty.into(), ptr_ty.into()], false).into()
                         },
-                        Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::UnifiedType { .. } | Type::Never | Type::Undefined(_) | Type::Range
+                        Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::Never | Type::Undefined(_) | Type::Range
                                            => self.context.i64_type().into(),
                                       };
                                      field_llvm_types.push(llvm_ty);
@@ -1715,18 +1713,34 @@ impl<'ctx> CodeGenerator<'ctx> {
                     (r, t)
                 } else {
                     // Standard expression compilation
-                    let expected_subst = type_annotation.as_ref().map(|ty| self.substitute_current_generics(ty));
-                    self.expected_type_stack.push(expected_subst);
-                    let result = self.compile_expr(value);
-                    self.expected_type_stack.pop();
-                    result?
+                    self.compile_expr(value)?
                 };
                 
+                // Force AOT normalization for types returned by builtin/primitive generic methods
+                // (e.g., String::chars returning Struct("Vec", [I64]) instead of SpecializedType)
+                // Emit SpecializedType to preserve type_args throughout codegen.
+                if let Type::Struct(name, args) | Type::Enum(name, args) = &val_ty {
+                    if !args.is_empty() {
+                         let mangled = self.mangle_type_name(name, args);
+                         let is_enum = matches!(val_ty, Type::Enum(_, _));
+                         let gen_type = if is_enum {
+                             Type::Enum(name.clone(), vec![])
+                         } else {
+                             Type::Struct(name.clone(), vec![])
+                         };
+                         val_ty = Type::SpecializedType {
+                             gen_type: Box::new(gen_type),
+                             type_args: args.clone(),
+                             type_map: vec![],  // Not available from codegen context
+                             mangled_name: mangled,
+                         };
+                    }
+                }
+                
                 let orig_val_ty = val_ty.clone();
-                val_ty = self.substitute_current_generics(&val_ty);
+
                 if matches!(orig_val_ty, Type::Tuple(_)) || matches!(orig_val_ty, Type::Tensor(_, _)) || matches!(orig_val_ty, Type::Struct(_, _)) {
-                     let func_name = self.builder.get_insert_block().and_then(|b| b.get_parent()).map(|f| f.get_name().to_string_lossy().into_owned()).unwrap_or_else(|| "unknown".to_string());
-                     println!("[DEBUG SUBSTITUTION] func={} orig={:?} after={:?} subst_map={:?}", func_name, orig_val_ty, val_ty, self.current_method_generics);
+                     let _func_name = self.builder.get_insert_block().and_then(|b| b.get_parent()).map(|f| f.get_name().to_string_lossy().into_owned()).unwrap_or_else(|| "unknown".to_string());
                 }
                 
                 // Ownership: Shared. The temporary (value) remains in scope and will be released at scope exit.
@@ -1770,7 +1784,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 let should_deep_clone = match &val_ty {
                     Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::GradTensor(_, _) => !is_rvalue, // Clone only if L-value
-                    Type::Struct(_, _) | Type::Enum(_, _) | Type::Tuple(_) => {
+                    Type::Struct(_, _) | Type::Enum(_, _) | Type::Tuple(_) | Type::SpecializedType { .. } => {
                         // Structs/UserDefined/Enum/Vec/Tuple: Pointer copy vs Deep Clone
                         // If R-value, we own the pointer. Move.
                         !is_rvalue
@@ -1891,12 +1905,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
             StmtKind::Return(expr_opt) => {
                 if let Some(expr) = expr_opt {
-                    let expected_subst = self.current_fn_return_type.clone().map(|ty| self.substitute_current_generics(&ty));
-                    self.expected_type_stack.push(expected_subst);
-                    let compiled_res = self.compile_expr(expr);
-                    self.expected_type_stack.pop();
-                    
-                    let (mut val, mut ty) = compiled_res?;
+                    let (mut val, mut ty) = self.compile_expr(expr)?;
 
                     // Implicit TraitObject Upcast for Return
                     let current_ret_is_trait = if let Some(Type::TraitObject(trait_name)) = &self.current_fn_return_type {
@@ -2061,9 +2070,15 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 _ => false,
                             };
                             if matches!(lhs_type, Type::Struct(_,_)) {
-                                eprintln!("[SHOULD_FREE] type={:?} cleanup={} should_free={}", lhs_type, lhs_cleanup_mode, should_free_old);
                             }
                             if should_free_old {
+                                 if !val_ir.is_pointer_value() {
+                                     return Err(format!(
+                                         "Internal compiler error: Assign to {:?} expected PointerValue but got {:?}. \
+                                          This usually means SRET detection failed for the method call.",
+                                         lhs_type, val_ir
+                                     ));
+                                 }
                                  let old_val = self.builder.build_load(load_type, lhs_ptr, "old").unwrap().into_pointer_value();
                                  let null_ptr = load_type.const_null();
                                  let is_not_null = self.builder.build_int_compare(inkwell::IntPredicate::NE, old_val, null_ptr, "").unwrap();
@@ -2173,8 +2188,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                            } else if let Type::Struct(name, generics) = &inner_ty {
                                 // Assuming 'set' method
                                 return self.emit_struct_set(inner_val, name, &generics, indices, val_ir);
-                           } else if let Type::UnifiedType { base_name: _, type_args, mangled_name, .. } = &inner_ty {
-                                // UnifiedType: use mangled_name for method lookup, base_name + type_args for monomorphize
+                           } else if let Type::SpecializedType { gen_type, type_args, .. } = &inner_ty {
+                                // SpecializedType: dispatch to array-like access if needed
+                                let mangled_name = gen_type.mangled_name_or_name().unwrap_or("");
                                 return self.emit_struct_set(inner_val, &mangled_name, &type_args, indices, val_ir);
                            } else {
                                 return Err(format!("Invalid assignment target inner type: {:?}", inner_ty));
@@ -2234,7 +2250,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                     }
                     _ => {
                         // Tensor, Vec, or other iterable type
-                        let (iter_val, iter_ty) = self.compile_expr(iterator)?;
+                        let (iter_val, iter_ty_raw) = self.compile_expr(iterator)?;
+                        // Normalize SpecializedType → Struct/Enum so Vec special handling works
+                        let iter_ty = self.normalize_type(&iter_ty_raw);
                         let len = match &iter_ty {
                             Type::Tensor(_, _) => {
                                 // Get tensor length
@@ -2251,12 +2269,23 @@ impl<'ctx> CodeGenerator<'ctx> {
                                     _ => return Err("Invalid tensor_len return".into()),
                                 }
                             }
-                            Type::Struct(name, _) | Type::UnifiedType { base_name: name, .. } => {
-                                // Struct/UnifiedType: dispatch to len() method
-                                let mangled_name = match &iter_ty {
-                                    Type::UnifiedType { mangled_name, .. } => mangled_name.clone(),
-                                    _ => name.clone(),
-                                };
+                            Type::SpecializedType { gen_type, .. } => {
+                                // SpecializedType: dispatch to len() method
+                                let mangled_name = gen_type.mangled_name_or_name().unwrap_or("").to_string();
+                                let len_fn_name = format!("tl_{}_len", mangled_name);
+                                let len_fn = self.module.get_function(&len_fn_name)
+                                    .ok_or_else(|| format!("{} not found (does this type implement Iterable?)", len_fn_name))?;
+                                let len_call = self.builder
+                                    .build_call(len_fn, &[iter_val.into()], "struct_len")
+                                    .map_err(|e| e.to_string())?;
+                                match len_call.try_as_basic_value() {
+                                    inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+                                    _ => return Err("Invalid struct_len return".into()),
+                                }
+                            }
+                            Type::Struct(name, _) => {
+                                // Struct: dispatch to len() method
+                                let mangled_name = name.clone();
                                 let len_fn_name = format!("tl_{}_len", mangled_name);
                                 let len_fn = self.module.get_function(&len_fn_name)
                                     .ok_or_else(|| format!("{} not found (does this type implement Iterable?)", len_fn_name))?;
@@ -2432,15 +2461,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                             }
                         }
 
-                        Type::Struct(ref name, _) | Type::UnifiedType { base_name: ref name, .. } => {
+                        Type::Struct(ref name, _) => {
                             // === Vec特殊処理: data_ptrから直接アクセス ===
                             // Vec::get() は Option<T> を返すため for ループには不適。
                             // data_ptr[i] で直接要素にアクセスする。
                             // 要素型は struct_def の ptr フィールド (ptr<T> → T) から取得。
-                            let codegen_name = match &iter_ty {
-                                Type::UnifiedType { mangled_name, .. } => mangled_name.clone(),
-                                _ => name.clone(),
-                            };
+                            let codegen_name = name.clone();
                             let base_name = crate::compiler::ast::mangle_base_name(&codegen_name);
                             
                             if base_name == "Vec" {
@@ -2482,11 +2508,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 
                                 (elem_val, elem_ty)
                             } else {
-                            // Struct/UnifiedType: dispatch to get() method
-                            let mangled_name = match &iter_ty {
-                                Type::UnifiedType { mangled_name, .. } => mangled_name.clone(),
-                                _ => name.clone(),
-                            };
+                            // Struct: dispatch to get() method
+                            let mangled_name = name.clone();
                             let get_fn_name = format!("tl_{}_get", mangled_name);
                             let get_fn = self.module.get_function(&get_fn_name)
                                 .ok_or_else(|| format!("{} not found (does this type implement Iterable?)", get_fn_name))?;
@@ -2772,7 +2795,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     | Type::TensorShaped(_, _) | Type::GradTensor(_, _)
                     | Type::Enum(_, _)
 
-                    | Type::Tuple(_) => {
+                    | Type::Tuple(_) | Type::SpecializedType { .. } => {
                         // For struct/tensor return values: Register as a temporary variable
                         // This is equivalent to `let _ = expr;`
                         // The value will be properly freed at scope exit
@@ -3511,9 +3534,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                         _ => vec![],
                     };
                     
-                    if let Ok(mangled) = self.monomorphize_method(&base_name, m_name, &type_args) {
+                    let mangled = if type_args.is_empty() {
+                        format!("tl_{}_{}", base_name, m_name)
+                    } else {
+                        format!("tl_{}_{}", self.mangle_type_name(&base_name, &type_args), m_name)
+                    };
+                    if self.module.get_function(&mangled).is_some() {
                         let fn_opt = self.module.get_function(&mangled);
-                        println!("[DEBUG] trait_binop base_name={} method={} mangled={} found={}", base_name, m_name, mangled, fn_opt.is_some());
                         if let Some(fn_val) = fn_opt {
                             
                             let m_ret_ty = self.method_return_types.get(&mangled).unwrap_or(&lhs_type);
@@ -4013,7 +4040,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         Type::Bool => self.context.bool_type().into(),
                         Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::GradTensor(_, _)
                         | Type::Struct(_, _) | Type::Enum(_, _)
-                        | Type::String(_) | Type::Ptr(_) | Type::Tuple(_) => self
+                        | Type::String(_) | Type::Ptr(_) | Type::Tuple(_) | Type::SpecializedType { .. } => self
                             .context
                             .ptr_type(inkwell::AddressSpace::default())
                             .into(),
@@ -4023,7 +4050,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
                             self.context.struct_type(&[ptr_ty.into(), ptr_ty.into()], false).into()
                         },
-                        Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::UnifiedType { .. } | Type::Never | Type::Undefined(_) | Type::Range
+                        Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::Never | Type::Undefined(_) | Type::Range
                          => self.context.i64_type().into(),
                     };
                     field_types.push(llvm_ty);
@@ -4096,8 +4123,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                 Err(format!("Variable {} not found", name))
             }
             LValue::FieldAccess(inner, field) => {
-                let (base_ptr_opt, base_ty, _, base_name) = self.compile_lvalue_addr(inner)?;
+                let (base_ptr_opt, raw_base_ty, _, base_name) = self.compile_lvalue_addr(inner)?;
                 let base_ptr = base_ptr_opt.ok_or("Cannot field access on non-addressable lvalue")?;
+                let base_ty = raw_base_ty.flatten_specialized();
                 
                 if let Type::Struct(name, generics) = &base_ty {
                     // Lookup struct def by name (which may be a mangled name e.g. Vec_i64)
@@ -4228,14 +4256,14 @@ impl<'ctx> CodeGenerator<'ctx> {
                      Type::Usize | Type::Entity => self.context.i64_type().into(),
                      Type::Char(_) => self.context.i32_type().into(),
                      Type::TensorShaped(_, _) | Type::GradTensor(_, _)
-                     | Type::Enum(_, _) | Type::String(_) | Type::Ptr(_) | Type::Tuple(_) => self.context.ptr_type(inkwell::AddressSpace::default()).into(),
+                     | Type::Enum(_, _) | Type::String(_) | Type::Ptr(_) | Type::Tuple(_) | Type::SpecializedType { .. } => self.context.ptr_type(inkwell::AddressSpace::default()).into(),
                      Type::Void => self.context.i8_type().into(),
                      Type::Array(inner, size) => self.get_llvm_type(&Type::Array(inner.clone(), *size)).unwrap_or(self.context.i64_type().into()),
                      Type::TraitObject(_) => {
                             let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
                             self.context.struct_type(&[ptr_ty.into(), ptr_ty.into()], false).into()
                         },
-                        Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::UnifiedType { .. } | Type::Never | Type::Undefined(_) | Type::Range
+                        Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::Never | Type::Undefined(_) | Type::Range
                       => self.context.i64_type().into(),
                  };
                  Ok((self.builder.build_load(load_ty, ptr, "").unwrap(), res.1))
@@ -4254,14 +4282,14 @@ impl<'ctx> CodeGenerator<'ctx> {
                          Type::Usize | Type::Entity => self.context.i64_type().into(),
                          Type::Char(_) => self.context.i32_type().into(),
                          Type::TensorShaped(_, _) | Type::GradTensor(_, _)
-                         | Type::Enum(_, _) | Type::String(_) | Type::Ptr(_) | Type::Tuple(_) => self.context.ptr_type(inkwell::AddressSpace::default()).into(),
+                         | Type::Enum(_, _) | Type::String(_) | Type::Ptr(_) | Type::Tuple(_) | Type::SpecializedType { .. } => self.context.ptr_type(inkwell::AddressSpace::default()).into(),
                          Type::Void => self.context.i8_type().into(),
                          Type::Array(inner, size) => self.get_llvm_type(&Type::Array(inner.clone(), *size)).unwrap_or(self.context.i64_type().into()),
                          Type::TraitObject(_) => {
                             let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
                             self.context.struct_type(&[ptr_ty.into(), ptr_ty.into()], false).into()
                         },
-                        Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::UnifiedType { .. } | Type::Never | Type::Undefined(_) | Type::Range
+                        Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::Never | Type::Undefined(_) | Type::Range
                           => self.context.i64_type().into(),
                      };
                      Ok((self.builder.build_load(load_ty, ptr, "").unwrap(), res.1))
@@ -4330,7 +4358,7 @@ impl<'ctx> CodeGenerator<'ctx> {
          
          // On-demand monomorphize the resolved method if this is a generic type
          if !type_args.is_empty() {
-             let _ = self.monomorphize_method(&base_name, &method_name, &type_args);
+             let _ = format!("tl_{}_{}", self.mangle_type_name(&base_name, &type_args), method_name);
          }
          
          // Look for instance method on this type
@@ -4348,7 +4376,7 @@ impl<'ctx> CodeGenerator<'ctx> {
          if method_name != "set" {
               let set_fn_name = format!("tl_{}_set", mangled_name);
               if !type_args.is_empty() {
-                  let _ = self.monomorphize_method(&base_name, "set", &type_args);
+                  let _ = format!("tl_{}_set", self.mangle_type_name(&base_name, &type_args));
               }
               if let Some(set_fn) = self.module.get_function(&set_fn_name) {
                    self.builder.build_call(set_fn, &[struct_val.into(), idx_val.into(), val.into()], "")

@@ -6,8 +6,8 @@ fn main() {
     let entries = map.entries();
     assert(entries.len() == 2, "entries.len() == 2");
     
-    let entry0 = entries[0].unwrap();
-    let entry1 = entries[1].unwrap();
+    let entry0 = entries.get(0).unwrap();
+    let entry1 = entries.get(1).unwrap();
     
     // Hash maps are unordered, so we check if the sum matches
     assert((entry0.0 + entry1.0) == 3, "sum matches");

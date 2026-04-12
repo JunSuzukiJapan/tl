@@ -121,6 +121,10 @@ impl Mangler {
                     let inner_strs = self.extract_args(s);
                     let inner_types: Vec<Type> =
                         inner_strs.iter().map(|t| self.parse_type_str(t)).collect();
+                    let base = self.base_name(s);
+                    if base == "Tuple" {
+                        return Type::Tuple(inner_types);
+                    }
                     Type::Struct(s.to_string(), inner_types)
                 } else {
                     Type::Struct(s.to_string(), vec![])
