@@ -34,11 +34,15 @@ Notes:
 
 ## 2. Standard Types (Static Methods)
 
-### Tensor (Static)
+### Tensor / GradTensor (Static)
 - `Tensor::zeros(shape, requires_grad: bool) -> Tensor`
+- `GradTensor::zeros(shape, requires_grad: bool) -> GradTensor`
 - `Tensor::randn(shape, requires_grad: bool) -> Tensor`
+- `GradTensor::randn(shape, requires_grad: bool) -> GradTensor`
 - `Tensor::ones(shape, requires_grad: bool) -> Tensor`
+- `GradTensor::ones(shape, requires_grad: bool) -> GradTensor`
 - `Tensor::load(path: String) -> Tensor`
+- `GradTensor::load(path: String) -> GradTensor`
 
 ### Vec\<T\> (Static)
 - `Vec<T>::new() -> Vec<T>` — Create an empty Vec
@@ -119,7 +123,7 @@ Notes:
 
 ## 3. Instance Methods
 
-### Tensor (Instance)
+### Tensor / GradTensor (Instance)
 
 #### Shape and Indexing
 - `reshape(shape) -> Tensor`

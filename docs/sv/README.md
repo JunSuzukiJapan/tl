@@ -6,6 +6,7 @@
 - [Guide till Tensor Comprehension](tensor_comprehension.md)
 - [Designmål för Tensor Comprehensions](tensor_comprehension_design.md)
 - [Tensor Logic: Varför det kan lösa fler problem än enbart tensorer](tensor_logic_advantages.md)
+- [Modellutbildningsguide](training_guide.md)
 
 ## Referens
 

@@ -6,6 +6,7 @@
 - [张量内涵表达式指南](tensor_comprehension.md)
 - [张量内涵表达式设计目标](tensor_comprehension_design.md)
 - [张量逻辑：为什么它能解决比单纯张量更多的问题](tensor_logic_advantages.md)
+- [模型训练指南](training_guide.md)
 
 ## 参考
 

@@ -6,6 +6,7 @@
 - [Leitfaden für Tensor-Comprehensions](tensor_comprehension.md)
 - [Designziele der Tensor-Comprehensions](tensor_comprehension_design.md)
 - [Tensor Logic: Warum es mehr Probleme lösen kann als Tensoren allein](tensor_logic_advantages.md)
+- [Modellschulungshandbuch](training_guide.md)
 
 ## Referenz
 

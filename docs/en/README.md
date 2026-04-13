@@ -6,6 +6,7 @@
 - [Tensor Comprehension Guide](tensor_comprehension.md)
 - [Design Goals of Tensor Comprehensions](tensor_comprehension_design.md)
 - [Tensor Logic: Why It Can Solve More Problems Than Tensors Alone](tensor_logic_advantages.md)
+- [Model Training Guide](training_guide.md)
 
 ## Reference
 

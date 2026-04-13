@@ -6,6 +6,7 @@
 - [دليل تعبيرات فهم الموترات](tensor_comprehension.md)
 - [أهداف تصميم تعبيرات فهم الموترات](tensor_comprehension_design.md)
 - [منطق الموترات: لماذا يمكنه حل مسائل أكثر من الموترات وحدها](tensor_logic_advantages.md)
+- [دليل التدريب النموذجي](training_guide.md)
 
 ## المرجع
 

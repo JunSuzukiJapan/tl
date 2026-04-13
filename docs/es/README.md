@@ -6,6 +6,7 @@
 - [Guía de comprensiones tensoriales](tensor_comprehension.md)
 - [Objetivos de diseño de las comprensiones tensoriales](tensor_comprehension_design.md)
 - [Tensor Logic: Por qué puede resolver más problemas que los tensores solos](tensor_logic_advantages.md)
+- [Guía de formación modelo](training_guide.md)
 
 ## Referencia
 

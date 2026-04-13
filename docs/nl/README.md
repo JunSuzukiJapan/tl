@@ -6,6 +6,7 @@
 - [Handleiding Tensor Comprehension](tensor_comprehension.md)
 - [Ontwerpdoelen van Tensor Comprehensions](tensor_comprehension_design.md)
 - [Tensor Logic: Waarom het meer problemen kan oplossen dan tensoren alleen](tensor_logic_advantages.md)
+- [Modeltrainingsgids](training_guide.md)
 
 ## Referentie
 

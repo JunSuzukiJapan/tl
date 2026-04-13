@@ -6,6 +6,7 @@
 - [टेंसर कॉम्प्रिहेंशन गाइड](tensor_comprehension.md)
 - [टेंसर कॉम्प्रिहेंशन के डिज़ाइन लक्ष्य](tensor_comprehension_design.md)
 - [Tensor Logic: केवल टेंसर की तुलना में अधिक समस्याएँ क्यों हल कर सकता है](tensor_logic_advantages.md)
+- [मॉडल प्रशिक्षण गाइड](training_guide.md)
 
 ## संदर्भ
 

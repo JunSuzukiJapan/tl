@@ -6,6 +6,7 @@
 - [Panduan Tensor Comprehension](tensor_comprehension.md)
 - [Tujuan Desain Tensor Comprehension](tensor_comprehension_design.md)
 - [Tensor Logic: Mengapa Dapat Menyelesaikan Lebih Banyak Masalah daripada Tensor Saja](tensor_logic_advantages.md)
+- [Panduan Pelatihan Model](training_guide.md)
 
 ## Referensi
 

@@ -6,6 +6,7 @@
 - [Przewodnik po Tensor Comprehension](tensor_comprehension.md)
 - [Cele projektowe Tensor Comprehension](tensor_comprehension_design.md)
 - [Tensor Logic: Dlaczego może rozwiązywać więcej problemów niż same tensory](tensor_logic_advantages.md)
+- [Przewodnik szkoleniowy dla modeli](training_guide.md)
 
 ## Referencje
 

@@ -6,6 +6,7 @@
 - [テンソル内包表記ガイド](tensor_comprehension_jp.md)
 - [テンソル内包表記で実現したかったこと](tensor_comprehension_design.md)
 - [Tensor Logic: なぜ単なるテンソルよりも多くの問題を解けるのか](tensor_logic_advantages_jp.md)
+- [モデル学習（トレーニング）ガイド](training_guide.md)
 
 ## リファレンス
 

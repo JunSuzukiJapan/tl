@@ -6,6 +6,7 @@
 - [Tensör Anlama Rehberi](tensor_comprehension.md)
 - [Tensör Anlamalarının Tasarım Hedefleri](tensor_comprehension_design.md)
 - [Tensor Logic: Neden Tek Başına Tensörlerden Daha Fazla Problemi Çözebilir](tensor_logic_advantages.md)
+- [Model Eğitim Kılavuzu](training_guide.md)
 
 ## Referans
 

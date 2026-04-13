@@ -6,6 +6,7 @@
 - [Посібник з Tensor Comprehension](tensor_comprehension.md)
 - [Цілі проєктування Tensor Comprehension](tensor_comprehension_design.md)
 - [Tensor Logic: Чому він може розв'язувати більше задач, ніж лише тензори](tensor_logic_advantages.md)
+- [Модель Навчальний посібник](training_guide.md)
 
 ## Довідник
 

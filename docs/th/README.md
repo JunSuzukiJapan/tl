@@ -6,6 +6,7 @@
 - [คู่มือ Tensor Comprehension](tensor_comprehension.md)
 - [เป้าหมายการออกแบบ Tensor Comprehension](tensor_comprehension_design.md)
 - [Tensor Logic: ทำไมจึงแก้ปัญหาได้มากกว่า Tensor เพียงอย่างเดียว](tensor_logic_advantages.md)
+- [คู่มือการฝึกอบรมโมเดล](training_guide.md)
 
 ## อ้างอิง
 

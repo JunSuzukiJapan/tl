@@ -34,11 +34,15 @@
 
 ## 2. 標準型（静的メソッド）
 
-### Tensor (静的)
+### Tensor / GradTensor (静的)
 - `Tensor::zeros(shape, requires_grad: bool) -> Tensor`
+- `GradTensor::zeros(shape, requires_grad: bool) -> GradTensor`
 - `Tensor::randn(shape, requires_grad: bool) -> Tensor`
+- `GradTensor::randn(shape, requires_grad: bool) -> GradTensor`
 - `Tensor::ones(shape, requires_grad: bool) -> Tensor`
+- `GradTensor::ones(shape, requires_grad: bool) -> GradTensor`
 - `Tensor::load(path: String) -> Tensor`
+- `GradTensor::load(path: String) -> GradTensor`
 
 ### Vec\<T\> (静的)
 - `Vec<T>::new() -> Vec<T>` — 空の Vec を作成
@@ -120,7 +124,9 @@
 
 ## 3. インスタンスメソッド
 
-### Tensor (インスタンス)
+### Tensor / GradTensor (インスタンス)
+
+※以下は `Tensor` と `GradTensor` に共通して利用可能なメソッドです（一部は `GradTensor` のみ、または `requires_grad=true` の場合にのみ効果を発揮します）。
 
 #### 形状とインデックス
 - `reshape(shape) -> Tensor`
