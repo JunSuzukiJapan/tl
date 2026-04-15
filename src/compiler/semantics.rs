@@ -2357,7 +2357,7 @@ impl SemanticAnalyzer {
         args: &mut [crate::compiler::ast::Expr],
         _type_ty: &Type,
     ) -> Option<Result<Type, TlError>> {
-        // Check arguments first
+        // 全引数を事前に型検査する
         let mut arg_types = Vec::new();
         for arg in args.iter_mut() {
             match self.check_expr(arg) {
@@ -2366,197 +2366,159 @@ impl SemanticAnalyzer {
             }
         }
 
-        match (type_name, method) {
-            ("String", "from_int") => {
+        // 型別ヘルパーに委譲
+        match type_name {
+            "String"      => self.check_static_string(method, args, &arg_types),
+            "Arena"       => self.check_static_arena(method),
+            "Map"         => self.check_static_map(method, args),
+            "Param"       => self.check_static_param(method, args, &arg_types),
+            "Path"        => self.check_static_path(method, args),
+            "File"        => self.check_static_file(method, args),
+            "I64"         => self.check_static_i64(method),
+            "Tensor"      => self.check_static_tensor(method, args),
+            "System"      => self.check_static_system(method, args),
+            "VarBuilder"  => self.check_static_varbuilder(method, args),
+            "Env"         => self.check_static_env(method, args),
+            "Tokenizer"   => self.check_static_tokenizer(method, args),
+            "KVCache"     => self.check_static_kvcache(method, args),
+            "Http"        => self.check_static_http(method, args),
+            "Image"       => self.check_static_image(method, args),
+            _             => None,
+        }
+    }
+
+    // ── 型別静的メソッド検査ヘルパー ──────────────────────────────────────────
+
+    fn check_static_string(&mut self, method: &str, args: &mut [crate::compiler::ast::Expr], _arg_types: &[Type]) -> Option<Result<Type, TlError>> {
+        match method {
+            "from_int" => {
                 if args.len() != 1 {
-                    return Some(self.err(
-                        SemanticError::ArgumentCountMismatch {
-                            name: "String::from_int".into(),
-                            expected: 1,
-                            found: args.len(),
-                        },
-                        None,
-                    ));
+                    return Some(self.err(SemanticError::ArgumentCountMismatch {
+                        name: "String::from_int".into(), expected: 1, found: args.len(),
+                    }, None));
                 }
                 Some(Ok(Type::String("String".to_string())))
             }
+            _ => None,
+        }
+    }
 
-            ("Arena", "get_offset") => Some(Ok(Type::I64)),
-            ("Arena", "alloc") => Some(Ok(Type::I64)),
-            ("Arena", "init") => Some(Ok(Type::Void)),
-            ("Arena", "is_active") => Some(Ok(Type::Bool)),
-            ("Map", "load") => {
+    fn check_static_arena(&mut self, method: &str) -> Option<Result<Type, TlError>> {
+        match method {
+            "get_offset" => Some(Ok(Type::I64)),
+            "alloc"      => Some(Ok(Type::I64)),
+            "init"       => Some(Ok(Type::Void)),
+            "is_active"  => Some(Ok(Type::Bool)),
+            _            => None,
+        }
+    }
+
+    fn check_static_map(&mut self, method: &str, args: &mut [crate::compiler::ast::Expr]) -> Option<Result<Type, TlError>> {
+        match method {
+            "load" => {
                 if args.len() != 1 {
-                    return Some(self.err(
-                        SemanticError::ArgumentCountMismatch {
-                            name: "Map::load".into(),
-                            expected: 1,
-                            found: args.len(),
-                        },
-                        None,
-                    ));
+                    return Some(self.err(SemanticError::ArgumentCountMismatch {
+                        name: "Map::load".into(), expected: 1, found: args.len(),
+                    }, None));
                 }
                 Some(Ok(Type::Struct("Map".to_string(), vec![])))
             }
-            ("Param", "save_all") | ("Param", "load_all") => {
+            _ => None,
+        }
+    }
+
+    fn check_static_param(&mut self, method: &str, args: &mut [crate::compiler::ast::Expr], arg_types: &[Type]) -> Option<Result<Type, TlError>> {
+        let str_ty = Type::String("String".to_string());
+        match method {
+            "save_all" | "load_all" => {
                 if args.is_empty() || args.len() > 2 {
-                    return Some(self.err(
-                        SemanticError::ArgumentCountMismatch {
-                            name: format!("Param::{}", method),
-                            expected: 2, // 1 or 2
-                            found: args.len(),
-                        },
-                        None,
-                    ));
+                    return Some(self.err(SemanticError::ArgumentCountMismatch {
+                        name: format!("Param::{}", method), expected: 2, found: args.len(),
+                    }, None));
                 }
                 Some(Ok(Type::Void))
             }
-            ("Param", "save") => {
+            "save" => {
                 if args.len() != 2 {
-                    return Some(self.err(
-                        SemanticError::ArgumentCountMismatch {
-                            name: "Param::save".into(),
-                            expected: 2,
-                            found: args.len(),
-                        },
-                        None,
-                    ));
+                    return Some(self.err(SemanticError::ArgumentCountMismatch {
+                        name: "Param::save".into(), expected: 2, found: args.len(),
+                    }, None));
                 }
                 match &arg_types[0] {
                     Type::Struct(_, _) | Type::Tensor(_, _) => {}
-                    found_ty => {
-                        return Some(self.err(
-                            SemanticError::TypeMismatch {
-                                expected: Type::Struct("Struct".to_string(), vec![]),
-                                found: found_ty.clone(),
-                            },
-                            None,
-                        ));
-                    }
+                    found_ty => return Some(self.err(SemanticError::TypeMismatch {
+                        expected: Type::Struct("Struct".to_string(), vec![]),
+                        found: found_ty.clone(),
+                    }, None)),
                 }
-                if arg_types[1] != Type::String("String".to_string()) {
-                    return Some(self.err(
-                        SemanticError::TypeMismatch {
-                            expected: Type::String("String".to_string()),
-                            found: arg_types[1].clone(),
-                        },
-                        None,
-                    ));
+                if arg_types[1] != str_ty {
+                    return Some(self.err(SemanticError::TypeMismatch {
+                        expected: str_ty, found: arg_types[1].clone(),
+                    }, None));
                 }
                 Some(Ok(Type::Void))
             }
-            ("Param", "load") => {
+            "load" => {
                 if args.is_empty() || args.len() > 2 {
-                    return Some(self.err(
-                        SemanticError::ArgumentCountMismatch {
-                            name: "Param::load".into(),
-                            expected: 2, // 1 or 2
-                            found: args.len(),
-                        },
-                        None,
-                    ));
+                    return Some(self.err(SemanticError::ArgumentCountMismatch {
+                        name: "Param::load".into(), expected: 2, found: args.len(),
+                    }, None));
                 }
                 if args.len() == 2 {
                     match &arg_types[0] {
                         Type::Struct(_, _) => {}
-                        found_ty => {
-                            return Some(self.err(
-                                SemanticError::TypeMismatch {
-                                    expected: Type::Struct("Struct".to_string(), vec![]),
-                                    found: found_ty.clone(),
-                                },
-                                None,
-                            ));
-                        }
+                        found_ty => return Some(self.err(SemanticError::TypeMismatch {
+                            expected: Type::Struct("Struct".to_string(), vec![]),
+                            found: found_ty.clone(),
+                        }, None)),
                     }
-                    if arg_types[1] != Type::String("String".to_string()) {
-                        return Some(self.err(
-                            SemanticError::TypeMismatch {
-                                expected: Type::String("String".to_string()),
-                                found: arg_types[1].clone(),
-                            },
-                            None,
-                        ));
+                    if arg_types[1] != str_ty {
+                        return Some(self.err(SemanticError::TypeMismatch {
+                            expected: str_ty, found: arg_types[1].clone(),
+                        }, None));
                     }
-                    Some(Ok(arg_types[0].clone())) // load(struct, path) -> struct (returns the passed struct instance)
+                    Some(Ok(arg_types[0].clone()))
                 } else {
-                    if arg_types[0] != Type::String("String".to_string()) {
-                        return Some(self.err(
-                            SemanticError::TypeMismatch {
-                                expected: Type::String("String".to_string()),
-                                found: arg_types[0].clone(),
-                            },
-                            None,
-                        ));
+                    if arg_types[0] != str_ty {
+                        return Some(self.err(SemanticError::TypeMismatch {
+                            expected: str_ty, found: arg_types[0].clone(),
+                        }, None));
                     }
-                    Some(Ok(Type::Tensor(Box::new(Type::F32), 0))) // load(path) -> Tensor
+                    Some(Ok(Type::Tensor(Box::new(Type::F32), 0)))
                 }
             }
-            ("Param", "add") => {
+            "add" => {
                 if args.len() != 2 {
-                    return Some(self.err(
-                        SemanticError::ArgumentCountMismatch {
-                            name: "Param::add".into(),
-                            expected: 2,
-                            found: args.len(),
-                        },
-                        None,
-                    ));
+                    return Some(self.err(SemanticError::ArgumentCountMismatch {
+                        name: "Param::add".into(), expected: 2, found: args.len(),
+                    }, None));
                 }
                 Some(Ok(Type::Void))
             }
-            ("Param", "register") => {
+            "register" => {
                 if args.len() != 1 {
-                    return Some(self.err(
-                        SemanticError::ArgumentCountMismatch {
-                            name: "Param::register".into(),
-                            expected: 1,
-                            found: args.len(),
-                        },
-                        None,
-                    ));
+                    return Some(self.err(SemanticError::ArgumentCountMismatch {
+                        name: "Param::register".into(), expected: 1, found: args.len(),
+                    }, None));
                 }
-                let t = self.check_expr(&mut args[0]).unwrap(); // Already checked above
+                let t = self.check_expr(&mut args[0]).unwrap();
                 Some(Ok(t))
             }
-            ("Param", "update_all") => {
-                if args.len() != 1 {
-                    return Some(self.err(
-                        SemanticError::ArgumentCountMismatch {
-                            name: "Param::update_all".into(),
-                            expected: 1,
-                            found: args.len(),
-                        },
-                        None,
-                    ));
+            "update_all" | "register_modules" => {
+                let n = if method == "update_all" { 1 } else { 1 };
+                if args.len() != n {
+                    return Some(self.err(SemanticError::ArgumentCountMismatch {
+                        name: format!("Param::{}", method), expected: n, found: args.len(),
+                    }, None));
                 }
                 Some(Ok(Type::Void))
             }
-            ("Param", "register_modules") => {
-                if args.len() != 1 {
-                    return Some(self.err(
-                        SemanticError::ArgumentCountMismatch {
-                            name: "Param::register_modules".into(),
-                            expected: 1,
-                            found: args.len(),
-                        },
-                        None,
-                    ));
-                }
-                Some(Ok(Type::Void))
-            }
-            ("Param", "checkpoint") => {
+            "checkpoint" => {
                 if args.len() != 2 {
-                    return Some(self.err(
-                        SemanticError::ArgumentCountMismatch {
-                            name: "Param::checkpoint".into(),
-                            expected: 2,
-                            found: args.len(),
-                        },
-                        None,
-                    ));
+                    return Some(self.err(SemanticError::ArgumentCountMismatch {
+                        name: "Param::checkpoint".into(), expected: 2, found: args.len(),
+                    }, None));
                 }
-                // Check if first arg is a valid method reference (obj.method)
                 let mut is_valid_method_ref = false;
                 if let ExprKind::FieldAccess(obj, method_name) = &mut args[0].inner {
                     if let Ok(obj_type) = self.check_expr(obj) {
@@ -2574,301 +2536,246 @@ impl SemanticAnalyzer {
                         }
                     }
                 }
-                if !is_valid_method_ref {
-                    let _ = self.check_expr(&mut args[0]); // Fallback to normal check
-                }
-                let arg1_type = self.check_expr(&mut args[1]).unwrap(); // Already checked above
+                if !is_valid_method_ref { let _ = self.check_expr(&mut args[0]); }
+                let arg1_type = self.check_expr(&mut args[1]).unwrap();
                 Some(Ok(arg1_type))
             }
-            ("Param", "set_device") => {
+            "set_device" => {
                 if args.len() != 1 {
-                    return Some(self.err(
-                        SemanticError::ArgumentCountMismatch {
-                            name: "Param::set_device".into(),
-                            expected: 1,
-                            found: args.len(),
-                        },
-                        None,
-                    ));
+                    return Some(self.err(SemanticError::ArgumentCountMismatch {
+                        name: "Param::set_device".into(), expected: 1, found: args.len(),
+                    }, None));
                 }
                 Some(Ok(Type::Void))
             }
-            ("Path", "new") => {
+            _ => None,
+        }
+    }
+
+    fn check_static_path(&mut self, method: &str, args: &mut [crate::compiler::ast::Expr]) -> Option<Result<Type, TlError>> {
+        match method {
+            "new" => {
                 if args.len() != 1 {
-                    return Some(self.err(
-                        SemanticError::ArgumentCountMismatch {
-                            name: "Path::new".into(),
-                            expected: 1,
-                            found: args.len(),
-                        },
-                        None,
-                    ));
+                    return Some(self.err(SemanticError::ArgumentCountMismatch {
+                        name: "Path::new".into(), expected: 1, found: args.len(),
+                    }, None));
                 }
                 Some(Ok(Type::Struct("Path".to_string(), vec![])))
             }
-            ("Path", "exists") => {
+            "exists" => {
                 if args.len() != 1 {
-                    return Some(self.err(
-                        SemanticError::ArgumentCountMismatch {
-                            name: "Path::exists".into(),
-                            expected: 1,
-                            found: args.len(),
-                        },
-                        None,
-                    ));
+                    return Some(self.err(SemanticError::ArgumentCountMismatch {
+                        name: "Path::exists".into(), expected: 1, found: args.len(),
+                    }, None));
                 }
                 Some(Ok(Type::Bool))
             }
-            ("File", "open") => {
+            _ => None,
+        }
+    }
+
+    fn check_static_file(&mut self, method: &str, args: &mut [crate::compiler::ast::Expr]) -> Option<Result<Type, TlError>> {
+        match method {
+            "open" => {
                 if args.is_empty() || args.len() > 2 {
-                    return Some(self.err(
-                        SemanticError::ArgumentCountMismatch {
-                            name: "File::open".into(),
-                            expected: 2,
-                            found: args.len(),
-                        },
-                        None,
-                    ));
+                    return Some(self.err(SemanticError::ArgumentCountMismatch {
+                        name: "File::open".into(), expected: 2, found: args.len(),
+                    }, None));
                 }
                 Some(Ok(Type::Struct("File".to_string(), vec![])))
             }
-            ("File", "exists") | ("File", "read") | ("File", "write") | ("File", "read_binary") => {
+            "exists" | "read" | "write" | "read_binary" => {
                 if args.len() != 1 && args.len() != 2 {
-                    return Some(self.err(
-                        SemanticError::ArgumentCountMismatch {
-                            name: format!("File::{}", method),
-                            expected: 1,
-                            found: args.len(),
-                        },
-                        None,
-                    ));
+                    return Some(self.err(SemanticError::ArgumentCountMismatch {
+                        name: format!("File::{}", method), expected: 1, found: args.len(),
+                    }, None));
                 }
                 match method {
-                    "exists" => Some(Ok(Type::Bool)),
-                    "read" => Some(Ok(Type::String("String".to_string()))),
+                    "exists"      => Some(Ok(Type::Bool)),
+                    "read"        => Some(Ok(Type::String("String".to_string()))),
                     "read_binary" => Some(Ok(Type::Struct("Vec".to_string(), vec![Type::U8]))),
-                    "write" => Some(Ok(Type::Bool)),
-                    _ => None,
+                    "write"       => Some(Ok(Type::Bool)),
+                    _             => None,
                 }
             }
-            ("File", "download") => {
+            "download" => {
                 if args.len() != 2 {
-                    return Some(self.err(
-                        SemanticError::ArgumentCountMismatch {
-                            name: "File::download".into(),
-                            expected: 2,
-                            found: args.len(),
-                        },
-                        None,
-                    ));
+                    return Some(self.err(SemanticError::ArgumentCountMismatch {
+                        name: "File::download".into(), expected: 2, found: args.len(),
+                    }, None));
                 }
                 Some(Ok(Type::Bool))
             }
-            ("I64", "get_offset") => Some(Ok(Type::I64)),
-            // Tensor static methods for llama3
-            ("Tensor", "new_causal_mask") => {
+            _ => None,
+        }
+    }
+
+    fn check_static_i64(&mut self, method: &str) -> Option<Result<Type, TlError>> {
+        match method {
+            "get_offset" => Some(Ok(Type::I64)),
+            _ => None,
+        }
+    }
+
+    fn check_static_tensor(&mut self, method: &str, args: &mut [crate::compiler::ast::Expr]) -> Option<Result<Type, TlError>> {
+        match method {
+            "new_causal_mask" => {
                 if args.len() != 1 {
-                    return Some(self.err(
-                        SemanticError::ArgumentCountMismatch {
-                            name: "Tensor::new_causal_mask".into(),
-                            expected: 1,
-                            found: args.len(),
-                        },
-                        None,
-                    ));
+                    return Some(self.err(SemanticError::ArgumentCountMismatch {
+                        name: "Tensor::new_causal_mask".into(), expected: 1, found: args.len(),
+                    }, None));
                 }
                 Some(Ok(Type::Tensor(Box::new(Type::F32), 2)))
             }
-            ("Tensor", "rope_new_cos") | ("Tensor", "rope_new_sin") => {
-                // rope_new_cos(dim, max_seq_len, base) -> Tensor<f32, 2>
+            "rope_new_cos" | "rope_new_sin" => {
                 if args.len() != 3 {
-                    return Some(self.err(
-                        SemanticError::ArgumentCountMismatch {
-                            name: format!("Tensor::{}", method),
-                            expected: 3,
-                            found: args.len(),
-                        },
-                        None,
-                    ));
+                    return Some(self.err(SemanticError::ArgumentCountMismatch {
+                        name: format!("Tensor::{}", method), expected: 3, found: args.len(),
+                    }, None));
                 }
                 Some(Ok(Type::Tensor(Box::new(Type::F32), 2)))
             }
-            // System static methods
-            ("System", "memory_mb")
-            | ("System", "metal_pool_mb")
-            | ("System", "metal_pool_count")
-            | ("System", "metal_pool_bytes")
-            | ("System", "pool_count") => Some(Ok(Type::I64)),
-            ("System", "scope_depth") => Some(Ok(Type::I64)),
-            ("System", "time") => Some(Ok(Type::I64)),
-            ("System", "refcount_count") => Some(Ok(Type::I64)),
-            ("System", "metal_sync") => Some(Ok(Type::Void)),
-            ("System", "sleep") => {
+            _ => None,
+        }
+    }
+
+    fn check_static_system(&mut self, method: &str, args: &mut [crate::compiler::ast::Expr]) -> Option<Result<Type, TlError>> {
+        match method {
+            "memory_mb" | "metal_pool_mb" | "memory_bytes" => Some(Ok(Type::F64)),
+            "metal_pool_count" | "metal_pool_bytes" | "pool_count"
+            | "scope_depth" | "refcount_count" => Some(Ok(Type::I64)),
+            "time"       => Some(Ok(Type::F32)),
+            "metal_sync" | "mem_report" => Some(Ok(Type::Void)),
+            "sleep" | "exit" => {
                 if args.len() != 1 {
-                    return Some(self.err(
-                        SemanticError::ArgumentCountMismatch {
-                            name: "System::sleep".into(),
-                            expected: 1,
-                            found: args.len(),
-                        },
-                        None,
-                    ));
+                    return Some(self.err(SemanticError::ArgumentCountMismatch {
+                        name: format!("System::{}", method), expected: 1, found: args.len(),
+                    }, None));
                 }
                 Some(Ok(Type::Void))
             }
-            ("System", "exit") => {
-                if args.len() != 1 {
-                    return Some(self.err(
-                        SemanticError::ArgumentCountMismatch {
-                            name: "System::exit".into(),
-                            expected: 1,
-                            found: args.len(),
-                        },
-                        None,
-                    ));
-                }
-                Some(Ok(Type::Void))
-            }
-            // VarBuilder static methods
-            ("VarBuilder", "get") => {
+            "platform" | "command" => Some(Ok(Type::String("String".to_string()))),
+            _ => None,
+        }
+    }
+
+    fn check_static_varbuilder(&mut self, method: &str, args: &mut [crate::compiler::ast::Expr]) -> Option<Result<Type, TlError>> {
+        match method {
+            "get" => {
                 if args.is_empty() || args.len() > 2 {
-                    return Some(self.err(
-                        SemanticError::ArgumentCountMismatch {
-                            name: "VarBuilder::get".into(),
-                            expected: 2,
-                            found: args.len(),
-                        },
-                        None,
-                    ));
+                    return Some(self.err(SemanticError::ArgumentCountMismatch {
+                        name: "VarBuilder::get".into(), expected: 2, found: args.len(),
+                    }, None));
                 }
                 Some(Ok(Type::Tensor(Box::new(Type::F32), 0)))
             }
-            ("VarBuilder", "grad") => {
+            "grad" => {
                 if args.len() != 1 {
-                    return Some(self.err(
-                        SemanticError::ArgumentCountMismatch {
-                            name: "VarBuilder::grad".into(),
-                            expected: 1,
-                            found: args.len(),
-                        },
-                        None,
-                    ));
+                    return Some(self.err(SemanticError::ArgumentCountMismatch {
+                        name: "VarBuilder::grad".into(), expected: 1, found: args.len(),
+                    }, None));
                 }
                 Some(Ok(Type::Tensor(Box::new(Type::F32), 0)))
             }
-            ("VarBuilder", "update") | ("VarBuilder", "save") => Some(Ok(Type::Void)),
-            // Env static methods
-            ("Env", "set") => {
+            "update" | "save" => Some(Ok(Type::Void)),
+            _ => None,
+        }
+    }
+
+    fn check_static_env(&mut self, method: &str, args: &mut [crate::compiler::ast::Expr]) -> Option<Result<Type, TlError>> {
+        match method {
+            "set" => {
                 if args.len() != 2 {
-                    return Some(self.err(
-                        SemanticError::ArgumentCountMismatch {
-                            name: "Env::set".into(),
-                            expected: 2,
-                            found: args.len(),
-                        },
-                        None,
-                    ));
+                    return Some(self.err(SemanticError::ArgumentCountMismatch {
+                        name: "Env::set".into(), expected: 2, found: args.len(),
+                    }, None));
                 }
                 Some(Ok(Type::Void))
             }
-            ("Env", "get") => {
+            "get" => {
                 if args.len() != 1 {
-                    return Some(self.err(
-                        SemanticError::ArgumentCountMismatch {
-                            name: "Env::get".into(),
-                            expected: 1,
-                            found: args.len(),
-                        },
-                        None,
-                    ));
+                    return Some(self.err(SemanticError::ArgumentCountMismatch {
+                        name: "Env::get".into(), expected: 1, found: args.len(),
+                    }, None));
                 }
                 Some(Ok(Type::String("String".to_string())))
             }
-            // Tokenizer static methods
-            ("Tokenizer", "new") => {
+            _ => None,
+        }
+    }
+
+    fn check_static_tokenizer(&mut self, method: &str, args: &mut [crate::compiler::ast::Expr]) -> Option<Result<Type, TlError>> {
+        match method {
+            "new" => {
                 if args.len() != 1 {
-                    return Some(self.err(
-                        SemanticError::ArgumentCountMismatch {
-                            name: "Tokenizer::new".into(),
-                            expected: 1,
-                            found: args.len(),
-                        },
-                        None,
-                    ));
+                    return Some(self.err(SemanticError::ArgumentCountMismatch {
+                        name: "Tokenizer::new".into(), expected: 1, found: args.len(),
+                    }, None));
                 }
                 Some(Ok(Type::Struct("Tokenizer".to_string(), vec![])))
             }
-            // KVCache static methods
-            ("KVCache", "new") => {
+            _ => None,
+        }
+    }
+
+    fn check_static_kvcache(&mut self, method: &str, args: &mut [crate::compiler::ast::Expr]) -> Option<Result<Type, TlError>> {
+        match method {
+            "new" => {
                 if args.len() != 1 {
-                    return Some(self.err(
-                        SemanticError::ArgumentCountMismatch {
-                            name: "KVCache::new".into(),
-                            expected: 1,
-                            found: args.len(),
-                        },
-                        None,
-                    ));
+                    return Some(self.err(SemanticError::ArgumentCountMismatch {
+                        name: "KVCache::new".into(), expected: 1, found: args.len(),
+                    }, None));
                 }
                 Some(Ok(Type::Struct("KVCache".to_string(), vec![])))
             }
-            // Http static methods
-            ("Http", "get") => {
+            _ => None,
+        }
+    }
+
+    fn check_static_http(&mut self, method: &str, args: &mut [crate::compiler::ast::Expr]) -> Option<Result<Type, TlError>> {
+        match method {
+            "get" => {
                 if args.len() != 1 {
-                    return Some(self.err(
-                        SemanticError::ArgumentCountMismatch {
-                            name: "Http::get".into(),
-                            expected: 1,
-                            found: args.len(),
-                        },
-                        None,
-                    ));
+                    return Some(self.err(SemanticError::ArgumentCountMismatch {
+                        name: "Http::get".into(), expected: 1, found: args.len(),
+                    }, None));
                 }
                 Some(Ok(Type::String("String".to_string())))
             }
-            ("Http", "download") => {
+            "download" => {
                 if args.len() != 2 {
-                    return Some(self.err(
-                        SemanticError::ArgumentCountMismatch {
-                            name: "Http::download".into(),
-                            expected: 2,
-                            found: args.len(),
-                        },
-                        None,
-                    ));
+                    return Some(self.err(SemanticError::ArgumentCountMismatch {
+                        name: "Http::download".into(), expected: 2, found: args.len(),
+                    }, None));
                 }
                 Some(Ok(Type::Bool))
             }
-            // Image static methods
-            ("Image", "load_grayscale") => {
+            _ => None,
+        }
+    }
+
+    fn check_static_image(&mut self, method: &str, args: &mut [crate::compiler::ast::Expr]) -> Option<Result<Type, TlError>> {
+        match method {
+            "load_grayscale" => {
                 if args.len() != 1 {
-                    return Some(self.err(
-                        SemanticError::ArgumentCountMismatch {
-                            name: "Image::load_grayscale".into(),
-                            expected: 1,
-                            found: args.len(),
-                        },
-                        None,
-                    ));
+                    return Some(self.err(SemanticError::ArgumentCountMismatch {
+                        name: "Image::load_grayscale".into(), expected: 1, found: args.len(),
+                    }, None));
                 }
                 Some(Ok(Type::Tensor(Box::new(Type::F32), 2)))
             }
-            ("Image", "width") | ("Image", "height") => {
+            "width" | "height" => {
                 if !args.is_empty() {
-                    return Some(self.err(
-                        SemanticError::ArgumentCountMismatch {
-                            name: format!("Image::{}", method),
-                            expected: 0,
-                            found: args.len(),
-                        },
-                        None,
-                    ));
+                    return Some(self.err(SemanticError::ArgumentCountMismatch {
+                        name: format!("Image::{}", method), expected: 0, found: args.len(),
+                    }, None));
                 }
                 Some(Ok(Type::I64))
             }
             _ => None,
         }
     }
+
 
     fn check_lvalue(&mut self, lvalue: &mut LValue) -> Result<Type, TlError> {
         match lvalue {
