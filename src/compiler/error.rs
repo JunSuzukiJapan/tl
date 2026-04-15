@@ -314,8 +314,32 @@ pub enum CodegenErrorKind {
     #[error("invalid generated code: {0}")]
     InvalidCode(String),
 
+    #[error("LLVM builder error: {0}")]
+    LlvmBuilder(String),
+
+    #[error("LLVM context error: {0}")]
+    LlvmContext(String),
+
+    #[error("internal error: {0}")]
+    Internal(String),
+
     #[error("codegen error: {0}")]
     Generic(String),
+}
+
+impl From<String> for TlError {
+    fn from(s: String) -> Self {
+        TlError::Codegen {
+            kind: CodegenErrorKind::Generic(s),
+            span: None,
+        }
+    }
+}
+
+impl From<CodegenErrorKind> for TlError {
+    fn from(kind: CodegenErrorKind) -> Self {
+        TlError::Codegen { kind, span: None }
+    }
 }
 
 /// モノモーフィゼーションエラーの種類

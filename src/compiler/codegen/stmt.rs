@@ -185,10 +185,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                     // Entry_i64_i64-like enum: use memcpy for simplest approach
                     let _enum_def = enum_def.clone();
                     if let Some(enum_llvm_ty) = self.enum_types.get(&effective_mangled_name) {
-                        let size = enum_llvm_ty.size_of().unwrap();
+                        let size = enum_llvm_ty.size_of().ok_or_else(|| "type has no size".to_string())?;
                         let void_ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
-                        let dst_cast = self.builder.build_pointer_cast(dst, void_ptr_ty, "dst_cast").unwrap();
-                        let src_cast = self.builder.build_pointer_cast(src, void_ptr_ty, "src_cast").unwrap();
+                        let dst_cast = self.builder.build_pointer_cast(dst, void_ptr_ty, "dst_cast").map_err(|e| e.to_string())?;
+                        let src_cast = self.builder.build_pointer_cast(src, void_ptr_ty, "src_cast").map_err(|e| e.to_string())?;
                         
                         let memcpy = self.module.get_function("llvm.memcpy.p0.p0.i64")
                             .or_else(|| {
@@ -198,14 +198,14 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 let i1_ty = self.context.bool_type();
                                 let ft = void_ty.fn_type(&[ptr_ty.into(), ptr_ty.into(), i64_ty.into(), i1_ty.into()], false);
                                 Some(self.module.add_function("llvm.memcpy.p0.p0.i64", ft, None))
-                            }).unwrap();
+                            }).ok_or_else(|| "function not found".to_string())?;
                         
                         self.builder.build_call(memcpy, &[
                             dst_cast.into(),
                             src_cast.into(),
                             size.into(),
                             self.context.bool_type().const_zero().into() // isVolatile = false
-                        ], "").unwrap();
+                        ], "").map_err(|e| e.to_string())?;
                         
                         return Ok(());
                     }
@@ -227,10 +227,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                      return Err(format!("LLVM enum type {} not found for copy", mangled_name));
                 };
 
-                let size = enum_llvm_ty.size_of().unwrap();
+                let size = enum_llvm_ty.size_of().ok_or_else(|| "type has no size".to_string())?;
                 let void_ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
-                let dst_cast = self.builder.build_pointer_cast(dst, void_ptr_ty, "dst_cast").unwrap();
-                let src_cast = self.builder.build_pointer_cast(src, void_ptr_ty, "src_cast").unwrap();
+                let dst_cast = self.builder.build_pointer_cast(dst, void_ptr_ty, "dst_cast").map_err(|e| e.to_string())?;
+                let src_cast = self.builder.build_pointer_cast(src, void_ptr_ty, "src_cast").map_err(|e| e.to_string())?;
                 
                 let memcpy = self.module.get_function("llvm.memcpy.p0.p0.i64")
                     .or_else(|| {
@@ -240,14 +240,14 @@ impl<'ctx> CodeGenerator<'ctx> {
                         let i1_ty = self.context.bool_type();
                         let ft = void_ty.fn_type(&[ptr_ty.into(), ptr_ty.into(), i64_ty.into(), i1_ty.into()], false);
                         Some(self.module.add_function("llvm.memcpy.p0.p0.i64", ft, None))
-                    }).unwrap();
+                    }).ok_or_else(|| "function not found".to_string())?;
                 
                 self.builder.build_call(memcpy, &[
                     dst_cast.into(),
                     src_cast.into(),
                     size.into(),
                     self.context.bool_type().const_zero().into() // isVolatile = false
-                ], "").unwrap();
+                ], "").map_err(|e| e.to_string())?;
                 
                 Ok(())
             }
@@ -399,8 +399,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .copied()
                     .ok_or(format!("Enum LLVM type {} not found", mangled_name))?; 
                 
-                let current_block = self.builder.get_insert_block().unwrap();
-                let func = current_block.get_parent().unwrap();
+                let current_block = self.current_block()?;
+                let func = current_block.get_parent().ok_or_else(|| "block has no parent function".to_string())?;
 
                 let ptr = if val.is_pointer_value() {
                     val.into_pointer_value()
@@ -450,7 +450,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 payload_ptr_raw,
                                 self.context.ptr_type(inkwell::AddressSpace::default()),
                                 "payload_cast",
-                            ).unwrap();
+                            ).map_err(|e| e.to_string())?;
                             
                          for (idx, f_ty) in field_types_list.iter().enumerate() {
                              if matches!(f_ty, Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::GradTensor(_, _) | Type::Struct(_, _) | Type::Enum(_, _) | Type::String(_) | Type::Tuple(_)) {
@@ -463,15 +463,15 @@ impl<'ctx> CodeGenerator<'ctx> {
                              }
                          }
                     }
-                    self.builder.build_unconditional_branch(after_switch).unwrap();
+                    self.builder.build_unconditional_branch(after_switch).map_err(|e| e.to_string())?;
                 }
                 self.builder.position_at_end(after_switch);
             }
             Type::Struct(name, generics) => {
                  let mangled_name = if generics.is_empty() { name.clone() } else { self.mangle_type_name(name, generics) };
                  if let Some(struct_def) = self.struct_defs.get(&mangled_name).cloned() {
-                      let current_block = self.builder.get_insert_block().unwrap();
-                      let func = current_block.get_parent().unwrap();
+                      let current_block = self.current_block()?;
+                      let func = current_block.get_parent().ok_or_else(|| "block has no parent function".to_string())?;
                       
                       let ptr = if val.is_pointer_value() {
                           val.into_pointer_value()
@@ -499,7 +499,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                           self.builder.build_call(inc_fn, &[cast_ptr.into()], "").map_err(|e| e.to_string())?;
                       }
 
-                      let st_llvm_ty = *self.struct_types.get(&mangled_name).unwrap();
+                      let st_llvm_ty = *self.struct_types.get(&mangled_name).ok_or_else(|| format!("struct type {} not found", &mangled_name))?;
                       
                       for (i, (_, f_ty)) in struct_def.fields.iter().enumerate() {
                            if matches!(f_ty, Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::GradTensor(_, _) | Type::Struct(_, _) | Type::Enum(_, _) | Type::String(_) | Type::Tuple(_)) {
@@ -527,8 +527,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                  }
             }
             Type::Tuple(elem_types) => {
-                let current_block = self.builder.get_insert_block().unwrap();
-                let func = current_block.get_parent().unwrap();
+                let current_block = self.current_block()?;
+                let func = current_block.get_parent().ok_or_else(|| "block has no parent function".to_string())?;
                 
                 let ptr = if val.is_pointer_value() {
                     val.into_pointer_value()
@@ -540,7 +540,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 let mut field_types = vec![];
                 for ty in elem_types {
-                    field_types.push(self.get_llvm_type(ty).unwrap());
+                    field_types.push(self.get_llvm_type(ty)?);
                 }
                 let tuple_ty = self.context.struct_type(&field_types, false);
                 
@@ -633,8 +633,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let ptr = val.into_pointer_value();
 
                 // Runtime Null Check
-                let current_block = self.builder.get_insert_block().unwrap();
-                let func = current_block.get_parent().unwrap();
+                let current_block = self.current_block()?;
+                let func = current_block.get_parent().ok_or_else(|| "block has no parent function".to_string())?;
                 let free_block = self.context.append_basic_block(func, "free_enum");
                 let merge_block = self.context.append_basic_block(func, "after_free_enum");
 
@@ -743,7 +743,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 self.context.ptr_type(inkwell::AddressSpace::default()), // Opaque ptr
                                 "payload_cast",
                             )
-                            .unwrap();
+                            .map_err(|e| e.to_string())?;
 
                         let substitutor = crate::compiler::ast_subst::TypeSubstitutor::new(subst.clone());
                         for (idx, f_ty) in field_types_list.iter().enumerate() {
@@ -791,14 +791,14 @@ impl<'ctx> CodeGenerator<'ctx> {
                         }
                     }
                     // After recursive calls, branch from current position to after_switch
-                    if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
-                         self.builder.build_unconditional_branch(after_switch).unwrap();
+                    if self.current_block()?.get_terminator().is_none() {
+                         self.builder.build_unconditional_branch(after_switch).map_err(|e| e.to_string())?;
                     }
                 }
 
                 self.builder.position_at_end(after_switch);
-                if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
-                     self.builder.build_unconditional_branch(merge_block).unwrap();
+                if self.current_block()?.get_terminator().is_none() {
+                     self.builder.build_unconditional_branch(merge_block).map_err(|e| e.to_string())?;
                 }
 
                 self.builder.position_at_end(merge_block);
@@ -810,8 +810,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let ptr = val.into_pointer_value();
 
                 // Runtime Null Check
-                let current_block = self.builder.get_insert_block().unwrap();
-                let func = current_block.get_parent().unwrap();
+                let current_block = self.current_block()?;
+                let func = current_block.get_parent().ok_or_else(|| "block has no parent function".to_string())?;
                 let free_block = self.context.append_basic_block(func, "free_tensor");
                 let merge_block = self.context.append_basic_block(func, "after_free");
 
@@ -830,7 +830,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let void_ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
                 let _cast_void = self.builder
                     .build_pointer_cast(ptr, void_ptr_ty, "tensor_void_cast")
-                    .unwrap();
+                    .map_err(|e| e.to_string())?;
 
                 if mode == super::CLEANUP_FINALIZE {
                     // Call tl_tensor_finalize (Drop content, Keep struct)
@@ -941,14 +941,14 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // --- Proceed with Generation ---
                 
                 // Define Basic Blocks
-                let current_block = self.builder.get_insert_block().unwrap();
-                let func = current_block.get_parent().unwrap();
+                let current_block = self.current_block()?;
+                let func = current_block.get_parent().ok_or_else(|| "block has no parent function".to_string())?;
                 let merge_block = self.context.append_basic_block(func, "after_free");
 
                 // Unregister from Runtime Scope (Safety against double free)
                 if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
                      let void_ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
-                     let cast = self.builder.build_pointer_cast(ptr, void_ptr_ty, "unreg_cast").unwrap();
+                     let cast = self.builder.build_pointer_cast(ptr, void_ptr_ty, "unreg_cast").map_err(|e| e.to_string())?;
                      self.builder.build_call(unreg_fn, &[cast.into()], "").ok(); 
                 }
 
@@ -962,7 +962,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     ptr, 
                     self.context.ptr_type(inkwell::AddressSpace::default()), 
                     "cast_void"
-                ).unwrap();
+                ).map_err(|e| e.to_string())?;
 
                 let call = self
                     .builder
@@ -992,7 +992,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let runtime_name = runtime_name_res.clone();
                 if let Some(fn_val) = self.module.get_function(&runtime_name) {
                      self.builder.build_call(fn_val, &[val.into()], "").map_err(|e| e.to_string())?;
-                     self.builder.build_unconditional_branch(merge_block).unwrap();
+                     self.builder.build_unconditional_branch(merge_block).map_err(|e| e.to_string())?;
                      self.builder.position_at_end(merge_block);
                      return Ok(());
                 } else {
@@ -1001,7 +1001,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                      );
                       if let Some(fn_val) = self.module.get_function(&legacy_name) {
                           self.builder.build_call(fn_val, &[val.into()], "").map_err(|e| e.to_string())?;
-                          self.builder.build_unconditional_branch(merge_block).unwrap();
+                          self.builder.build_unconditional_branch(merge_block).map_err(|e| e.to_string())?;
                           self.builder.position_at_end(merge_block);
                           return Ok(());
                       }
@@ -1050,7 +1050,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             | Type::Enum(_, _)
                             | Type::Tuple(_) | Type::SpecializedType { .. } => {
                                 let f_ptr = self.builder.build_struct_gep(
-                                    *self.struct_types.get(&mangled_name).unwrap(), // Safe: checked existence
+                                    *self.struct_types.get(&mangled_name).ok_or_else(|| format!("struct type {} not found", &mangled_name))?, // Safe: checked existence
                                     ptr, i as u32, "field_gep"
                                 ).map_err(|e| e.to_string())?;
                                 
@@ -1063,7 +1063,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             }
                             Type::Array(_, _) => {
                                 let f_ptr = self.builder.build_struct_gep(
-                                    *self.struct_types.get(&mangled_name).unwrap(), // Safe: checked existence
+                                    *self.struct_types.get(&mangled_name).ok_or_else(|| format!("struct type {} not found", &mangled_name))?, // Safe: checked existence
                                     ptr, i as u32, "field_gep"
                                 ).map_err(|e| e.to_string())?;
                                 self.emit_recursive_free(f_ptr.into(), f_ty, super::CLEANUP_FULL)?;
@@ -1079,7 +1079,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     let mem_free_fn = self.module.get_function("tl_mem_free")
                          .ok_or("tl_mem_free not found")?;
                     let void_ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
-                    let cast_void = self.builder.build_pointer_cast(ptr, void_ptr_ty, "cast_void").unwrap();
+                    let cast_void = self.builder.build_pointer_cast(ptr, void_ptr_ty, "cast_void").map_err(|e| e.to_string())?;
                     self.builder.build_call(mem_free_fn, &[cast_void.into()], "").map_err(|e| e.to_string())?;
                 }
                 self.builder.build_unconditional_branch(merge_block)
@@ -1104,8 +1104,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                   let ptr = val.into_pointer_value();
                   
                   // Runtime null check
-                  let current_block = self.builder.get_insert_block().unwrap();
-                  let func = current_block.get_parent().unwrap();
+                  let current_block = self.current_block()?;
+                  let func = current_block.get_parent().ok_or_else(|| "block has no parent function".to_string())?;
                   let free_block = self.context.append_basic_block(func, "free_string");
                   let merge_block = self.context.append_basic_block(func, "after_string_free");
 
@@ -1114,9 +1114,9 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                   self.builder.position_at_end(free_block);
                   // Cast to opaque pointer if needed (though StringStruct* is ptr)
-                  let cast_ptr = self.builder.build_pointer_cast(ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "cast_str").unwrap();
+                  let cast_ptr = self.builder.build_pointer_cast(ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "cast_str").map_err(|e| e.to_string())?;
                   self.builder.build_call(free_fn, &[cast_ptr.into()], "").map_err(|e| e.to_string())?;
-                  self.builder.build_unconditional_branch(merge_block).unwrap();
+                  self.builder.build_unconditional_branch(merge_block).map_err(|e| e.to_string())?;
 
                   self.builder.position_at_end(merge_block);
                   return Ok(());
@@ -1180,8 +1180,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                  
                  for (i, ty) in elem_types.iter().enumerate() {
                       if matches!(ty, Type::Tensor(_, _) | Type::String(_) | Type::Struct(_, _)) {
-                           let f_ptr = self.builder.build_struct_gep(struct_ty, ptr, i as u32, "tup_elem").unwrap();
-                           let load = self.builder.build_load(self.context.ptr_type(inkwell::AddressSpace::default()), f_ptr, "load").unwrap();
+                           let f_ptr = self.builder.build_struct_gep(struct_ty, ptr, i as u32, "tup_elem").map_err(|e| e.to_string())?;
+                           let load = self.builder.build_load(self.context.ptr_type(inkwell::AddressSpace::default()), f_ptr, "load").map_err(|e| e.to_string())?;
                            self.emit_recursive_free(load, ty, super::CLEANUP_FULL)?;
                       }
                  }
@@ -1194,7 +1194,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                  if mode == super::CLEANUP_FULL {
                       let free = self.module.get_function("free").or_else(|| self.module.get_function("libc_free"));
                       if let Some(f) = free {
-                            self.builder.build_call(f, &[ptr.into()], "").unwrap();
+                            self.builder.build_call(f, &[ptr.into()], "").map_err(|e| e.to_string())?;
                       }
                  }
             }
@@ -1226,7 +1226,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     ptr,
                     self.context.ptr_type(inkwell::AddressSpace::default()),
                     "cast_unreg_tens"
-                ).unwrap();
+                ).map_err(|e| e.to_string())?;
                 
                 self.builder.build_call(unreg_fn, &[cast_ptr.into()], "").map_err(|e| e.to_string())?;
             }
@@ -1244,7 +1244,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                      let ptr = val.into_pointer_value();
                      let unreg_fn = self.module.get_function("tl_mem_unregister")
                         .ok_or("tl_mem_unregister not found")?;
-                     let cast_ptr = self.builder.build_pointer_cast(ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "cast_unreg_str").unwrap();
+                     let cast_ptr = self.builder.build_pointer_cast(ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "cast_unreg_str").map_err(|e| e.to_string())?;
                      self.builder.build_call(unreg_fn, &[cast_ptr.into()], "").map_err(|e| e.to_string())?;
                      return Ok(());
                 }                let simple_name = name.as_str();
@@ -1265,7 +1265,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     ptr,
                     self.context.ptr_type(inkwell::AddressSpace::default()),
                     "cast_unreg_struct"
-                ).unwrap();
+                ).map_err(|e| e.to_string())?;
 
                 self.builder.build_call(unreg_fn, &[cast_ptr.into()], "").map_err(|e| e.to_string())?;
 
@@ -1295,7 +1295,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                  let ptr = val.into_pointer_value();
                  let unreg_fn = self.module.get_function("tl_mem_unregister")
                     .ok_or("tl_mem_unregister not found")?;
-                 let cast_ptr = self.builder.build_pointer_cast(ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "cast_unreg_tup").unwrap();
+                 let cast_ptr = self.builder.build_pointer_cast(ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "cast_unreg_tup").map_err(|e| e.to_string())?;
                  self.builder.build_call(unreg_fn, &[cast_ptr.into()], "").map_err(|e| e.to_string())?;
 
                  // Need LLVM type for GEP
@@ -1324,8 +1324,8 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                  for (i, elem_ty) in types.iter().enumerate() {
                       if matches!(elem_ty, Type::Tensor(_, _) | Type::Struct(_, _) | Type::Tuple(_)) {
-                           let f_ptr = self.builder.build_struct_gep(struct_ty, ptr, i as u32, "tup_gep_unreg").unwrap();
-                           let f_val = self.builder.build_load(self.context.ptr_type(inkwell::AddressSpace::default()), f_ptr, "tup_val_unreg").unwrap();
+                           let f_ptr = self.builder.build_struct_gep(struct_ty, ptr, i as u32, "tup_gep_unreg").map_err(|e| e.to_string())?;
+                           let f_val = self.builder.build_load(self.context.ptr_type(inkwell::AddressSpace::default()), f_ptr, "tup_val_unreg").map_err(|e| e.to_string())?;
                            self.emit_recursive_unregister(f_val, elem_ty)?;
                       }
                  }
@@ -1335,7 +1335,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                  let ptr = val.into_pointer_value();
                  let unreg_fn = self.module.get_function("tl_mem_unregister")
                     .ok_or("tl_mem_unregister not found")?;
-                 let cast_ptr = self.builder.build_pointer_cast(ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "cast_unreg_enum").unwrap();
+                 let cast_ptr = self.builder.build_pointer_cast(ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "cast_unreg_enum").map_err(|e| e.to_string())?;
                  self.builder.build_call(unreg_fn, &[cast_ptr.into()], "").map_err(|e| e.to_string())?;
 
                  // Deep unregister: recurse into variant fields
@@ -1364,8 +1364,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                          .copied();
 
                      if let Some(enum_ty) = enum_ty {
-                         let current_block = self.builder.get_insert_block().unwrap();
-                         let func = current_block.get_parent().unwrap();
+                         let current_block = self.current_block()?;
+                         let func = current_block.get_parent().ok_or_else(|| "block has no parent function".to_string())?;
                          let after_switch = self.context.append_basic_block(func, "after_unreg_enum_switch");
 
                          // Null check
@@ -1442,7 +1442,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                      payload_ptr_raw,
                                      self.context.ptr_type(inkwell::AddressSpace::default()),
                                      "payload_unreg_cast",
-                                 ).unwrap();
+                                 ).map_err(|e| e.to_string())?;
 
                                  let substitutor = crate::compiler::ast_subst::TypeSubstitutor::new(subst.clone());
                                  for (idx, f_ty) in field_types_list.iter().enumerate() {
@@ -1460,8 +1460,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                                  }
                              }
 
-                             if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
-                                 self.builder.build_unconditional_branch(after_switch).unwrap();
+                             if self.current_block()?.get_terminator().is_none() {
+                                 self.builder.build_unconditional_branch(after_switch).map_err(|e| e.to_string())?;
                              }
                          }
 
@@ -1515,9 +1515,9 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                     // NOTE: Removed clone to preserve gradients
 
-                    if self.variables.last().unwrap().contains_key(name) {
+                    if self.variables.last().ok_or_else(|| "no variable scope".to_string())?.contains_key(name) {
                         // Start of double-free fix logic
-                        let (_var_val, _, cleanup_mode) = &self.variables.last().unwrap()[name];
+                        let (_var_val, _, cleanup_mode) = &self.variables.last().ok_or_else(|| "no variable scope".to_string())?[name];
 
                         if *cleanup_mode != super::CLEANUP_NONE {
                             // Restore Free Logic for RefCounting
@@ -1528,7 +1528,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             self.emit_recursive_free(old_val, &val_ty, *cleanup_mode)?;
                         }
 
-                        let ptr = self.variables.last().unwrap()[name].0.into_pointer_value();
+                        let ptr = self.variables.last().ok_or_else(|| "no variable scope".to_string())?[name].0.into_pointer_value();
                         self.builder
                             .build_store(ptr, val_ir)
                             .map_err(|e| e.to_string())?;
@@ -1536,15 +1536,15 @@ impl<'ctx> CodeGenerator<'ctx> {
                         // Update variable map to mark as owned (should_free = true)
                         self.variables
                             .last_mut()
-                            .unwrap()
+                            .ok_or_else(|| "no variable scope".to_string())?
                             .insert(name.clone(), (ptr.into(), val_ty, super::CLEANUP_FULL));
                     } else {
                         let fn_val = self
                             .builder
                             .get_insert_block()
-                            .unwrap()
+                            .ok_or_else(|| "no current basic block".to_string())?
                             .get_parent()
-                            .unwrap();
+                            .ok_or_else(|| "block has no parent function".to_string())?;
                         let ptr = self.create_entry_block_alloca(fn_val, name, &val_ty)?;
                         self.builder
                             .build_store(ptr, val_ir)
@@ -1555,7 +1555,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                         self.variables
                             .last_mut()
-                            .unwrap()
+                            .ok_or_else(|| "no variable scope".to_string())?
                             .insert(name.clone(), (ptr.into(), val_ty, super::CLEANUP_FULL));
                     }
                 } else {
@@ -1595,7 +1595,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             let llvm_elem_ty = self.get_llvm_type(inner_ty)?;
                             let arr_ty = Type::Array(inner_ty.clone(), *size);
                             
-                            let current_function = self.builder.get_insert_block().unwrap().get_parent().unwrap();
+                            let current_function = self.current_function()?;
                             let alloca = self.create_entry_block_alloca(current_function, name, &arr_ty)?;
                             
                             let i64_type = self.context.i64_type();
@@ -1628,7 +1628,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             
                             // Register variable (stack-allocated, no cleanup needed)
                             let cleanup_mode = super::CLEANUP_NONE;
-                            self.variables.last_mut().unwrap().insert(
+                            self.variables.last_mut().ok_or_else(|| "no variable scope".to_string())?.insert(
                                 name.clone(),
                                 (alloca.into(), arr_ty, cleanup_mode),
                             );
@@ -1691,12 +1691,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                                       // Assuming 96 bytes for Tensor struct
                                       let size = self.context.i64_type().const_int(96, false);
                                       let slot = self.context.i64_type().const_int(slot_id as u64, false);
-                                      let call = self.builder.build_call(buf_fn, &[slot.into(), size.into()], "slot_buf").unwrap();
+                                      let call = self.builder.build_call(buf_fn, &[slot.into(), size.into()], "slot_buf").map_err(|e| e.to_string())?;
                                       let raw_ptr = match call.try_as_basic_value() {
                                           inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
                                           _ => panic!("tl_mem_get_buffer returned non-basic value"),
                                       };
-                                      let cast_ptr = self.builder.build_pointer_cast(raw_ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "cast_slot").unwrap();
+                                      let cast_ptr = self.builder.build_pointer_cast(raw_ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "cast_slot").map_err(|e| e.to_string())?;
                                       
                                       // Call compile_fn_call_dps
                                       let res = self.compile_fn_call_dps(fn_name, args, Some(cast_ptr.into()))?;
@@ -1805,9 +1805,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let current_function = self
                     .builder
                     .get_insert_block()
-                    .unwrap()
+                    .ok_or_else(|| "no current basic block".to_string())?
                     .get_parent()
-                    .unwrap();
+                    .ok_or_else(|| "block has no parent function".to_string())?;
 
                 // Check for shadowing in CURRENT scope
                 let shadow_info = if let Some(scope) = self.variables.last() {
@@ -1862,7 +1862,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 self.variables
                     .last_mut()
-                    .unwrap()
+                    .ok_or_else(|| "no variable scope".to_string())?
                     .insert(
                         name.clone(),
                         (
@@ -1968,10 +1968,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                                     let cast_ptr = self
                                         .builder
                                         .build_pointer_cast(ptr, void_ptr_type, "cast_aq_ret")
-                                        .unwrap();
+                                        .map_err(|e| e.to_string())?;
                                     self.builder
                                         .build_call(acquire_fn, &[cast_ptr.into()], "")
-                                        .unwrap();
+                                        .map_err(|e| e.to_string())?;
                                 }
                             }
                             Type::Struct(_, _) => {
@@ -1982,8 +1982,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
                                     let ptr = val.into_pointer_value();
                                     let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
-                                    let cast_ptr = self.builder.build_pointer_cast(ptr, ptr_type, "cast_unreg_ret").unwrap();
-                                    self.builder.build_call(unreg_fn, &[cast_ptr.into()], "").unwrap();
+                                    let cast_ptr = self.builder.build_pointer_cast(ptr, ptr_type, "cast_unreg_ret").map_err(|e| e.to_string())?;
+                                    self.builder.build_call(unreg_fn, &[cast_ptr.into()], "").map_err(|e| e.to_string())?;
                                 }
                             }
                             _ => {}
@@ -1991,30 +1991,30 @@ impl<'ctx> CodeGenerator<'ctx> {
                     }
 
                     if uses_sret {
-                        let sret_ptr = self.current_sret_dest.unwrap();
+                        let sret_ptr = self.current_sret_dest.ok_or_else(|| "no sret destination set".to_string())?;
                         let src_ptr = val.into_pointer_value();
                         // FIX: TL v6.0 structs are heap-allocated pointers.
                         // SRET destination is just an alloca ptr on the caller's stack.
                         // Store the returned pointer directly into the destination instead of smashing the stack.
-                        self.builder.build_store(sret_ptr, src_ptr).unwrap();
+                        self.builder.build_store(sret_ptr, src_ptr).map_err(|e| e.to_string())?;
                         
                         // FIX: Unregister from CURRENT scope so tl_mem_exit_scope doesn't free it
                         if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
                             let void_ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
-                            let cast_ptr = self.builder.build_pointer_cast(src_ptr, void_ptr_type, "cast_unreg_sret").unwrap();
-                            self.builder.build_call(unreg_fn, &[cast_ptr.into()], "").unwrap();
+                            let cast_ptr = self.builder.build_pointer_cast(src_ptr, void_ptr_type, "cast_unreg_sret").map_err(|e| e.to_string())?;
+                            self.builder.build_call(unreg_fn, &[cast_ptr.into()], "").map_err(|e| e.to_string())?;
                         }
                         
                         self.emit_all_scopes_cleanup();
                         if let Some(exit_fn) = self.module.get_function("tl_mem_function_exit") {
-                             self.builder.build_call(exit_fn, &[], "").unwrap();
+                             self.builder.build_call(exit_fn, &[], "").map_err(|e| e.to_string())?;
                         }
                         self.builder.build_return(None).map_err(|e| e.to_string())?;
                     } else {
                         // Normal return: cleanup then return value
                         self.emit_all_scopes_cleanup();
                         if let Some(exit_fn) = self.module.get_function("tl_mem_function_exit") {
-                             self.builder.build_call(exit_fn, &[], "").unwrap();
+                             self.builder.build_call(exit_fn, &[], "").map_err(|e| e.to_string())?;
                         }
                         let ret_instr = self.builder
                             .build_return(Some(&val));
@@ -2025,7 +2025,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     // return; (Void return)
                     self.emit_all_scopes_cleanup();
                     if let Some(exit_fn) = self.module.get_function("tl_mem_function_exit") {
-                            self.builder.build_call(exit_fn, &[], "").unwrap();
+                            self.builder.build_call(exit_fn, &[], "").map_err(|e| e.to_string())?;
                     }
                     self.builder.build_return(None).map_err(|e| e.to_string())?;
                 }
@@ -2072,23 +2072,23 @@ impl<'ctx> CodeGenerator<'ctx> {
                                          lhs_type, val_ir
                                      ));
                                  }
-                                 let old_val = self.builder.build_load(load_type, lhs_ptr, "old").unwrap().into_pointer_value();
+                                 let old_val = self.builder.build_load(load_type, lhs_ptr, "old").map_err(|e| e.to_string())?.into_pointer_value();
                                  let null_ptr = load_type.const_null();
-                                 let is_not_null = self.builder.build_int_compare(inkwell::IntPredicate::NE, old_val, null_ptr, "").unwrap();
-                                 let are_diff = self.builder.build_int_compare(inkwell::IntPredicate::NE, old_val, val_ir.into_pointer_value(), "").unwrap();
-                                 let cond = self.builder.build_and(is_not_null, are_diff, "").unwrap();
+                                 let is_not_null = self.builder.build_int_compare(inkwell::IntPredicate::NE, old_val, null_ptr, "").map_err(|e| e.to_string())?;
+                                 let are_diff = self.builder.build_int_compare(inkwell::IntPredicate::NE, old_val, val_ir.into_pointer_value(), "").map_err(|e| e.to_string())?;
+                                 let cond = self.builder.build_and(is_not_null, are_diff, "").map_err(|e| e.to_string())?;
                                  
-                                 let free_bb = self.append_bb("free_old");
-                                 let cont_bb = self.append_bb("cont");
-                                 self.builder.build_conditional_branch(cond, free_bb, cont_bb).unwrap();
+                                 let free_bb = self.append_bb("free_old")?;
+                                 let cont_bb = self.append_bb("cont")?;
+                                 self.builder.build_conditional_branch(cond, free_bb, cont_bb).map_err(|e| e.to_string())?;
                                  
                                  self.builder.position_at_end(free_bb);
                                  self.emit_recursive_free(old_val.into(), &lhs_type, super::CLEANUP_FULL)?; 
                                  if let Some(unreg) = self.module.get_function("tl_mem_unregister") {
-                                     let cast = self.builder.build_pointer_cast(old_val, load_type, "").unwrap();
-                                     self.builder.build_call(unreg, &[cast.into()], "").unwrap();
+                                     let cast = self.builder.build_pointer_cast(old_val, load_type, "").map_err(|e| e.to_string())?;
+                                     self.builder.build_call(unreg, &[cast.into()], "").map_err(|e| e.to_string())?;
                                  }
-                                 self.builder.build_unconditional_branch(cont_bb).unwrap();
+                                 self.builder.build_unconditional_branch(cont_bb).map_err(|e| e.to_string())?;
                                  self.builder.position_at_end(cont_bb);
                             }
                             
@@ -2102,7 +2102,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 }
                             }
                             
-                            self.builder.build_store(lhs_ptr, val_ir).unwrap();
+                            self.builder.build_store(lhs_ptr, val_ir).map_err(|e| e.to_string())?;
                             
                             // FIX: 代入された値をテンポラリリストから除外。
                             // ExprKind::BinOp 等で add_temp された一時テンソルが
@@ -2147,7 +2147,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                  Type::I64 => self.context.i64_type().into(),
                                  _ => self.context.ptr_type(inkwell::AddressSpace::default()).into(), // Fallback
                             };
-                            let curr_val = self.builder.build_load(load_type, lhs_ptr, "curr").unwrap();
+                            let curr_val = self.builder.build_load(load_type, lhs_ptr, "curr").map_err(|e| e.to_string())?;
                             let bin_op = match op {
                                 AssignOp::AddAssign => BinOp::Add,
                                 AssignOp::SubAssign => BinOp::Sub,
@@ -2162,11 +2162,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                                  let fn_name = if matches!(val_ty, Type::Tensor(_,_)) { format!("tl_tensor_{}", suffix) } else { format!("tl_tensor_{}_scalar_f32", suffix) };
                                  let f = self.module.get_function(&fn_name).expect(&fn_name);
                                  let arg = if matches!(val_ty, Type::Tensor(_,_)) { val_ir.into() } else { self.build_float_cast_val(val_ir, &val_ty, self.context.f32_type())?.into() };
-                                 self.builder.build_call(f, &[curr_val.into(), arg], "").unwrap();
+                                 self.builder.build_call(f, &[curr_val.into(), arg], "").map_err(|e| e.to_string())?;
                             } else {
                                  // Primitive
                                  let (res, _) = self.compile_bin_op(curr_val, lhs_type, val_ir, val_ty, bin_op)?;
-                                 self.builder.build_store(lhs_ptr, res).unwrap();
+                                 self.builder.build_store(lhs_ptr, res).map_err(|e| e.to_string())?;
                             }
                         }
                     }
@@ -2205,9 +2205,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let parent = self
                     .builder
                     .get_insert_block()
-                    .unwrap()
+                    .ok_or_else(|| "no current basic block".to_string())?
                     .get_parent()
-                    .unwrap();
+                    .ok_or_else(|| "block has no parent function".to_string())?;
 
                 let i64_type = self.context.i64_type();
 
@@ -2311,7 +2311,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .map_err(|e| e.to_string())?;
 
                         // Register iterator alloca for later use
-                        self.variables.last_mut().unwrap().insert(
+                        self.variables.last_mut().ok_or_else(|| "no variable scope".to_string())?.insert(
                             "__for_tensor__".to_string(),
                             (iter_alloca.into(), iter_ty.clone(), super::CLEANUP_NONE),
                         );
@@ -2321,7 +2321,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 };
 
                 // Capture preheader block (where we are jumping from)
-                let preheader_block = self.builder.get_insert_block().unwrap();
+                let preheader_block = self.current_block()?;
 
                 // Create basic blocks
                 let loop_header = self.context.append_basic_block(parent, "for_header");
@@ -2494,7 +2494,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                         elem_llvm_ty, data_ptr,
                                         &[phi.as_basic_value().into_int_value()],
                                         "vec_elem_addr"
-                                    ).unwrap()
+                                    ).map_err(|e| e.to_string())?
                                 };
                                 let elem_val = self.builder.build_load(elem_llvm_ty, elem_addr, "vec_elem")
                                     .map_err(|e| e.to_string())?;
@@ -2550,7 +2550,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .map_err(|e| e.to_string())?;
                 self.variables
                     .last_mut()
-                    .unwrap()
+                    .ok_or_else(|| "no variable scope".to_string())?
                     .insert(loop_var.clone(), (var_alloca.into(), loop_var_val.1, super::CLEANUP_NONE));
 
                 // Register Liveness for loop variable
@@ -2573,16 +2573,16 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 // ループバック前に: スコープ内の変数・テンポラリを cleanup
                 // これにより各イテレーションの中間テンソルが解放される (while ループと同等)
-                let body_end_block = self.builder.get_insert_block().unwrap();
+                let body_end_block = self.current_block()?;
 
                 if body_end_block.get_terminator().is_none() {
                     self.emit_cleanup_vars_in_scope(self.variables.len() - 1);
                     if let Some(f) = self.module.get_function("tl_mem_exit_scope") {
-                        self.builder.build_call(f, &[], "").unwrap();
+                        self.builder.build_call(f, &[], "").map_err(|e| e.to_string())?;
                     }
                     // 次のイテレーション用に再度 enter_scope
                     if let Some(f) = self.module.get_function("tl_mem_enter_scope") {
-                        self.builder.build_call(f, &[], "").unwrap();
+                        self.builder.build_call(f, &[], "").map_err(|e| e.to_string())?;
                     }
                     // ループバック: latch へジャンプ
                     self.builder
@@ -2600,7 +2600,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 // V3.3: 各 for イテレーション終了時に勾配をクリア (autograd メモリリーク防止)
                 if let Some(clear_fn) = self.module.get_function("tl_clear_grads") {
-                    self.builder.build_call(clear_fn, &[], "").unwrap();
+                    self.builder.build_call(clear_fn, &[], "").map_err(|e| e.to_string())?;
                 }
 
                 let next_idx = self
@@ -2640,9 +2640,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let parent = self
                     .builder
                     .get_insert_block()
-                    .unwrap()
+                    .ok_or_else(|| "no current basic block".to_string())?
                     .get_parent()
-                    .unwrap();
+                    .ok_or_else(|| "block has no parent function".to_string())?;
 
                 let cond_block = self.context.append_basic_block(parent, "while_cond");
                 let body_block = self.context.append_basic_block(parent, "while_body");
@@ -2688,17 +2688,17 @@ impl<'ctx> CodeGenerator<'ctx> {
                 if self
                     .builder
                     .get_insert_block()
-                    .unwrap()
+                    .ok_or_else(|| "no current basic block".to_string())?
                     .get_terminator()
                     .is_none()
                 {
                     self.emit_cleanup_vars_in_scope(self.variables.len() - 1);
                     if let Some(f) = self.module.get_function("tl_mem_exit_scope") {
-                        self.builder.build_call(f, &[], "").unwrap();
+                        self.builder.build_call(f, &[], "").map_err(|e| e.to_string())?;
                     }
                     // 次のイテレーション用に再度 enter_scope
                     if let Some(f) = self.module.get_function("tl_mem_enter_scope") {
-                        self.builder.build_call(f, &[], "").unwrap();
+                        self.builder.build_call(f, &[], "").map_err(|e| e.to_string())?;
                     }
                     // ループバック: cond_block へジャンプ
                     self.builder
@@ -2722,9 +2722,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let parent = self
                     .builder
                     .get_insert_block()
-                    .unwrap()
+                    .ok_or_else(|| "no current basic block".to_string())?
                     .get_parent()
-                    .unwrap();
+                    .ok_or_else(|| "block has no parent function".to_string())?;
 
                 let body_block = self.context.append_basic_block(parent, "loop_body");
                 let end_block = self.context.append_basic_block(parent, "loop_end");
@@ -2754,7 +2754,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 if self
                     .builder
                     .get_insert_block()
-                    .unwrap()
+                    .ok_or_else(|| "no current basic block".to_string())?
                     .get_terminator()
                     .is_none()
                 {
@@ -2800,9 +2800,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                         let current_function = self
                             .builder
                             .get_insert_block()
-                            .unwrap()
+                            .ok_or_else(|| "no current basic block".to_string())?
                             .get_parent()
-                            .unwrap();
+                            .ok_or_else(|| "block has no parent function".to_string())?;
 
                         let alloca =
                             self.create_entry_block_alloca(current_function, &temp_name, &ty)?;
@@ -2814,7 +2814,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         // This ensures the struct gets freed when the scope exits
                         self.variables
                             .last_mut()
-                            .unwrap()
+                            .ok_or_else(|| "no variable scope".to_string())?
                             .insert(temp_name, (alloca.into(), ty.clone(), super::CLEANUP_FULL));
                     }
 
@@ -2957,12 +2957,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                 
                 // Need to re-implement fallback logic briefly since I am replacing the whole function block.
                 
-                let current_block = self.builder.get_insert_block().unwrap();
-                let parent_fn = current_block.get_parent().unwrap();
+                let current_block = self.current_block()?;
+                let parent_fn = current_block.get_parent().ok_or_else(|| "block has no parent function".to_string())?;
                 let data_alloca = self.create_entry_block_alloca(parent_fn, "scalar_data", &Type::F32)?;
                 self.builder.build_store(data_alloca, val_f32).map_err(|e| e.to_string())?;
                 let shape_alloca = self.create_entry_block_alloca(parent_fn, "scalar_shape", &Type::I64)?;
-                let new_fn = self.module.get_function("tl_tensor_new").unwrap();
+                let new_fn = self.get_fn("tl_tensor_new")?;
                 let rank_val = self.context.i64_type().const_int(0, false);
                 let call = self.builder.build_call(new_fn, &[data_alloca.into(), rank_val.into(), shape_alloca.into()], "scalar_tensor").map_err(|e| e.to_string())?;
                 let scalar_tensor = self.check_tensor_result(call, "scalar_tensor_error")?.into_pointer_value();
@@ -3546,7 +3546,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 }
                                 
                                 let sret_alloca = self.create_entry_block_alloca(
-                                    self.builder.get_insert_block().unwrap().get_parent().unwrap(),
+                                    self.current_function()?,
                                     "sret_binop",
                                     &ret_ty,
                                 )?;
@@ -3555,7 +3555,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 
                                 if matches!(op, BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge) {
                                     let bool_ty = self.context.bool_type();
-                                    return Ok((self.builder.build_load(bool_ty, sret_alloca, "bool_res").unwrap(), Type::Bool));
+                                    return Ok((self.builder.build_load(bool_ty, sret_alloca, "bool_res").map_err(|e| e.to_string())?, Type::Bool));
                                 }
                                 return Ok((sret_alloca.into(), ret_ty));
                             } else {
@@ -3622,8 +3622,8 @@ impl<'ctx> CodeGenerator<'ctx> {
     ) -> Result<inkwell::values::BasicValueEnum<'ctx>, String> {
         match ty {
             Type::Array(inner, size) => {
-                 let current_block = self.builder.get_insert_block().unwrap();
-                 let func = current_block.get_parent().unwrap();
+                 let current_block = self.current_block()?;
+                 let func = current_block.get_parent().ok_or_else(|| "block has no parent function".to_string())?;
                  let new_arr_ptr = self.create_entry_block_alloca(func, "clone_arr", ty)?;
                  let src_ptr = val.into_pointer_value();
                  self.emit_deep_clone_array_inline(src_ptr, new_arr_ptr, inner, *size)?;
@@ -3642,7 +3642,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let cast_ptr = self
                     .builder
                     .build_pointer_cast(ptr, void_ptr_type, "cast_tensor_ptr")
-                    .unwrap();
+                    .map_err(|e| e.to_string())?;
 
                 let call = self.builder
                     .build_call(acquire_fn, &[cast_ptr.into()], "acquired_ptr")
@@ -3655,7 +3655,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 // Cast back to tensor pointer type (struct ptr)
                 let tensor_ptr_ty = val.get_type().into_pointer_type();
-                let cast_new_ptr = self.builder.build_pointer_cast(new_ptr, tensor_ptr_ty, "cast_tensor_back").unwrap();
+                let cast_new_ptr = self.builder.build_pointer_cast(new_ptr, tensor_ptr_ty, "cast_tensor_back").map_err(|e| e.to_string())?;
 
                 Ok(cast_new_ptr.into())
             }
@@ -3777,7 +3777,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .size_of()
                     .ok_or(format!("Cannot get size of struct {}", name))?;
                 let size_i64 = if size.get_type() == self.context.i32_type() {
-                    self.builder.build_int_z_extend(size, self.context.i64_type(), "size_i64").unwrap()
+                    self.builder.build_int_z_extend(size, self.context.i64_type(), "size_i64").map_err(|e| e.to_string())?
                 } else {
                     size
                 };
@@ -3864,7 +3864,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .ok_or("Cannot get size of tuple")?;
                 // Ensure size is i64
                 let size = if size.get_type() == self.context.i32_type() {
-                    self.builder.build_int_z_extend(size, self.context.i64_type(), "size_i64").unwrap()
+                    self.builder.build_int_z_extend(size, self.context.i64_type(), "size_i64").map_err(|e| e.to_string())?
                 } else {
                     size
                 };
@@ -3886,14 +3886,14 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let tuple_ptr = self
                     .builder
                     .build_pointer_cast(raw_ptr, ptr_type, "tuple_ptr")
-                    .unwrap();
+                    .map_err(|e| e.to_string())?;
 
                 // 2. Deep clone elements
                 let src_ptr = val.into_pointer_value(); // Source tuple pointer
                 let src_cast = self
                     .builder
                     .build_pointer_cast(src_ptr, ptr_type, "src_tuple_cast")
-                    .unwrap();
+                    .map_err(|e| e.to_string())?;
 
                 for (i, ty) in ts.iter().enumerate() {
                     let field_gep = self
@@ -3987,8 +3987,8 @@ impl<'ctx> CodeGenerator<'ctx> {
         let _ = self.builder.build_store(dst_tag_ptr, tag_val);
 
         // 4. Switch on tag to copy payload
-        let current_block = self.builder.get_insert_block().unwrap();
-        let func = current_block.get_parent().unwrap();
+        let current_block = self.current_block()?;
+        let func = current_block.get_parent().ok_or_else(|| "block has no parent function".to_string())?;
         let after_switch = self.context.append_basic_block(func, "after_enum_clone");
 
         let mut cases = vec![];
@@ -4059,7 +4059,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let src_variant_ptr = self
                     .builder
                     .build_pointer_cast(src_payload_ptr_raw, variant_ptr_ty, "src_variant_casted")
-                    .unwrap();
+                    .map_err(|e| e.to_string())?;
 
                 // Dst Payload
                 let dst_payload_ptr_raw = self
@@ -4069,7 +4069,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let dst_variant_ptr = self
                     .builder
                     .build_pointer_cast(dst_payload_ptr_raw, variant_ptr_ty, "dst_variant_casted")
-                    .unwrap();
+                    .map_err(|e| e.to_string())?;
 
                 // Copy Fields
                 for (idx, f_ty) in field_types_list.iter().enumerate() {
@@ -4183,7 +4183,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                  
                  if let Type::Ptr(elem_ty) = base_ty {
                      // Ptr indexing
-                     let base_ptr = base_ptr_opt.unwrap();
+                     let base_ptr = base_ptr_opt.ok_or_else(|| "base pointer is None".to_string())?;
                      if indices.len() != 1 { return Err("Ptr index must be 1D".into()); }
                      let (idx_val, _) = self.compile_expr(&indices[0])?;
                      
@@ -4208,7 +4208,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                      }
                  } else if let Type::Array(ref elem_ty, size) = base_ty {
                      // Array indexing - addressable LValue
-                     let base_ptr = base_ptr_opt.unwrap();
+                     let base_ptr = base_ptr_opt.ok_or_else(|| "base pointer is None".to_string())?;
                      if indices.len() != 1 { return Err("Array index must be 1D".into()); }
                      let (idx_val, _) = self.compile_expr(&indices[0])?;
                      
@@ -4237,7 +4237,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         match lvalue {
              LValue::Variable(_name) => {
                  let res = self.compile_lvalue_addr(lvalue)?;
-                 let ptr = res.0.unwrap();
+                 let ptr = res.0.ok_or_else(|| "result pointer is None".to_string())?;
                  let load_ty: inkwell::types::BasicTypeEnum = match &res.1 {
                      Type::Struct(_,_) | Type::Tensor(_,_) => self.context.ptr_type(inkwell::AddressSpace::default()).into(),
                      Type::F32 => self.context.f32_type().into(),
@@ -4259,7 +4259,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::Never | Type::Undefined(_) | Type::Range
                       => self.context.i64_type().into(),
                  };
-                 Ok((self.builder.build_load(load_ty, ptr, "").unwrap(), res.1))
+                 Ok((self.builder.build_load(load_ty, ptr, "").map_err(|e| e.to_string())?, res.1))
              }
              LValue::FieldAccess(_,_) | LValue::IndexAccess(_,_) => {
                  let res = self.compile_lvalue_addr(lvalue)?;
@@ -4285,7 +4285,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::Never | Type::Undefined(_) | Type::Range
                           => self.context.i64_type().into(),
                      };
-                     Ok((self.builder.build_load(load_ty, ptr, "").unwrap(), res.1))
+                     Ok((self.builder.build_load(load_ty, ptr, "").map_err(|e| e.to_string())?, res.1))
                  } else {
                      // Non-Addressable element. 
                      Err("Complex non-addressable lvalue load not fully implemented".into())
@@ -4299,31 +4299,31 @@ impl<'ctx> CodeGenerator<'ctx> {
          let i64_ty = self.context.i64_type();
          let idx_arr_ty = i64_ty.array_type(indices.len() as u32);
          
-         let current_block = self.builder.get_insert_block().unwrap();
-         let func = current_block.get_parent().unwrap();
+         let current_block = self.current_block()?;
+         let func = current_block.get_parent().ok_or_else(|| "block has no parent function".to_string())?;
          
          let builder = self.context.create_builder();
-         builder.position_at_end(func.get_first_basic_block().unwrap());
-         if let Some(first_inst) = func.get_first_basic_block().unwrap().get_first_instruction() {
+         builder.position_at_end(func.get_first_basic_block().ok_or_else(|| "function has no basic blocks".to_string())?);
+         if let Some(first_inst) = func.get_first_basic_block().ok_or_else(|| "function has no basic blocks".to_string())?.get_first_instruction() {
              builder.position_before(&first_inst);
          }
-         let idx_alloca = builder.build_alloca(idx_arr_ty, "idx_arr").unwrap();
+         let idx_alloca = builder.build_alloca(idx_arr_ty, "idx_arr").map_err(|e| e.to_string())?;
          
          for (i, idx_expr) in indices.iter().enumerate() {
              let (v, t) = self.compile_expr(idx_expr)?;
              let v_int = match t {
                  Type::I64 => v.into_int_value(),
-                 Type::I32 => self.builder.build_int_z_extend(v.into_int_value(), i64_ty, "").unwrap(),
+                 Type::I32 => self.builder.build_int_z_extend(v.into_int_value(), i64_ty, "").map_err(|e| e.to_string())?,
                  _ => return Err("Index not int".into()),
              };
-             let ptr = unsafe { self.builder.build_in_bounds_gep(idx_arr_ty, idx_alloca, &[i64_ty.const_int(0,false), i64_ty.const_int(i as u64, false)], "").unwrap() };
-             self.builder.build_store(ptr, v_int).unwrap();
+             let ptr = unsafe { self.builder.build_in_bounds_gep(idx_arr_ty, idx_alloca, &[i64_ty.const_int(0,false), i64_ty.const_int(i as u64, false)], "").map_err(|e| e.to_string())? };
+             self.builder.build_store(ptr, v_int).map_err(|e| e.to_string())?;
          }
          
-         let idx_ptr = self.builder.build_pointer_cast(idx_alloca, self.context.ptr_type(inkwell::AddressSpace::default()), "").unwrap();
+         let idx_ptr = self.builder.build_pointer_cast(idx_alloca, self.context.ptr_type(inkwell::AddressSpace::default()), "").map_err(|e| e.to_string())?;
          let f32_val = self.build_float_cast_val(val, &val_ty, self.context.f32_type())?;
          
-         self.builder.build_call(set_fn, &[tensor_val.into(), idx_ptr.into(), i64_ty.const_int(indices.len() as u64, false).into(), f32_val.into()], "set_res").unwrap();
+         self.builder.build_call(set_fn, &[tensor_val.into(), idx_ptr.into(), i64_ty.const_int(indices.len() as u64, false).into(), f32_val.into()], "set_res").map_err(|e| e.to_string())?;
          Ok(())
     }
 
@@ -4391,14 +4391,14 @@ impl<'ctx> CodeGenerator<'ctx> {
     fn build_float_cast_val(&self, val: inkwell::values::BasicValueEnum<'ctx>, from: &Type, to: inkwell::types::FloatType<'ctx>) -> Result<inkwell::values::FloatValue<'ctx>, String> {
          match from {
              Type::F32 => Ok(val.into_float_value()),
-             Type::I64 => Ok(self.builder.build_signed_int_to_float(val.into_int_value(), to, "").unwrap()),
-             Type::I32 => Ok(self.builder.build_signed_int_to_float(val.into_int_value(), to, "").unwrap()),
+             Type::I64 => Ok(self.builder.build_signed_int_to_float(val.into_int_value(), to, "").map_err(|e| e.to_string())?),
+             Type::I32 => Ok(self.builder.build_signed_int_to_float(val.into_int_value(), to, "").map_err(|e| e.to_string())?),
              _ => Err("Invalid cast".into())
          }
     }
 
-    fn append_bb(&self, name: &str) -> inkwell::basic_block::BasicBlock<'ctx> {
-         self.context.append_basic_block(self.builder.get_insert_block().unwrap().get_parent().unwrap(), name)
+    fn append_bb(&self, name: &str) -> Result<inkwell::basic_block::BasicBlock<'ctx>, String> {
+         Ok(self.context.append_basic_block(self.current_function()?, name))
     }
 
 }

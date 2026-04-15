@@ -642,10 +642,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 self.context.ptr_type(inkwell::AddressSpace::default()),
                                 "cast_unreg",
                             )
-                            .unwrap();
+                            .map_err(|e| e.to_string())?;
                         self.builder
                             .build_call(unreg_fn, &[cast_ptr.into()], "")
-                            .unwrap();
+                            .map_err(|e| e.to_string())?;
                     }
                 }
 
@@ -812,14 +812,14 @@ impl<'ctx> CodeGenerator<'ctx> {
                     malloc_ptr,
                     self.context.ptr_type(inkwell::AddressSpace::default()),
                     "enum_cast"
-                ).unwrap();
+                ).map_err(|e| e.to_string())?;
 
                 // 2. Store Tag
                 let variant_idx = enum_def
                     .variants
                     .iter()
                     .position(|v| v.name == *variant_name)
-                    .unwrap();
+                    .ok_or_else(|| "unexpected None".to_string())?;
                 let tag_ptr = self
                     .builder
                     .build_struct_gep(enum_ty, alloca, 0, "tag_ptr")
@@ -829,7 +829,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         tag_ptr,
                         self.context.i32_type().const_int(variant_idx as u64, false),
                     )
-                    .unwrap();
+                    .map_err(|e| e.to_string())?;
 
                 // 3. Store Fields
                 let variant_def = &enum_def.variants[variant_idx];
@@ -872,7 +872,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             self.context.ptr_type(inkwell::AddressSpace::default()),
                             "payload_cast",
                         )
-                        .unwrap();
+                        .map_err(|e| e.to_string())?;
 
                     // Iterate over DEFINITION fields
                     for (idx, f_ty) in fields_def.iter().enumerate() {
@@ -926,7 +926,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             )
                             .map_err(|e| e.to_string())?;
 
-                        self.builder.build_store(f_ptr, stored_val).unwrap();
+                        self.builder.build_store(f_ptr, stored_val).map_err(|e| e.to_string())?;
                     }
                     Ok(())
                 };
@@ -974,7 +974,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 self.context.ptr_type(inkwell::AddressSpace::default()),
                                 "payload_cast",
                             )
-                            .unwrap();
+                            .map_err(|e| e.to_string())?;
                         
                         for (idx, (f_ty, expr)) in types.iter().zip(exprs.iter()).enumerate() {
                              let (val, _) = self.compile_expr(expr)?;
@@ -1007,7 +1007,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             }
                             
                             let f_ptr = self.builder.build_struct_gep(variant_struct_ty, payload_ptr, idx as u32, "").map_err(|e| e.to_string())?;
-                            self.builder.build_store(f_ptr, val).unwrap();
+                            self.builder.build_store(f_ptr, val).map_err(|e| e.to_string())?;
                         }
 
                      },
@@ -1059,7 +1059,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 self.context.ptr_type(inkwell::AddressSpace::default()),
                                 "payload_cast",
                             )
-                            .unwrap();
+                            .map_err(|e| e.to_string())?;
                             
                         for (idx, (f_name, f_ty)) in fields_def.iter().enumerate() {
                              let (_, expr) = exprs.iter().find(|(n, _)| n == f_name).ok_or(format!("Missing field {}", f_name))?;
@@ -1091,7 +1091,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             }
                             
                             let f_ptr = self.builder.build_struct_gep(variant_struct_ty, payload_ptr, idx as u32, "").map_err(|e| e.to_string())?;
-                            self.builder.build_store(f_ptr, stored_val).unwrap();
+                            self.builder.build_store(f_ptr, stored_val).map_err(|e| e.to_string())?;
                         }
                      },
                      _ => return Err(format!("Mismatch between variant definition {:?} and init payload {:?}", variant_def.kind, payload)),
@@ -1140,17 +1140,17 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let is_ref_counted = matches!(inner_ty, Type::String(_) | Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::GradTensor(_, _));
                 let size = 8; // placeholder size
 
-                let struct_type = self.module.get_struct_type("Type").unwrap();
+                let struct_type = self.module.get_struct_type("Type").ok_or_else(|| format!("struct type not found"))?;
                 
                 // Heap allocate the struct
-                let size_val_alloc = struct_type.size_of().unwrap();
+                let size_val_alloc = struct_type.size_of().ok_or_else(|| "type has no size".to_string())?;
                 let size_i64 = if size_val_alloc.get_type() == self.context.i32_type() {
-                     self.builder.build_int_z_extend(size_val_alloc, self.context.i64_type(), "size_i64").unwrap()
+                     self.builder.build_int_z_extend(size_val_alloc, self.context.i64_type(), "size_i64").map_err(|e| e.to_string())?
                 } else {
                      size_val_alloc
                 };
-                let malloc_fn = self.module.get_function("malloc").unwrap();
-                let call = self.builder.build_call(malloc_fn, &[size_i64.into()], "typeof_malloc").unwrap();
+                let malloc_fn = self.get_fn("malloc")?;
+                let call = self.builder.build_call(malloc_fn, &[size_i64.into()], "typeof_malloc").map_err(|e| e.to_string())?;
                 let struct_ptr = match call.try_as_basic_value() {
                      inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
                      _ => panic!("malloc returned void"),
@@ -1170,17 +1170,17 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 // Set fields
                 // name: 0, size: 1, is_primitive: 2, is_ref_counted: 3
-                let name_ptr = self.builder.build_struct_gep(struct_type, struct_ptr, 0, "name_ptr").unwrap();
-                self.builder.build_store(name_ptr, str_val).unwrap();
+                let name_ptr = self.builder.build_struct_gep(struct_type, struct_ptr, 0, "name_ptr").map_err(|e| e.to_string())?;
+                self.builder.build_store(name_ptr, str_val).map_err(|e| e.to_string())?;
 
-                let size_ptr = self.builder.build_struct_gep(struct_type, struct_ptr, 1, "size_ptr").unwrap();
-                self.builder.build_store(size_ptr, size_val).unwrap();
+                let size_ptr = self.builder.build_struct_gep(struct_type, struct_ptr, 1, "size_ptr").map_err(|e| e.to_string())?;
+                self.builder.build_store(size_ptr, size_val).map_err(|e| e.to_string())?;
 
-                let prim_ptr = self.builder.build_struct_gep(struct_type, struct_ptr, 2, "prim_ptr").unwrap();
-                self.builder.build_store(prim_ptr, is_prim_val).unwrap();
+                let prim_ptr = self.builder.build_struct_gep(struct_type, struct_ptr, 2, "prim_ptr").map_err(|e| e.to_string())?;
+                self.builder.build_store(prim_ptr, is_prim_val).map_err(|e| e.to_string())?;
 
-                let ref_ptr = self.builder.build_struct_gep(struct_type, struct_ptr, 3, "ref_ptr").unwrap();
-                self.builder.build_store(ref_ptr, is_ref_val).unwrap();
+                let ref_ptr = self.builder.build_struct_gep(struct_type, struct_ptr, 3, "ref_ptr").map_err(|e| e.to_string())?;
+                self.builder.build_store(ref_ptr, is_ref_val).map_err(|e| e.to_string())?;
 
                 Ok((struct_ptr.into(), Type::Struct("Type".to_string(), vec![])))
             }
@@ -1440,7 +1440,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 
                                 if returns_sret {
                                     let sret_alloca = self.create_entry_block_alloca(
-                                        self.builder.get_insert_block().unwrap().get_parent().unwrap(),
+                                        self.current_function()?,
                                         "sret_from",
                                         &target_type,
                                     )?;
@@ -1502,28 +1502,28 @@ impl<'ctx> CodeGenerator<'ctx> {
                 };
                 
                 let tag_ptr = self.builder.build_struct_gep(struct_ty, ptr, 0, "tag_ptr").map_err(|e| e.to_string())?;
-                let tag = self.builder.build_load(self.context.i32_type(), tag_ptr, "tag").unwrap().into_int_value();
+                let tag = self.builder.build_load(self.context.i32_type(), tag_ptr, "tag").map_err(|e| e.to_string())?.into_int_value();
                 
-                let current_block = self.builder.get_insert_block().unwrap();
-                let func = current_block.get_parent().unwrap();
+                let current_block = self.current_block()?;
+                let func = current_block.get_parent().ok_or_else(|| "block has no parent function".to_string())?;
                 let ok_block = self.context.append_basic_block(func, "try_ok");
                 let err_block = self.context.append_basic_block(func, "try_err");
                 
                 let zero = self.context.i32_type().const_zero();
-                let is_ok = self.builder.build_int_compare(inkwell::IntPredicate::EQ, tag, zero, "is_ok").unwrap();
-                self.builder.build_conditional_branch(is_ok, ok_block, err_block).unwrap();
+                let is_ok = self.builder.build_int_compare(inkwell::IntPredicate::EQ, tag, zero, "is_ok").map_err(|e| e.to_string())?;
+                self.builder.build_conditional_branch(is_ok, ok_block, err_block).map_err(|e| e.to_string())?;
                 
                 // === ERR BLOCK ===
                 self.builder.position_at_end(err_block);
                 
                 let payload_ptr_raw = self.builder.build_struct_gep(struct_ty, ptr, 1, "payload_ptr").map_err(|e| e.to_string())?;
-                let payload_ptr = self.builder.build_pointer_cast(payload_ptr_raw, self.context.ptr_type(inkwell::AddressSpace::default()), "payload_cast").unwrap();
+                let payload_ptr = self.builder.build_pointer_cast(payload_ptr_raw, self.context.ptr_type(inkwell::AddressSpace::default()), "payload_cast").map_err(|e| e.to_string())?;
                 
                 // Extract Err Value (E)
                 // If primitive, load. If pointer, use pointer.
                 let err_val = if matches!(err_ty, Type::I64 | Type::F64 | Type::I32 | Type::F32 | Type::Bool | Type::U8 | Type::Char(_)) {
                     let field_llvm_ty = self.get_llvm_type(&err_ty)?;
-                    self.builder.build_load(field_llvm_ty, payload_ptr, "err_val").unwrap()
+                    self.builder.build_load(field_llvm_ty, payload_ptr, "err_val").map_err(|e| e.to_string())?
                 } else {
                      // Structs/Enums are stored as pointers in payload?
                      // Verify storage logic in EnumInit (struct variants use pointers, scalar types likely too?)
@@ -1540,9 +1540,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                      // We cast payload to `{ E }` (struct with 1 field).
                      // Then access index 0.
                      let err_variant_ty = self.context.struct_type(&[self.get_llvm_type(&err_ty)?], false);
-                     let err_variant_ptr = self.builder.build_pointer_cast(payload_ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "err_variant_ptr").unwrap();
+                     let err_variant_ptr = self.builder.build_pointer_cast(payload_ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "err_variant_ptr").map_err(|e| e.to_string())?;
                      let field_ptr = self.builder.build_struct_gep(err_variant_ty, err_variant_ptr, 0, "err_field_ptr").map_err(|e| e.to_string())?;
-                     self.builder.build_load(self.get_llvm_type(&err_ty)?, field_ptr, "err_val_loaded").unwrap()
+                     self.builder.build_load(self.get_llvm_type(&err_ty)?, field_ptr, "err_val_loaded").map_err(|e| e.to_string())?
                 };
 
                 // FIX: Retain ownership of extracted error value because we are taking it out of Result
@@ -1561,7 +1561,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // We need to inject `err_val` into scope to use it in ExprKind::Variable
                 let temp_name = "try_err_temp";
                 // Insert into CURRENT scope (inner-most)
-                self.variables.last_mut().unwrap().insert(temp_name.to_string(), (err_val, err_ty.clone(), crate::compiler::codegen::CLEANUP_NONE)); // CLEANUP_NONE because we consume/move it
+                self.variables.last_mut().ok_or_else(|| "no variable scope".to_string())?.insert(temp_name.to_string(), (err_val, err_ty.clone(), crate::compiler::codegen::CLEANUP_NONE)); // CLEANUP_NONE because we consume/move it
                 
                 let span = expr.span.clone();
                 let enum_init_expr = Spanned::new(
@@ -1585,32 +1585,32 @@ impl<'ctx> CodeGenerator<'ctx> {
                     let ret_ptr = ret_val.into_pointer_value();
                     // Avoid self-copy if EnumInit already wrote to sret
                     if ret_ptr != sret {
-                        self.builder.build_store(sret, ret_ptr).unwrap();
+                        self.builder.build_store(sret, ret_ptr).map_err(|e| e.to_string())?;
                     }
                     self.emit_all_scopes_cleanup();
                     if let Some(exit_fn) = self.module.get_function("tl_mem_function_exit") {
-                         self.builder.build_call(exit_fn, &[], "").unwrap();
+                         self.builder.build_call(exit_fn, &[], "").map_err(|e| e.to_string())?;
                     }
-                    self.builder.build_return(None).unwrap();
+                    self.builder.build_return(None).map_err(|e| e.to_string())?;
                 } else {
                      // Direct return
                      if matches!(ret_ty_compiled, Type::Struct(_, _) | Type::Enum(_, _)) {
                         if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
                             let ptr = ret_val.into_pointer_value();
                             let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
-                            let cast_ptr = self.builder.build_pointer_cast(ptr, ptr_type, "cast_unreg_ret").unwrap();
-                            self.builder.build_call(unreg_fn, &[cast_ptr.into()], "").unwrap();
+                            let cast_ptr = self.builder.build_pointer_cast(ptr, ptr_type, "cast_unreg_ret").map_err(|e| e.to_string())?;
+                            self.builder.build_call(unreg_fn, &[cast_ptr.into()], "").map_err(|e| e.to_string())?;
                         }
                      }
 
                      self.emit_all_scopes_cleanup();
                      if let Some(exit_fn) = self.module.get_function("tl_mem_function_exit") {
-                          self.builder.build_call(exit_fn, &[], "").unwrap();
+                          self.builder.build_call(exit_fn, &[], "").map_err(|e| e.to_string())?;
                      }
                      if let Some(_rt) = func.get_type().get_return_type() {
-                         self.builder.build_return(Some(&ret_val)).unwrap();
+                         self.builder.build_return(Some(&ret_val)).map_err(|e| e.to_string())?;
                      } else {
-                         self.builder.build_return(None).unwrap();
+                         self.builder.build_return(None).map_err(|e| e.to_string())?;
                      }
                 }
                 
@@ -1619,16 +1619,16 @@ impl<'ctx> CodeGenerator<'ctx> {
                 
                 // Extract Ok Value (T) - Same logic as Err
                 let payload_ptr_raw_ok = self.builder.build_struct_gep(struct_ty, ptr, 1, "payload_ptr_ok").map_err(|e| e.to_string())?;
-                let payload_ptr_ok = self.builder.build_pointer_cast(payload_ptr_raw_ok, self.context.ptr_type(inkwell::AddressSpace::default()), "payload_cast_ok").unwrap();
+                let payload_ptr_ok = self.builder.build_pointer_cast(payload_ptr_raw_ok, self.context.ptr_type(inkwell::AddressSpace::default()), "payload_cast_ok").map_err(|e| e.to_string())?;
                 
                  let ok_val = if matches!(ok_ty, Type::I64 | Type::F64 | Type::I32 | Type::F32 | Type::Bool | Type::U8 | Type::Char(_)) {
                     let field_llvm_ty = self.get_llvm_type(&ok_ty)?;
-                    self.builder.build_load(field_llvm_ty, payload_ptr_ok, "ok_val").unwrap()
+                    self.builder.build_load(field_llvm_ty, payload_ptr_ok, "ok_val").map_err(|e| e.to_string())?
                 } else {
                      let ok_variant_ty = self.context.struct_type(&[self.get_llvm_type(&ok_ty)?], false);
-                     let ok_variant_ptr = self.builder.build_pointer_cast(payload_ptr_ok, self.context.ptr_type(inkwell::AddressSpace::default()), "ok_variant_ptr").unwrap();
+                     let ok_variant_ptr = self.builder.build_pointer_cast(payload_ptr_ok, self.context.ptr_type(inkwell::AddressSpace::default()), "ok_variant_ptr").map_err(|e| e.to_string())?;
                      let field_ptr = self.builder.build_struct_gep(ok_variant_ty, ok_variant_ptr, 0, "ok_field_ptr").map_err(|e| e.to_string())?;
-                     self.builder.build_load(self.get_llvm_type(&ok_ty)?, field_ptr, "ok_val_loaded").unwrap()
+                     self.builder.build_load(self.get_llvm_type(&ok_ty)?, field_ptr, "ok_val_loaded").map_err(|e| e.to_string())?
                 };
                 
                 // FIX: Retain ownership of extracted ok value
@@ -1687,7 +1687,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         }
                     }
                     let env_struct_ty = self.context.struct_type(&field_types, false);
-                    let env_size = env_struct_ty.size_of().unwrap();
+                    let env_size = env_struct_ty.size_of().ok_or_else(|| "type has no size".to_string())?;
 
                     // malloc
                     let malloc_fn = self.module.get_function("malloc")
@@ -1755,7 +1755,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // === Callee side: extract captures from env_ptr ===
                 // env_ptr is always param 0 (fat pointer convention)
                 let param_offset = 1u32; // always offset by 1
-                let env_param = fn_val.get_nth_param(0).unwrap();
+                let env_param = fn_val.get_nth_param(0).ok_or_else(|| "missing function parameter".to_string())?;
                 env_param.set_name("env_ptr");
 
                 if has_captures {
@@ -1784,7 +1784,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             // Load the pointer and use it directly as the variable's alloca.
                             let original_alloca = self.builder.build_load(ptr_type, field_ptr, &format!("mut_ptr_{}", cap_name))
                                 .map_err(|e| e.to_string())?;
-                            self.variables.last_mut().unwrap().insert(
+                            self.variables.last_mut().ok_or_else(|| "no variable scope".to_string())?.insert(
                                 cap_name.clone(),
                                 (original_alloca, cap_ty.clone(), crate::compiler::codegen::CLEANUP_NONE),
                             );
@@ -1796,7 +1796,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 .map_err(|e| e.to_string())?;
                             self.builder.build_store(alloca, cap_val)
                                 .map_err(|e| e.to_string())?;
-                            self.variables.last_mut().unwrap().insert(
+                            self.variables.last_mut().ok_or_else(|| "no variable scope".to_string())?.insert(
                                 cap_name.clone(),
                                 (alloca.into(), cap_ty.clone(), crate::compiler::codegen::CLEANUP_NONE),
                             );
@@ -1806,13 +1806,13 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 // Bind regular arguments
                 for (i, (name, ty)) in param_names.iter().zip(param_types.iter()).enumerate() {
-                    let param = fn_val.get_nth_param(i as u32 + param_offset).unwrap();
+                    let param = fn_val.get_nth_param(i as u32 + param_offset).ok_or_else(|| "missing function parameter".to_string())?;
                     param.set_name(name);
                     let alloca = self.builder.build_alloca(param.get_type(), name)
                         .map_err(|e| e.to_string())?;
                     self.builder.build_store(alloca, param)
                         .map_err(|e| e.to_string())?;
-                    self.variables.last_mut().unwrap().insert(
+                    self.variables.last_mut().ok_or_else(|| "no variable scope".to_string())?.insert(
                         name.clone(),
                         (alloca.into(), ty.clone(), crate::compiler::codegen::CLEANUP_NONE),
                     );
@@ -1834,12 +1834,12 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 // Build return
                 if matches!(ret_ty, Type::Void) {
-                    self.builder.build_return(None).unwrap();
+                    self.builder.build_return(None).map_err(|e| e.to_string())?;
                 } else if let Some((val, _)) = last_val {
-                    self.builder.build_return(Some(&val)).unwrap();
+                    self.builder.build_return(Some(&val)).map_err(|e| e.to_string())?;
                 } else {
                     let zero = self.context.i64_type().const_zero();
-                    self.builder.build_return(Some(&zero)).unwrap();
+                    self.builder.build_return(Some(&zero)).map_err(|e| e.to_string())?;
                 }
 
                 // Restore previous state
@@ -2009,7 +2009,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 if obj_val.is_pointer_value() {
                     let ptr = obj_val.into_pointer_value();
-                    // let st_llvm_ty = self.struct_types.get(simple_struct_name).unwrap(); // Handled above
+                    // let st_llvm_ty = self.struct_types.get(simple_struct_name).ok_or_else(|| format!("struct type not found"))?; // Handled above
 
                     let field_ptr = self
                         .builder
@@ -2242,7 +2242,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let (val_enum, val_ty, _) = self
                     .variables
                     .last()
-                    .unwrap()
+                    .ok_or_else(|| "unexpected None".to_string())?
                     .get(&temp_name)
                     .ok_or(format!("Failed to retrieve temporary tensor {}", temp_name))?
                     .clone();
@@ -2287,9 +2287,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                         let rank = indices.len();
                         let i64_type = self.context.i64_type();
                         let array_type = i64_type.array_type(rank as u32);
-                        let current_block = self.builder.get_insert_block().unwrap();
-                        let function = current_block.get_parent().unwrap();
-                        let entry_block = function.get_first_basic_block().unwrap();
+                        let current_block = self.current_block()?;
+                        let function = current_block.get_parent().ok_or_else(|| "block has no parent function".to_string())?;
+                        let entry_block = function.get_first_basic_block().ok_or_else(|| "function has no entry block".to_string())?;
                         let entry_builder = self.context.create_builder();
                         if let Some(first_instr) = entry_block.get_first_instruction() {
                             entry_builder.position_before(&first_instr);
@@ -2346,7 +2346,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         }
 
                         let get_fn_name = "tl_tensor_get_f32_md";
-                        let get_fn = self.module.get_function(get_fn_name).unwrap();
+                        let get_fn = self.get_fn(get_fn_name)?;
                         let tensor_ptr = val.into_pointer_value();
                         let array_ptr = self
                             .builder
@@ -2386,9 +2386,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                         // Create array on stack in the ENTRY block to avoid stack overflow in loops
                         let array_type = i64_type.array_type(rank as u32);
 
-                        let current_block = self.builder.get_insert_block().unwrap();
-                        let function = current_block.get_parent().unwrap();
-                        let entry_block = function.get_first_basic_block().unwrap();
+                        let current_block = self.current_block()?;
+                        let function = current_block.get_parent().ok_or_else(|| "block has no parent function".to_string())?;
+                        let entry_block = function.get_first_basic_block().ok_or_else(|| "function has no entry block".to_string())?;
 
                         let entry_builder = self.context.create_builder();
                         if let Some(first_instr) = entry_block.get_first_instruction() {
@@ -2451,7 +2451,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             }
                             _ => ("tl_tensor_get_f32_md", Type::F32),
                         };
-                        let get_fn = self.module.get_function(get_fn_name).unwrap();
+                        let get_fn = self.get_fn(get_fn_name)?;
                         let tensor_ptr = val.into_pointer_value();
                         let array_ptr = self
                             .builder
@@ -2598,7 +2598,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             Ok((res.into(), Type::F64))
                         }
                         Type::Tensor(_inner, _rank) => {
-                            let neg_fn = self.module.get_function("tl_tensor_neg").unwrap();
+                            let neg_fn = self.get_fn("tl_tensor_neg")?;
                             let call = self
                                 .builder
                                 .build_call(neg_fn, &[val.into()], "neg")
@@ -2636,7 +2636,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     UnOp::Query => {
                         // Logic Query: check if result tensor is non-empty
                         if let Type::Tensor(_, _) = ty {
-                            let len_fn = self.module.get_function("tl_tensor_len").unwrap();
+                            let len_fn = self.get_fn("tl_tensor_len")?;
                             let cast_ptr = self
                                 .builder
                                 .build_pointer_cast(
@@ -2644,7 +2644,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                     self.context.ptr_type(inkwell::AddressSpace::default()),
                                     "cast_len",
                                 )
-                                .unwrap();
+                                .map_err(|e| e.to_string())?;
                             let call = self
                                 .builder
                                 .build_call(len_fn, &[cast_ptr.into()], "len")
@@ -2677,9 +2677,9 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                             // Create scalar tensor using tl_tensor_new(data_ptr, rank=0, shape_ptr=NULL)
                             // 1. Alloca for f32 data
-                            let current_block = self.builder.get_insert_block().unwrap();
-                            let func = current_block.get_parent().unwrap();
-                            let entry_block = func.get_first_basic_block().unwrap();
+                            let current_block = self.current_block()?;
+                            let func = current_block.get_parent().ok_or_else(|| "block has no parent function".to_string())?;
+                            let entry_block = func.get_first_basic_block().ok_or_else(|| "function has no entry block".to_string())?;
                             
                             // Insert at the beginning of entry block to avoid being after terminator
                             if let Some(first_inst) = entry_block.get_first_instruction() {
@@ -2737,9 +2737,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let parent = self
                     .builder
                     .get_insert_block()
-                    .unwrap()
+                    .ok_or_else(|| "unexpected None".to_string())?
                     .get_parent()
-                    .unwrap();
+                    .ok_or_else(|| "unexpected None".to_string())?;
 
                 let (cond_val, cond_ty) = self.compile_expr(cond)?;
                 
@@ -2747,7 +2747,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     // Implicit conversion: Tensor -> Bool
                     // Assuming scalar tensor (0-dim or 1-element). extract item as int/bool.
                     // We can use `tl_tensor_item_i64` and cast to bool?
-                    let item_fn = self.module.get_function("tl_tensor_item_i64").unwrap();
+                    let item_fn = self.get_fn("tl_tensor_item_i64")?;
                     let call = self.builder.build_call(item_fn, &[cond_val.into()], "cond_item").map_err(|e| e.to_string())?;
                     let item_val = match call.try_as_basic_value() {
                          inkwell::values::ValueKind::Basic(v) => v,
@@ -2876,10 +2876,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                                     self.context.ptr_type(inkwell::AddressSpace::default()),
                                     "cast",
                                 )
-                                .unwrap();
+                                .map_err(|e| e.to_string())?;
                             self.builder
                                 .build_call(unreg_fn, &[cast_ptr.into()], "")
-                                .unwrap();
+                                .map_err(|e| e.to_string())?;
                         }
                     }
                 }
@@ -2887,7 +2887,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 self.exit_scope();
 
                 // Get the block after cleanup (important for PHI incoming)
-                let then_final_bb = self.builder.get_insert_block().unwrap();
+                let then_final_bb = self.current_block()?;
                 if then_final_bb.get_terminator().is_none() {
                     self.builder
                         .build_unconditional_branch(merge_bb)
@@ -2957,10 +2957,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                                     self.context.ptr_type(inkwell::AddressSpace::default()),
                                     "cast",
                                 )
-                                .unwrap();
+                                .map_err(|e| e.to_string())?;
                             self.builder
                                 .build_call(unreg_fn, &[cast_ptr.into()], "")
-                                .unwrap();
+                                .map_err(|e| e.to_string())?;
                         }
                     }
                 }
@@ -2968,7 +2968,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 self.exit_scope();
 
                 // Get the block after cleanup
-                let else_final_bb = self.builder.get_insert_block().unwrap();
+                let else_final_bb = self.current_block()?;
                 if else_final_bb.get_terminator().is_none() {
                     self.builder
                         .build_unconditional_branch(merge_bb)
@@ -3053,10 +3053,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                                         self.context.ptr_type(inkwell::AddressSpace::default()),
                                         "cast",
                                     )
-                                    .unwrap();
+                                    .map_err(|e| e.to_string())?;
                                 self.builder
                                     .build_call(reg_fn, &[cast_ptr.into()], "")
-                                    .unwrap();
+                                    .map_err(|e| e.to_string())?;
                             }
                         }
                     }
@@ -3122,7 +3122,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         
         let size_int = size;
         let size_i64 = if size_int.get_type() == self.context.i32_type() {
-             self.builder.build_int_z_extend(size_int, self.context.i64_type(), "size_i64").unwrap()
+             self.builder.build_int_z_extend(size_int, self.context.i64_type(), "size_i64").map_err(|e| e.to_string())?
         } else {
              size_int
         };
@@ -3177,10 +3177,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                         self.context.ptr_type(inkwell::AddressSpace::default()),
                         "cast_unreg_elem",
                     )
-                    .unwrap();
+                    .map_err(|e| e.to_string())?;
                 self.builder
                     .build_call(unreg_fn, &[cast_ptr.into()], "")
-                    .unwrap();
+                    .map_err(|e| e.to_string())?;
 
                 // If element was a variable, we need to remove it from scope tracking appropriately?
                 // compile_expr for variable returns a LOADed value usually, or the pointer?
@@ -3316,7 +3316,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             
         let size_int = size;
         let size_i64 = if size_int.get_type() == self.context.i32_type() {
-             self.builder.build_int_z_extend(size_int, self.context.i64_type(), "size_i64").unwrap()
+             self.builder.build_int_z_extend(size_int, self.context.i64_type(), "size_i64").map_err(|e| e.to_string())?
         } else {
              size_int
         };
@@ -3345,7 +3345,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 self.context.ptr_type(inkwell::AddressSpace::default()),
                 "cast_ptr",
             )
-            .unwrap();
+            .map_err(|e| e.to_string())?;
 
         let name_global = self
             .builder
@@ -3455,7 +3455,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             let capacity_i64 = capacity_val.into_int_value();
             
             let new_fn = self.module.get_function("tl_channel_new").ok_or("tl_channel_new not found")?;
-            let call = self.builder.build_call(new_fn, &[capacity_i64.into()], "call_channel_new").unwrap();
+            let call = self.builder.build_call(new_fn, &[capacity_i64.into()], "call_channel_new").map_err(|e| e.to_string())?;
             let id_val = match call.try_as_basic_value() {
                 inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
                 _ => return Err("tl_channel_new returned void".into()),
@@ -3463,17 +3463,17 @@ impl<'ctx> CodeGenerator<'ctx> {
             let type_args_vec = if let Type::Struct(_, targs) = target_type { targs.clone() } else { vec![] };
             let type_args = type_args_vec.as_slice();
             let struct_name = self.mangle_type_name("Channel", type_args);
-            let llvm_struct_ty = self.context.get_struct_type(&struct_name).unwrap();
+            let llvm_struct_ty = self.context.get_struct_type(&struct_name).ok_or_else(|| "unexpected None".to_string())?;
             let malloc_fn = self.module.get_function("malloc").ok_or("malloc not found")?;
-            let size_val = llvm_struct_ty.size_of().unwrap();
-            let call_malloc = self.builder.build_call(malloc_fn, &[size_val.into()], "malloc_ch").unwrap();
+            let size_val = llvm_struct_ty.size_of().ok_or_else(|| "type has no size".to_string())?;
+            let call_malloc = self.builder.build_call(malloc_fn, &[size_val.into()], "malloc_ch").map_err(|e| e.to_string())?;
             let raw_ptr = match call_malloc.try_as_basic_value() {
                 inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
                 _ => return Err("malloc returned void".into()),
             };
-            let struct_ptr = self.builder.build_pointer_cast(raw_ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "struct_ptr").unwrap();
-            let id_ptr = self.builder.build_struct_gep(llvm_struct_ty, struct_ptr, 0, "id_ptr").unwrap();
-            self.builder.build_store(id_ptr, id_val).unwrap();
+            let struct_ptr = self.builder.build_pointer_cast(raw_ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "struct_ptr").map_err(|e| e.to_string())?;
+            let id_ptr = self.builder.build_struct_gep(llvm_struct_ty, struct_ptr, 0, "id_ptr").map_err(|e| e.to_string())?;
+            self.builder.build_store(id_ptr, id_val).map_err(|e| e.to_string())?;
             return Ok((struct_ptr.into(), target_type.clone()));
         }
 
@@ -3489,8 +3489,8 @@ impl<'ctx> CodeGenerator<'ctx> {
             let (closure_val, _closure_ty) = self.compile_expr(&args[0])?;
             let closure_struct = closure_val.into_struct_value();
             
-            let fn_ptr = self.builder.build_extract_value(closure_struct, 0, "fn_ptr").unwrap().into_pointer_value();
-            let env_ptr = self.builder.build_extract_value(closure_struct, 1, "env_ptr").unwrap().into_pointer_value();
+            let fn_ptr = self.builder.build_extract_value(closure_struct, 0, "fn_ptr").map_err(|e| e.to_string())?.into_pointer_value();
+            let env_ptr = self.builder.build_extract_value(closure_struct, 1, "env_ptr").map_err(|e| e.to_string())?.into_pointer_value();
             
             // To support arbitrary returning closures without ABI mismatch, we must generate a wrapper function
             // that invokes fn_ptr(env_ptr), allocates memory using tl_alloc_tmp, stores the result, 
@@ -3520,12 +3520,12 @@ impl<'ctx> CodeGenerator<'ctx> {
             ], false);
             
             let trampoline_fn = self.module.add_function(&trampoline_name, trampoline_sig, None);
-            let prev_bb = self.builder.get_insert_block().unwrap();
+            let prev_bb = self.current_block()?;
             
             let basic_block = self.context.append_basic_block(trampoline_fn, "entry");
             self.builder.position_at_end(basic_block);
             
-            let env_param = trampoline_fn.get_first_param().unwrap().into_pointer_value();
+            let env_param = trampoline_fn.get_first_param().ok_or_else(|| "unexpected None".to_string())?.into_pointer_value();
             
             // Re-cast fn_ptr inside trampoline? We don't have fn_ptr inside trampoline because it's dynamic!
             // Ah! We must pass BOTH fn_ptr and env_ptr to the trampoline.
@@ -3536,54 +3536,54 @@ impl<'ctx> CodeGenerator<'ctx> {
                 self.context.ptr_type(inkwell::AddressSpace::default()).into()
             ], false);
             
-            let ext_env_param = self.builder.build_pointer_cast(env_param, self.context.ptr_type(inkwell::AddressSpace::default()), "bundle_ptr").unwrap();
-            let dyn_fn_ptr = self.builder.build_load(self.context.ptr_type(inkwell::AddressSpace::default()), self.builder.build_struct_gep(bundle_ty, ext_env_param, 0, "").unwrap(), "dyn_fn").unwrap().into_pointer_value();
-            let dyn_env_ptr = self.builder.build_load(self.context.ptr_type(inkwell::AddressSpace::default()), self.builder.build_struct_gep(bundle_ty, ext_env_param, 1, "").unwrap(), "dyn_env").unwrap().into_pointer_value();
+            let ext_env_param = self.builder.build_pointer_cast(env_param, self.context.ptr_type(inkwell::AddressSpace::default()), "bundle_ptr").map_err(|e| e.to_string())?;
+            let dyn_fn_ptr = self.builder.build_load(self.context.ptr_type(inkwell::AddressSpace::default()), self.builder.build_struct_gep(bundle_ty, ext_env_param, 0, "").map_err(|e| e.to_string())?, "dyn_fn").map_err(|e| e.to_string())?.into_pointer_value();
+            let dyn_env_ptr = self.builder.build_load(self.context.ptr_type(inkwell::AddressSpace::default()), self.builder.build_struct_gep(bundle_ty, ext_env_param, 1, "").map_err(|e| e.to_string())?, "dyn_env").map_err(|e| e.to_string())?.into_pointer_value();
             
             // free the bundle
-            let free_tmp_fn = self.module.get_function("tl_free_tmp").unwrap();
-            self.builder.build_call(free_tmp_fn, &[ext_env_param.into()], "").unwrap();
+            let free_tmp_fn = self.get_fn("tl_free_tmp")?;
+            self.builder.build_call(free_tmp_fn, &[ext_env_param.into()], "").map_err(|e| e.to_string())?;
             
-            let size = if llvm_ret_ty.is_sized() { llvm_ret_ty.size_of().unwrap() } else { self.context.i64_type().const_zero() };
-            let size_i64 = if size.get_type() == self.context.i32_type() { self.builder.build_int_z_extend(size, self.context.i64_type(), "").unwrap() } else { size };
-            let alloc_tmp_fn = self.module.get_function("tl_alloc_tmp").unwrap();
-            let call_buf = self.builder.build_call(alloc_tmp_fn, &[size_i64.into()], "buf").unwrap();
+            let size = if llvm_ret_ty.is_sized() { llvm_ret_ty.size_of().ok_or_else(|| "type has no size".to_string())? } else { self.context.i64_type().const_zero() };
+            let size_i64 = if size.get_type() == self.context.i32_type() { self.builder.build_int_z_extend(size, self.context.i64_type(), "").map_err(|e| e.to_string())? } else { size };
+            let alloc_tmp_fn = self.get_fn("tl_alloc_tmp")?;
+            let call_buf = self.builder.build_call(alloc_tmp_fn, &[size_i64.into()], "buf").map_err(|e| e.to_string())?;
             let buf_ptr = match call_buf.try_as_basic_value() {
                 inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
                 _ => return Err("tl_alloc_tmp returned void".into()),
             };
-            let typed_buf = self.builder.build_pointer_cast(buf_ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "typed_buf").unwrap();
+            let typed_buf = self.builder.build_pointer_cast(buf_ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "typed_buf").map_err(|e| e.to_string())?;
             
             if uses_sret {
-                self.builder.build_indirect_call(closure_llvm_ty, dyn_fn_ptr, &[typed_buf.into(), dyn_env_ptr.into()], "call").unwrap();
+                self.builder.build_indirect_call(closure_llvm_ty, dyn_fn_ptr, &[typed_buf.into(), dyn_env_ptr.into()], "call").map_err(|e| e.to_string())?;
             } else {
-                let call_ret = self.builder.build_indirect_call(closure_llvm_ty, dyn_fn_ptr, &[dyn_env_ptr.into()], "call").unwrap();
+                let call_ret = self.builder.build_indirect_call(closure_llvm_ty, dyn_fn_ptr, &[dyn_env_ptr.into()], "call").map_err(|e| e.to_string())?;
                 let ret_val = match call_ret.try_as_basic_value() {
                     inkwell::values::ValueKind::Basic(v) => v,
                     _ => return Err("closure returned void unexpectedly".into()),
                 };
-                self.builder.build_store(typed_buf, ret_val).unwrap();
+                self.builder.build_store(typed_buf, ret_val).map_err(|e| e.to_string())?;
             }
             // Return heap buffer
-            self.builder.build_return(Some(&buf_ptr)).unwrap();
+            self.builder.build_return(Some(&buf_ptr)).map_err(|e| e.to_string())?;
             
             // Restore builder
             self.builder.position_at_end(prev_bb);
             
             // Prepare bundle to send
-            let bundle_size = bundle_ty.size_of().unwrap();
-            let bundle_size_i64 = if bundle_size.get_type() == self.context.i32_type() { self.builder.build_int_z_extend(bundle_size, self.context.i64_type(), "").unwrap() } else { bundle_size };
-            let call_bundle = self.builder.build_call(alloc_tmp_fn, &[bundle_size_i64.into()], "bundle").unwrap();
+            let bundle_size = bundle_ty.size_of().ok_or_else(|| "type has no size".to_string())?;
+            let bundle_size_i64 = if bundle_size.get_type() == self.context.i32_type() { self.builder.build_int_z_extend(bundle_size, self.context.i64_type(), "").map_err(|e| e.to_string())? } else { bundle_size };
+            let call_bundle = self.builder.build_call(alloc_tmp_fn, &[bundle_size_i64.into()], "bundle").map_err(|e| e.to_string())?;
             let bundle_raw = match call_bundle.try_as_basic_value() {
                 inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
                 _ => return Err("tl_alloc_tmp returned void".into()),
             };
-            let bundle_typed = self.builder.build_pointer_cast(bundle_raw, self.context.ptr_type(inkwell::AddressSpace::default()), "bundle_typed").unwrap();
-            self.builder.build_store(self.builder.build_struct_gep(bundle_ty, bundle_typed, 0, "").unwrap(), fn_ptr).unwrap();
-            self.builder.build_store(self.builder.build_struct_gep(bundle_ty, bundle_typed, 1, "").unwrap(), env_ptr).unwrap();
+            let bundle_typed = self.builder.build_pointer_cast(bundle_raw, self.context.ptr_type(inkwell::AddressSpace::default()), "bundle_typed").map_err(|e| e.to_string())?;
+            self.builder.build_store(self.builder.build_struct_gep(bundle_ty, bundle_typed, 0, "").map_err(|e| e.to_string())?, fn_ptr).map_err(|e| e.to_string())?;
+            self.builder.build_store(self.builder.build_struct_gep(bundle_ty, bundle_typed, 1, "").map_err(|e| e.to_string())?, env_ptr).map_err(|e| e.to_string())?;
             
-            let spawn_fn = self.module.get_function("tl_thread_spawn").unwrap();
-            let call = self.builder.build_call(spawn_fn, &[trampoline_fn.as_global_value().as_pointer_value().into(), bundle_raw.into()], "spawn").unwrap();
+            let spawn_fn = self.get_fn("tl_thread_spawn")?;
+            let call = self.builder.build_call(spawn_fn, &[trampoline_fn.as_global_value().as_pointer_value().into(), bundle_raw.into()], "spawn").map_err(|e| e.to_string())?;
             let thread_id = match call.try_as_basic_value() {
                 inkwell::values::ValueKind::Basic(v) => v,
                 _ => return Err("tl_thread_spawn returned void".into()),
@@ -3591,8 +3591,8 @@ impl<'ctx> CodeGenerator<'ctx> {
             
             let t_name = if let Type::Struct(name, _) = self.normalize_type(target_type) { name } else { "Thread".to_string() };
             let t_struct_ty = self.context.struct_type(&[self.context.i64_type().into()], false);
-            let ret_ptr = self.builder.build_alloca(t_struct_ty, "thread_struct").unwrap();
-            self.builder.build_store(self.builder.build_struct_gep(t_struct_ty, ret_ptr, 0, "").unwrap(), thread_id).unwrap();
+            let ret_ptr = self.builder.build_alloca(t_struct_ty, "thread_struct").map_err(|e| e.to_string())?;
+            self.builder.build_store(self.builder.build_struct_gep(t_struct_ty, ret_ptr, 0, "").map_err(|e| e.to_string())?, thread_id).map_err(|e| e.to_string())?;
             
             return Ok((ret_ptr.into(), Type::Struct(t_name, vec![inner_ty])));
         }
@@ -3607,25 +3607,25 @@ impl<'ctx> CodeGenerator<'ctx> {
             let (val, ty) = self.compile_expr(arg_expr)?;
             
             let llvm_type = self.get_llvm_type(&ty)?;
-            let size = if llvm_type.is_sized() { llvm_type.size_of().unwrap() } else { self.context.i64_type().const_zero() };
+            let size = if llvm_type.is_sized() { llvm_type.size_of().ok_or_else(|| "type has no size".to_string())? } else { self.context.i64_type().const_zero() };
             // Cast size to i64
             let size_i64 = if size.get_type() == self.context.i32_type() {
-                 self.builder.build_int_z_extend(size, self.context.i64_type(), "size_i64").unwrap()
+                 self.builder.build_int_z_extend(size, self.context.i64_type(), "size_i64").map_err(|e| e.to_string())?
             } else {
                  size
             };
             
-            let temp_ptr = self.builder.build_alloca(llvm_type, "mutex_val").unwrap();
+            let temp_ptr = self.builder.build_alloca(llvm_type, "mutex_val").map_err(|e| e.to_string())?;
             let store_val = if matches!(ty, Type::Tensor(_, _) | Type::Struct(_, _) | Type::Tuple(_) | Type::String(_)) {
                 self.emit_deep_clone(val, &ty)?
             } else {
                 val
             };
-            self.builder.build_store(temp_ptr, store_val).unwrap();
+            self.builder.build_store(temp_ptr, store_val).map_err(|e| e.to_string())?;
             
-            let data_ptr_cast = self.builder.build_pointer_cast(temp_ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "m_val_cast").unwrap();
-            let new_fn = self.module.get_function("tl_mutex_new").unwrap();
-            let call = self.builder.build_call(new_fn, &[size_i64.into(), data_ptr_cast.into()], "m_id").unwrap();
+            let data_ptr_cast = self.builder.build_pointer_cast(temp_ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "m_val_cast").map_err(|e| e.to_string())?;
+            let new_fn = self.get_fn("tl_mutex_new")?;
+            let call = self.builder.build_call(new_fn, &[size_i64.into(), data_ptr_cast.into()], "m_id").map_err(|e| e.to_string())?;
             let id_val = match call.try_as_basic_value() {
                 inkwell::values::ValueKind::Basic(v) => v,
                 _ => return Err("tl_mutex_new returned void".into()),
@@ -3635,29 +3635,29 @@ impl<'ctx> CodeGenerator<'ctx> {
             let m_name = if let Type::Struct(name, _) = self.normalize_type(target_type) { name } else { "Mutex".to_string() };
             let t_struct_ty = self.context.struct_type(&[self.context.i64_type().into()], false);
             
-            let malloc_fn = self.module.get_function("malloc").unwrap();
-            let m_size = t_struct_ty.size_of().unwrap();
+            let malloc_fn = self.get_fn("malloc")?;
+            let m_size = t_struct_ty.size_of().ok_or_else(|| "type has no size".to_string())?;
             let m_size_i64 = if m_size.get_type() == self.context.i32_type() {
-                 self.builder.build_int_z_extend(m_size, self.context.i64_type(), "size_i64").unwrap()
+                 self.builder.build_int_z_extend(m_size, self.context.i64_type(), "size_i64").map_err(|e| e.to_string())?
             } else {
                  m_size
             };
-            let call_malloc = self.builder.build_call(malloc_fn, &[m_size_i64.into()], "m_malloc").unwrap();
+            let call_malloc = self.builder.build_call(malloc_fn, &[m_size_i64.into()], "m_malloc").map_err(|e| e.to_string())?;
             let raw_ptr = match call_malloc.try_as_basic_value() {
                 inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
                 _ => return Err("malloc returned void".into()),
             };
             
             // register
-            let cast_ptr = self.builder.build_pointer_cast(raw_ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "cast_ptr").unwrap();
-            let name_global = self.builder.build_global_string_ptr(&m_name, "struct_name").unwrap();
-            let register_fn = self.module.get_function("tl_mem_register_struct_named").unwrap();
-            self.builder.build_call(register_fn, &[cast_ptr.into(), name_global.as_pointer_value().into()], "").unwrap();
+            let cast_ptr = self.builder.build_pointer_cast(raw_ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "cast_ptr").map_err(|e| e.to_string())?;
+            let name_global = self.builder.build_global_string_ptr(&m_name, "struct_name").map_err(|e| e.to_string())?;
+            let register_fn = self.get_fn("tl_mem_register_struct_named")?;
+            self.builder.build_call(register_fn, &[cast_ptr.into(), name_global.as_pointer_value().into()], "").map_err(|e| e.to_string())?;
             
             // store id
-            let m_ptr = self.builder.build_pointer_cast(raw_ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "m_ptr").unwrap();
-            let id_gep = self.builder.build_struct_gep(t_struct_ty, m_ptr, 0, "id_f").unwrap();
-            self.builder.build_store(id_gep, id_val).unwrap();
+            let m_ptr = self.builder.build_pointer_cast(raw_ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "m_ptr").map_err(|e| e.to_string())?;
+            let id_gep = self.builder.build_struct_gep(t_struct_ty, m_ptr, 0, "id_f").map_err(|e| e.to_string())?;
+            self.builder.build_store(id_gep, id_val).map_err(|e| e.to_string())?;
             
             return Ok((m_ptr.into(), Type::Struct(m_name, vec![ty])));
         }
@@ -3867,7 +3867,7 @@ impl<'ctx> CodeGenerator<'ctx> {
              
              // 2. Malloc
              let malloc_fn = self.module.get_function("malloc").ok_or("malloc not found")?;
-             let size_i64 = self.builder.build_int_z_extend(size, self.context.i64_type(), "size_i64").unwrap();
+             let size_i64 = self.builder.build_int_z_extend(size, self.context.i64_type(), "size_i64").map_err(|e| e.to_string())?;
              let call_malloc = self.builder.build_call(malloc_fn, &[size_i64.into()], "sret_malloc").map_err(|e| e.to_string())?;
              
              let raw_ptr = match call_malloc.try_as_basic_value() {
@@ -3880,10 +3880,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                  Type::Struct(n, _) => n.as_str(),
                  _ => "AnonymousStruct",
              };
-             let name_global = self.builder.build_global_string_ptr(struct_name_str, "struct_name").unwrap();
+             let name_global = self.builder.build_global_string_ptr(struct_name_str, "struct_name").map_err(|e| e.to_string())?;
              let register_fn = self.module.get_function("tl_mem_register_struct_named").ok_or("tl_mem_register_struct_named not found")?;
              
-             let cast_ptr = self.builder.build_pointer_cast(raw_ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "cast_ptr").unwrap();
+             let cast_ptr = self.builder.build_pointer_cast(raw_ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "cast_ptr").map_err(|e| e.to_string())?;
              let _ = self.builder.build_call(register_fn, &[cast_ptr.into(), name_global.as_pointer_value().into()], "");
 
              sret_ptr = Some(cast_ptr);
@@ -3899,10 +3899,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                      // VarBuilder methods expect char* (i8*) not String struct
                      let ptr_to_struct = val.into_pointer_value();
                      let i64_ptr_ty = self.context.i64_type().ptr_type(inkwell::AddressSpace::default());
-                     let ptr_to_first_field = self.builder.build_pointer_cast(ptr_to_struct, i64_ptr_ty, "str_ptr_cast").unwrap();
-                     let str_addr_i64 = self.builder.build_load(self.context.i64_type(), ptr_to_first_field, "str_addr").unwrap().into_int_value();
+                     let ptr_to_first_field = self.builder.build_pointer_cast(ptr_to_struct, i64_ptr_ty, "str_ptr_cast").map_err(|e| e.to_string())?;
+                     let str_addr_i64 = self.builder.build_load(self.context.i64_type(), ptr_to_first_field, "str_addr").map_err(|e| e.to_string())?.into_int_value();
                      let i8_ptr_ty = self.context.i8_type().ptr_type(inkwell::AddressSpace::default());
-                     let char_ptr = self.builder.build_int_to_ptr(str_addr_i64, i8_ptr_ty, "cstr_ptr").unwrap();
+                     let char_ptr = self.builder.build_int_to_ptr(str_addr_i64, i8_ptr_ty, "cstr_ptr").map_err(|e| e.to_string())?;
                      (char_ptr.into(), ty)
                  } else {
                      (val, ty)
@@ -3926,7 +3926,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         if let Some(ptr) = sret_ptr {
              let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
-             let loaded = self.builder.build_load(ptr_ty, ptr, "sret_static_loaded").unwrap();
+             let loaded = self.builder.build_load(ptr_ty, ptr, "sret_static_loaded").map_err(|e| e.to_string())?;
              Ok((loaded, ret_ty))
         } else {
              match call.try_as_basic_value() {
@@ -4044,21 +4044,21 @@ impl<'ctx> CodeGenerator<'ctx> {
                     Type::F64 => self
                         .builder
                         .build_float_cast(val.into_float_value(), f32_type, "f64_to_f32")
-                        .unwrap(),
+                        .map_err(|e| e.to_string())?,
                     Type::I64 => self
                         .builder
                         .build_signed_int_to_float(val.into_int_value(), f32_type, "i64_to_f32")
-                        .unwrap(),
+                        .map_err(|e| e.to_string())?,
                     Type::I32 | Type::Bool => self
                         .builder
                         .build_signed_int_to_float(
                             self.builder
                                 .build_int_z_extend(val.into_int_value(), i64_type, "zext")
-                                .unwrap(),
+                                .map_err(|e| e.to_string())?,
                             f32_type,
                             "i_to_f32",
                         )
-                        .unwrap(),
+                        .map_err(|e| e.to_string())?,
                     _ => return Err(format!("Cannot cast {:?} to F32", ty)),
                 };
 
@@ -4072,18 +4072,18 @@ impl<'ctx> CodeGenerator<'ctx> {
                         )
                         .map_err(|e| e.to_string())?
                 };
-                self.builder.build_store(ptr, float_val).unwrap();
+                self.builder.build_store(ptr, float_val).map_err(|e| e.to_string())?;
             } else {
                 let int_val = match ty {
                     Type::I64 => val.into_int_value(),
                     Type::I32 => self
                         .builder
                         .build_int_z_extend(val.into_int_value(), i64_type, "zext")
-                        .unwrap(),
+                        .map_err(|e| e.to_string())?,
                     Type::Bool => self
                         .builder
                         .build_int_z_extend(val.into_int_value(), i64_type, "zext")
-                        .unwrap(),
+                        .map_err(|e| e.to_string())?,
                     _ => return Err(format!("Cannot cast {:?} to I64", ty)),
                 };
 
@@ -4097,7 +4097,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         )
                         .map_err(|e| e.to_string())?
                 };
-                self.builder.build_store(ptr, int_val).unwrap();
+                self.builder.build_store(ptr, int_val).map_err(|e| e.to_string())?;
             }
         }
 
@@ -4161,7 +4161,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 self.context.ptr_type(inkwell::AddressSpace::default()),
                 "data_ptr_cast",
             )
-            .unwrap();
+            .map_err(|e| e.to_string())?;
 
         let call = self
             .builder
@@ -4186,10 +4186,10 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         self.builder
             .build_call(free_tmp_fn, &[data_alloca.into()], "")
-            .unwrap();
+            .map_err(|e| e.to_string())?;
         self.builder
             .build_call(free_tmp_fn, &[shape_alloca.into()], "")
-            .unwrap();
+            .map_err(|e| e.to_string())?;
 
         let result_ty = Type::Tensor(Box::new(result_inner_type), rank);
 
@@ -4538,9 +4538,9 @@ impl<'ctx> CodeGenerator<'ctx> {
         let current_func = self
             .builder
             .get_insert_block()
-            .unwrap()
+            .ok_or_else(|| "unexpected None".to_string())?
             .get_parent()
-            .unwrap();
+            .ok_or_else(|| "unexpected None".to_string())?;
         let merge_block = self.context.append_basic_block(current_func, "match_merge");
 
         let mut arm_blocks = Vec::with_capacity(arms.len());
@@ -4601,11 +4601,11 @@ impl<'ctx> CodeGenerator<'ctx> {
             let func = self
                 .builder
                 .get_insert_block()
-                .unwrap()
+                .ok_or_else(|| "unexpected None".to_string())?
                 .get_parent()
-                .unwrap();
+                .ok_or_else(|| "unexpected None".to_string())?;
             let unreachable_bb = self.context.append_basic_block(func, "match_unreachable");
-            let current_block = self.builder.get_insert_block().unwrap();
+            let current_block = self.current_block()?;
             self.builder.position_at_end(unreachable_bb);
             let _ = self.builder.build_unreachable();
             self.builder.position_at_end(current_block);
@@ -4660,7 +4660,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
             self.exit_scope();
 
-            let current_insert_block = self.builder.get_insert_block().unwrap();
+            let current_insert_block = self.current_block()?;
             if current_insert_block.get_terminator().is_none() {
                 self.builder
                     .build_unconditional_branch(merge_block)
@@ -4681,7 +4681,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             // This is more reliable than using result_type, which may be Undefined
             // from monomorphization issues
             let phi_type: inkwell::types::BasicTypeEnum = incoming_vals[0].0.get_type();
-            let phi = self.builder.build_phi(phi_type, "match_res").unwrap();
+            let phi = self.builder.build_phi(phi_type, "match_res").map_err(|e| e.to_string())?;
             let incomings: Vec<(
                 &dyn inkwell::values::BasicValue,
                 inkwell::basic_block::BasicBlock,
@@ -4761,10 +4761,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                         self.context.ptr_type(inkwell::AddressSpace::default()),
                         "cast",
                     )
-                    .unwrap();
+                    .map_err(|e| e.to_string())?;
                 self.builder
                     .build_call(unreg_fn, &[cast_ptr.into()], "")
-                    .unwrap();
+                    .map_err(|e| e.to_string())?;
             }
             Ok(val)
         }
@@ -4863,7 +4863,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             payload_ptr_raw,
             variant_ptr_type, // Actually just mapped to ptr
             "payload_cast"
-        ).unwrap();
+        ).map_err(|e| e.to_string())?;
 
 
         // Bind fields
@@ -4899,7 +4899,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     current_field_idx += 1;
 
                     let llvm_ty = self.get_llvm_type(&concrete_ty)?;
-                    let f_val = self.builder.build_load(llvm_ty, f_ptr, "bind_val").unwrap();
+                    let f_val = self.builder.build_load(llvm_ty, f_ptr, "bind_val").map_err(|e| e.to_string())?;
 
                     let alloca = self.create_entry_block_alloca(current_func, bind_name, &concrete_ty)?;
                     let stored_val = match &concrete_ty {
@@ -4913,11 +4913,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                         }
                         _ => f_val,
                     };
-                    self.builder.build_store(alloca, stored_val).unwrap();
+                    self.builder.build_store(alloca, stored_val).map_err(|e| e.to_string())?;
 
                     self.variables
                         .last_mut()
-                        .unwrap()
+                        .ok_or_else(|| "unexpected None".to_string())?
                         .insert(bind_name.clone(), (alloca.into(), concrete_ty.clone(), super::CLEANUP_FULL));
                 }
                 Ok(())
@@ -4938,7 +4938,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                  .map_err(|e| e.to_string())?;
                              
                              let llvm_ty = self.get_llvm_type(&concrete_ty)?;
-                             let f_val = self.builder.build_load(llvm_ty, f_ptr, "bind_val").unwrap();
+                             let f_val = self.builder.build_load(llvm_ty, f_ptr, "bind_val").map_err(|e| e.to_string())?;
                              
                              let alloca = self.create_entry_block_alloca(current_func, bind_var_name, &concrete_ty)?;
                              let stored_val = match &concrete_ty {
@@ -4952,9 +4952,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                                  }
                                  _ => f_val,
                              }; 
-                             self.builder.build_store(alloca, stored_val).unwrap();
+                             self.builder.build_store(alloca, stored_val).map_err(|e| e.to_string())?;
                              
-                             self.variables.last_mut().unwrap().insert(bind_var_name.clone(), (alloca.into(), concrete_ty.clone(), super::CLEANUP_FULL));
+                             self.variables.last_mut().ok_or_else(|| "no variable scope".to_string())?.insert(bind_var_name.clone(), (alloca.into(), concrete_ty.clone(), super::CLEANUP_FULL));
                          }
                      }
                      // Always increment standard layout index
@@ -5008,7 +5008,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 self.context.ptr_type(inkwell::AddressSpace::default()),
                 "payload_cast",
             )
-            .unwrap();
+            .map_err(|e| e.to_string())?;
 
         match (&variant_def.kind, bindings) {
             (crate::compiler::ast::VariantKind::Unit, crate::compiler::ast::EnumPatternBindings::Unit) => {
@@ -5028,7 +5028,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .map_err(|e| e.to_string())?;
 
                     let llvm_ty = self.get_llvm_type(f_ty)?;
-                    let f_val = self.builder.build_load(llvm_ty, f_ptr, "bind_val").unwrap();
+                    let f_val = self.builder.build_load(llvm_ty, f_ptr, "bind_val").map_err(|e| e.to_string())?;
 
                     let alloca = self.create_entry_block_alloca(current_func, bind_name, f_ty)?;
                     let stored_val = if matches!(
@@ -5043,11 +5043,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                     } else {
                         f_val
                     };
-                    self.builder.build_store(alloca, stored_val).unwrap();
+                    self.builder.build_store(alloca, stored_val).map_err(|e| e.to_string())?;
 
                     self.variables
                         .last_mut()
-                        .unwrap()
+                        .map_err(|e| e.to_string())?
                         .insert(bind_name.clone(), (alloca.into(), f_ty.clone(), super::CLEANUP_FULL));
                 }
                 Ok(())
@@ -5067,7 +5067,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .map_err(|e| e.to_string())?;
 
                     let llvm_ty = self.get_llvm_type(f_ty)?;
-                    let f_val = self.builder.build_load(llvm_ty, f_ptr, "bind_val").unwrap();
+                    let f_val = self.builder.build_load(llvm_ty, f_ptr, "bind_val").map_err(|e| e.to_string())?;
 
                     let alloca = self.create_entry_block_alloca(current_func, bind_name, f_ty)?;
                     let stored_val = if matches!(
@@ -5082,11 +5082,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                     } else {
                         f_val
                     };
-                    self.builder.build_store(alloca, stored_val).unwrap();
+                    self.builder.build_store(alloca, stored_val).map_err(|e| e.to_string())?;
 
                     self.variables
                         .last_mut()
-                        .unwrap()
+                        .map_err(|e| e.to_string())?
                         .insert(bind_name.clone(), (alloca.into(), f_ty.clone(), super::CLEANUP_FULL));
                 }
                 Ok(())
@@ -5113,12 +5113,12 @@ impl<'ctx> CodeGenerator<'ctx> {
         llvm_ty: &inkwell::types::BasicTypeEnum<'ctx>,
     ) -> Result<inkwell::values::PointerValue<'ctx>, String> {
         let builder = self.context.create_builder();
-        let entry = function.get_first_basic_block().unwrap();
+        let entry = function.get_first_basic_block().ok_or_else(|| "function has no entry block".to_string())?;
         match entry.get_first_instruction() {
             Some(first_instr) => builder.position_before(&first_instr),
             None => builder.position_at_end(entry),
         }
-        Ok(builder.build_alloca(*llvm_ty, name).unwrap())
+        Ok(builder.build_alloca(*llvm_ty, name).map_err(|e| e.to_string())?)
     }
 
     pub(crate) fn create_entry_block_alloca(
@@ -5130,7 +5130,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         let builder = self.context.create_builder();
         if ty == &Type::Void {
         }
-        let entry = function.get_first_basic_block().unwrap();
+        let entry = function.get_first_basic_block().ok_or_else(|| "function has no entry block".to_string())?;
         match entry.get_first_instruction() {
             Some(first_instr) => builder.position_before(&first_instr),
             None => builder.position_at_end(entry),
@@ -5139,7 +5139,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         let llvm_type: inkwell::types::BasicTypeEnum = self
             .get_llvm_type(ty)
             .map_err(|e| format!("Failed to get LLVM type for alloca: {}", e))?;
-        let alloca = builder.build_alloca(llvm_type, name).unwrap();
+        let alloca = builder.build_alloca(llvm_type, name).map_err(|e| e.to_string())?;
         if let Some(instr) = alloca.as_instruction_value() {
             // Force 16-byte alignment to satisfy SIMD/slice requirements
             instr.set_alignment(16).ok();
@@ -5187,7 +5187,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     }
                 };
 
-                let dim_fn = self.module.get_function("tl_tensor_dim").unwrap();
+                let dim_fn = self.get_fn("tl_tensor_dim")?;
                 for (i, idx_expr) in indices.iter().enumerate() {
                     match &idx_expr.inner {
                         ExprKind::Int(_) | ExprKind::Float(_) => continue,
@@ -5340,8 +5340,8 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Trait Object Dynamic Dispatch
         if let Type::TraitObject(trait_name) = &obj_ty {
             let fat_ptr = obj_val.into_struct_value();
-            let data_ptr = self.builder.build_extract_value(fat_ptr, 0, "dyn_data_ptr").unwrap().into_pointer_value();
-            let vtable_ptr = self.builder.build_extract_value(fat_ptr, 1, "dyn_vtable_ptr").unwrap().into_pointer_value();
+            let data_ptr = self.builder.build_extract_value(fat_ptr, 0, "dyn_data_ptr").map_err(|e| e.to_string())?.into_pointer_value();
+            let vtable_ptr = self.builder.build_extract_value(fat_ptr, 1, "dyn_vtable_ptr").map_err(|e| e.to_string())?.into_pointer_value();
             
             let trait_def = self.trait_defs.get(trait_name).ok_or_else(|| format!("Trait {} not found", trait_name))?.clone();
             let method_idx = trait_def.methods.iter().position(|m| m.name == method).ok_or_else(|| format!("Method {} not found in trait {}", method, trait_name))?;
@@ -5395,12 +5395,12 @@ impl<'ctx> CodeGenerator<'ctx> {
             if let Type::Struct(name, type_args) = &obj_ty {
                 if mangle_base_name(name) == "Channel" {
                     let struct_name = if type_args.is_empty() { name.clone() } else { self.mangle_type_name("Channel", type_args) };
-                    let llvm_struct_ty = self.context.get_struct_type(&struct_name).unwrap();
+                    let llvm_struct_ty = self.context.get_struct_type(&struct_name).ok_or_else(|| "unexpected None".to_string())?;
                     let id_val = if obj_val.is_pointer_value() {
-                        let id_ptr = self.builder.build_struct_gep(llvm_struct_ty, obj_val.into_pointer_value(), 0, "id_ptr").unwrap();
-                        self.builder.build_load(self.context.i64_type(), id_ptr, "id").unwrap()
+                        let id_ptr = self.builder.build_struct_gep(llvm_struct_ty, obj_val.into_pointer_value(), 0, "id_ptr").map_err(|e| e.to_string())?;
+                        self.builder.build_load(self.context.i64_type(), id_ptr, "id").map_err(|e| e.to_string())?
                     } else if obj_val.is_struct_value() {
-                        self.builder.build_extract_value(obj_val.into_struct_value(), 0, "id").unwrap().into_int_value().into()
+                        self.builder.build_extract_value(obj_val.into_struct_value(), 0, "id").map_err(|e| e.to_string())?.into_int_value().into()
                     } else {
                         return Err("Channel obj_val is neither pointer nor struct".into());
                     };
@@ -5410,24 +5410,24 @@ impl<'ctx> CodeGenerator<'ctx> {
                     let arg_i64 = match arg_val {
                         inkwell::values::BasicValueEnum::IntValue(v) => {
                             if v.get_type().get_bit_width() == 64 { v }
-                            else { self.builder.build_int_z_extend(v, self.context.i64_type(), "zext").unwrap() }
+                            else { self.builder.build_int_z_extend(v, self.context.i64_type(), "zext").map_err(|e| e.to_string())? }
                         },
                         inkwell::values::BasicValueEnum::FloatValue(v) => {
                             if v.get_type() == self.context.f64_type() {
-                                self.builder.build_bit_cast(v, self.context.i64_type(), "bitcast_f64").unwrap().into_int_value()
+                                self.builder.build_bit_cast(v, self.context.i64_type(), "bitcast_f64").map_err(|e| e.to_string())?.into_int_value()
                             } else {
-                                let ext = self.builder.build_float_ext(v, self.context.f64_type(), "fext").unwrap();
-                                self.builder.build_bit_cast(ext, self.context.i64_type(), "bitcast").unwrap().into_int_value()
+                                let ext = self.builder.build_float_ext(v, self.context.f64_type(), "fext").map_err(|e| e.to_string())?;
+                                self.builder.build_bit_cast(ext, self.context.i64_type(), "bitcast").map_err(|e| e.to_string())?.into_int_value()
                             }
                         },
                         inkwell::values::BasicValueEnum::PointerValue(v) => {
-                            self.builder.build_ptr_to_int(v, self.context.i64_type(), "ptr_to_int").unwrap()
+                            self.builder.build_ptr_to_int(v, self.context.i64_type(), "ptr_to_int").map_err(|e| e.to_string())?
                         },
                         _ => return Err("Unsupported Channel generic type".into()),
                     };
 
                     let send_fn = self.module.get_function("tl_channel_send").ok_or("tl_channel_send not found")?;
-                    let call = self.builder.build_call(send_fn, &[id_val.into(), arg_i64.into()], "send_ret").unwrap();
+                    let call = self.builder.build_call(send_fn, &[id_val.into(), arg_i64.into()], "send_ret").map_err(|e| e.to_string())?;
                     let res_val = match call.try_as_basic_value() {
                         inkwell::values::ValueKind::Basic(v) => v,
                         _ => return Err("tl_channel_send returned void".into()),
@@ -5435,7 +5435,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     
                     // tl_channel_send returns u64 boolean (wait, it returns bool! we declared it as returning bool?)
                     // FFI says `fn tl_channel_send(...) -> bool`. In C ABI, Rust `bool` is usually i8.
-                    let bool_val = self.builder.build_int_truncate(res_val.into_int_value(), self.context.bool_type(), "trunc").unwrap();
+                    let bool_val = self.builder.build_int_truncate(res_val.into_int_value(), self.context.bool_type(), "trunc").map_err(|e| e.to_string())?;
                     
                     return Ok((bool_val.into(), Type::Bool));
                 }
@@ -5448,18 +5448,18 @@ impl<'ctx> CodeGenerator<'ctx> {
                 if mangle_base_name(name) == "Channel" {
                     let inner_ty = self.extract_inner_ty(&obj_ty);
                     let struct_name = if inner_ty != Type::I64 { self.mangle_type_name("Channel", &[inner_ty.clone()]) } else { name.clone() };
-                    let llvm_struct_ty = self.context.get_struct_type(&struct_name).unwrap();
+                    let llvm_struct_ty = self.context.get_struct_type(&struct_name).ok_or_else(|| "unexpected None".to_string())?;
                     let id_val = if obj_val.is_pointer_value() {
-                        let id_ptr = self.builder.build_struct_gep(llvm_struct_ty, obj_val.into_pointer_value(), 0, "id_ptr").unwrap();
-                        self.builder.build_load(self.context.i64_type(), id_ptr, "id").unwrap()
+                        let id_ptr = self.builder.build_struct_gep(llvm_struct_ty, obj_val.into_pointer_value(), 0, "id_ptr").map_err(|e| e.to_string())?;
+                        self.builder.build_load(self.context.i64_type(), id_ptr, "id").map_err(|e| e.to_string())?
                     } else if obj_val.is_struct_value() {
-                        self.builder.build_extract_value(obj_val.into_struct_value(), 0, "id").unwrap().into_int_value().into()
+                        self.builder.build_extract_value(obj_val.into_struct_value(), 0, "id").map_err(|e| e.to_string())?.into_int_value().into()
                     } else {
                         return Err("Channel obj_val is neither pointer nor struct".into());
                     };
 
                     let recv_fn = self.module.get_function("tl_channel_recv").ok_or("tl_channel_recv not found")?;
-                    let call = self.builder.build_call(recv_fn, &[id_val.into()], "recv_ret").unwrap();
+                    let call = self.builder.build_call(recv_fn, &[id_val.into()], "recv_ret").map_err(|e| e.to_string())?;
                     let raw_i64 = match call.try_as_basic_value() {
                         inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
                         _ => return Err("tl_channel_recv returned void".into()),
@@ -5467,18 +5467,18 @@ impl<'ctx> CodeGenerator<'ctx> {
                     
                     let target_ty = self.get_llvm_type(&inner_ty)?;
                     let final_val: inkwell::values::BasicValueEnum<'ctx> = if target_ty.is_pointer_type() {
-                        self.builder.build_int_to_ptr(raw_i64, target_ty.into_pointer_type(), "int_to_ptr").unwrap().into()
+                        self.builder.build_int_to_ptr(raw_i64, target_ty.into_pointer_type(), "int_to_ptr").map_err(|e| e.to_string())?.into()
                     } else if target_ty.is_float_type() {
                         if target_ty.into_float_type() == self.context.f64_type() {
-                            self.builder.build_bit_cast(raw_i64, target_ty, "bitcast").unwrap().into()
+                            self.builder.build_bit_cast(raw_i64, target_ty, "bitcast").map_err(|e| e.to_string())?.into()
                         } else {
-                            let f64_val = self.builder.build_bit_cast(raw_i64, self.context.f64_type(), "bitcast").unwrap().into_float_value();
-                            self.builder.build_float_trunc(f64_val, target_ty.into_float_type(), "ftrunc").unwrap().into()
+                            let f64_val = self.builder.build_bit_cast(raw_i64, self.context.f64_type(), "bitcast").map_err(|e| e.to_string())?.into_float_value();
+                            self.builder.build_float_trunc(f64_val, target_ty.into_float_type(), "ftrunc").map_err(|e| e.to_string())?.into()
                         }
                     } else if target_ty.is_int_type() {
                         let width = target_ty.into_int_type().get_bit_width();
                         if width < 64 {
-                            self.builder.build_int_truncate(raw_i64, target_ty.into_int_type(), "trunc").unwrap().into()
+                            self.builder.build_int_truncate(raw_i64, target_ty.into_int_type(), "trunc").map_err(|e| e.to_string())?.into()
                         } else {
                             raw_i64.into()
                         }
@@ -5497,19 +5497,19 @@ impl<'ctx> CodeGenerator<'ctx> {
                 if mangle_base_name(name) == "Channel" {
                     let inner_ty = if type_args.len() == 1 { type_args[0].clone() } else { Type::I64 };
                     let struct_name = if type_args.is_empty() { name.clone() } else { self.mangle_type_name("Channel", type_args) };
-                    let llvm_struct_ty = self.context.get_struct_type(&struct_name).unwrap();
+                    let llvm_struct_ty = self.context.get_struct_type(&struct_name).ok_or_else(|| "unexpected None".to_string())?;
                     let id_val = if obj_val.is_pointer_value() {
-                        let id_ptr = self.builder.build_struct_gep(llvm_struct_ty, obj_val.into_pointer_value(), 0, "id_ptr").unwrap();
-                        self.builder.build_load(self.context.i64_type(), id_ptr, "id").unwrap()
+                        let id_ptr = self.builder.build_struct_gep(llvm_struct_ty, obj_val.into_pointer_value(), 0, "id_ptr").map_err(|e| e.to_string())?;
+                        self.builder.build_load(self.context.i64_type(), id_ptr, "id").map_err(|e| e.to_string())?
                     } else if obj_val.is_struct_value() {
-                        self.builder.build_extract_value(obj_val.into_struct_value(), 0, "id").unwrap().into_int_value().into()
+                        self.builder.build_extract_value(obj_val.into_struct_value(), 0, "id").map_err(|e| e.to_string())?.into_int_value().into()
                     } else {
                         return Err("Channel obj_val is neither pointer nor struct".into());
                     };
 
-                    let success_alloc = self.builder.build_alloca(self.context.bool_type(), "success_out").unwrap();
+                    let success_alloc = self.builder.build_alloca(self.context.bool_type(), "success_out").map_err(|e| e.to_string())?;
                     let recv_fn = self.module.get_function("tl_channel_try_recv").ok_or("tl_channel_try_recv not found")?;
-                    let call = self.builder.build_call(recv_fn, &[id_val.into(), success_alloc.into()], "recv_ret").unwrap();
+                    let call = self.builder.build_call(recv_fn, &[id_val.into(), success_alloc.into()], "recv_ret").map_err(|e| e.to_string())?;
                     let raw_i64 = match call.try_as_basic_value() {
                         inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
                         _ => return Err("tl_channel_try_recv returned void".into()),
@@ -5517,18 +5517,18 @@ impl<'ctx> CodeGenerator<'ctx> {
                     
                     let target_ty = self.get_llvm_type(&inner_ty)?;
                     let final_val: inkwell::values::BasicValueEnum<'ctx> = if target_ty.is_pointer_type() {
-                        self.builder.build_int_to_ptr(raw_i64, target_ty.into_pointer_type(), "int_to_ptr").unwrap().into()
+                        self.builder.build_int_to_ptr(raw_i64, target_ty.into_pointer_type(), "int_to_ptr").map_err(|e| e.to_string())?.into()
                     } else if target_ty.is_float_type() {
                         if target_ty.into_float_type() == self.context.f64_type() {
-                            self.builder.build_bit_cast(raw_i64, target_ty, "bitcast").unwrap().into()
+                            self.builder.build_bit_cast(raw_i64, target_ty, "bitcast").map_err(|e| e.to_string())?.into()
                         } else {
-                            let f64_val = self.builder.build_bit_cast(raw_i64, self.context.f64_type(), "bitcast").unwrap().into_float_value();
-                            self.builder.build_float_trunc(f64_val, target_ty.into_float_type(), "ftrunc").unwrap().into()
+                            let f64_val = self.builder.build_bit_cast(raw_i64, self.context.f64_type(), "bitcast").map_err(|e| e.to_string())?.into_float_value();
+                            self.builder.build_float_trunc(f64_val, target_ty.into_float_type(), "ftrunc").map_err(|e| e.to_string())?.into()
                         }
                     } else if target_ty.is_int_type() {
                         let width = target_ty.into_int_type().get_bit_width();
                         if width < 64 {
-                            self.builder.build_int_truncate(raw_i64, target_ty.into_int_type(), "trunc").unwrap().into()
+                            self.builder.build_int_truncate(raw_i64, target_ty.into_int_type(), "trunc").map_err(|e| e.to_string())?.into()
                         } else {
                             raw_i64.into()
                         }
@@ -5536,7 +5536,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         return Err("Unsupported Channel output type".into());
                     };
 
-                    let is_success = self.builder.build_load(self.context.bool_type(), success_alloc, "is_success").unwrap().into_int_value();
+                    let is_success = self.builder.build_load(self.context.bool_type(), success_alloc, "is_success").map_err(|e| e.to_string())?.into_int_value();
                     
                     let res_mangled = self.mangle_type_name("Option", &[inner_ty.clone()]);
                     let res_ty = Type::Enum(res_mangled.clone(), vec![]);
@@ -5546,62 +5546,62 @@ impl<'ctx> CodeGenerator<'ctx> {
                     let enum_struct_ty = if let Some(ty) = self.enum_types.get(&res_mangled) {
                         *ty
                     } else {
-                        self.monomorphize_enum("Option", &[inner_ty.clone()]).unwrap();
+                        self.monomorphize_enum("Option", &[inner_ty.clone()]).map_err(|e| e.to_string())?;
                         *self.enum_types.get(&res_mangled).ok_or("Failed to monomorphize Option")?
                     };
 
-                    let res_alloc = self.builder.build_alloca(llvm_res_ty, "res_alloc").unwrap();
+                    let res_alloc = self.builder.build_alloca(llvm_res_ty, "res_alloc").map_err(|e| e.to_string())?;
                     
-                    let ok_bb = self.context.append_basic_block(self.builder.get_insert_block().unwrap().get_parent().unwrap(), "recv_ok");
-                    let err_bb = self.context.append_basic_block(self.builder.get_insert_block().unwrap().get_parent().unwrap(), "recv_err");
-                    let cont_bb = self.context.append_basic_block(self.builder.get_insert_block().unwrap().get_parent().unwrap(), "recv_cont");
+                    let ok_bb = self.context.append_basic_block(self.current_function()?, "recv_ok");
+                    let err_bb = self.context.append_basic_block(self.current_function()?, "recv_err");
+                    let cont_bb = self.context.append_basic_block(self.current_function()?, "recv_cont");
                     
-                    self.builder.build_conditional_branch(is_success, ok_bb, err_bb).unwrap();
+                    self.builder.build_conditional_branch(is_success, ok_bb, err_bb).map_err(|e| e.to_string())?;
                     
                     let malloc_fn = self.module.get_function("malloc").ok_or("malloc not found")?;
                     let reg_fn = self.module.get_function("tl_mem_register_struct_named").ok_or("tl_mem_register_struct_named not found")?;
                     let unreg_fn = self.module.get_function("tl_mem_unregister").ok_or("tl_mem_unregister not found")?;
                     
-                    let size_ptr = unsafe { self.builder.build_gep(enum_struct_ty, self.context.ptr_type(inkwell::AddressSpace::default()).const_null(), &[self.context.i64_type().const_int(1, false)], "size_ptr").unwrap() };
-                    let size = self.builder.build_ptr_to_int(size_ptr, self.context.i64_type(), "enum_size").unwrap();
-                    let name_ptr = self.builder.build_global_string_ptr(&res_mangled, "enum_name").unwrap().as_pointer_value();
+                    let size_ptr = unsafe { self.builder.build_gep(enum_struct_ty, self.context.ptr_type(inkwell::AddressSpace::default()).const_null(), &[self.context.i64_type().const_int(1, false)], "size_ptr").map_err(|e| e.to_string())? };
+                    let size = self.builder.build_ptr_to_int(size_ptr, self.context.i64_type(), "enum_size").map_err(|e| e.to_string())?;
+                    let name_ptr = self.builder.build_global_string_ptr(&res_mangled, "enum_name").map_err(|e| e.to_string())?.as_pointer_value();
 
                     // OK block
                     self.builder.position_at_end(ok_bb);
-                    let call_ok = self.builder.build_call(malloc_fn, &[size.into()], "ok_malloc").unwrap();
+                    let call_ok = self.builder.build_call(malloc_fn, &[size.into()], "ok_malloc").map_err(|e| e.to_string())?;
                     let ok_malloc = match call_ok.try_as_basic_value() {
                         inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
                         _ => return Err("malloc returned void".into()),
                     };
-                    self.builder.build_call(reg_fn, &[ok_malloc.into(), name_ptr.into()], "").unwrap();
+                    self.builder.build_call(reg_fn, &[ok_malloc.into(), name_ptr.into()], "").map_err(|e| e.to_string())?;
                     
-                    let tag_ptr = self.builder.build_struct_gep(enum_struct_ty, ok_malloc, 0, "tag_ptr").unwrap();
-                    self.builder.build_store(tag_ptr, self.context.i32_type().const_int(0, false)).unwrap(); // Some(0)
-                    let payload_ptr = self.builder.build_struct_gep(enum_struct_ty, ok_malloc, 1, "payload_ptr").unwrap();
-                    let typed_payload_ptr = self.builder.build_pointer_cast(payload_ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "typed_payload").unwrap();
-                    self.builder.build_store(typed_payload_ptr, final_val).unwrap();
-                    self.builder.build_store(res_alloc, ok_malloc).unwrap();
-                    self.builder.build_unconditional_branch(cont_bb).unwrap();
+                    let tag_ptr = self.builder.build_struct_gep(enum_struct_ty, ok_malloc, 0, "tag_ptr").map_err(|e| e.to_string())?;
+                    self.builder.build_store(tag_ptr, self.context.i32_type().const_int(0, false)).map_err(|e| e.to_string())?; // Some(0)
+                    let payload_ptr = self.builder.build_struct_gep(enum_struct_ty, ok_malloc, 1, "payload_ptr").map_err(|e| e.to_string())?;
+                    let typed_payload_ptr = self.builder.build_pointer_cast(payload_ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "typed_payload").map_err(|e| e.to_string())?;
+                    self.builder.build_store(typed_payload_ptr, final_val).map_err(|e| e.to_string())?;
+                    self.builder.build_store(res_alloc, ok_malloc).map_err(|e| e.to_string())?;
+                    self.builder.build_unconditional_branch(cont_bb).map_err(|e| e.to_string())?;
                     
                     // ERR block
                     self.builder.position_at_end(err_bb);
-                    let call_err = self.builder.build_call(malloc_fn, &[size.into()], "err_malloc").unwrap();
+                    let call_err = self.builder.build_call(malloc_fn, &[size.into()], "err_malloc").map_err(|e| e.to_string())?;
                     let err_malloc = match call_err.try_as_basic_value() {
                         inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
                         _ => return Err("malloc returned void".into()),
                     };
-                    self.builder.build_call(reg_fn, &[err_malloc.into(), name_ptr.into()], "").unwrap();
+                    self.builder.build_call(reg_fn, &[err_malloc.into(), name_ptr.into()], "").map_err(|e| e.to_string())?;
                     
-                    let tag_ptr = self.builder.build_struct_gep(enum_struct_ty, err_malloc, 0, "tag_ptr").unwrap();
-                    self.builder.build_store(tag_ptr, self.context.i32_type().const_int(1, false)).unwrap(); // None(1)
-                    self.builder.build_store(res_alloc, err_malloc).unwrap();
-                    self.builder.build_unconditional_branch(cont_bb).unwrap();
+                    let tag_ptr = self.builder.build_struct_gep(enum_struct_ty, err_malloc, 0, "tag_ptr").map_err(|e| e.to_string())?;
+                    self.builder.build_store(tag_ptr, self.context.i32_type().const_int(1, false)).map_err(|e| e.to_string())?; // None(1)
+                    self.builder.build_store(res_alloc, err_malloc).map_err(|e| e.to_string())?;
+                    self.builder.build_unconditional_branch(cont_bb).map_err(|e| e.to_string())?;
                     
                     self.builder.position_at_end(cont_bb);
-                    let final_res = self.builder.build_load(llvm_res_ty, res_alloc, "res").unwrap();
+                    let final_res = self.builder.build_load(llvm_res_ty, res_alloc, "res").map_err(|e| e.to_string())?;
                     
                     // Shallow Unregister: Transfer ownership to caller
-                    self.builder.build_call(unreg_fn, &[final_res.into()], "").unwrap();
+                    self.builder.build_call(unreg_fn, &[final_res.into()], "").map_err(|e| e.to_string())?;
                     
                     return Ok((final_res, res_ty));
                 }
@@ -5631,37 +5631,37 @@ impl<'ctx> CodeGenerator<'ctx> {
                 } else {
                     return Err("Thread obj is not pointer".into());
                 };
-                let id_val = self.builder.build_load(self.context.i64_type(), self.builder.build_struct_gep(t_struct_ty, ptr, 0, "").unwrap(), "id").unwrap();
+                let id_val = self.builder.build_load(self.context.i64_type(), self.builder.build_struct_gep(t_struct_ty, ptr, 0, "").map_err(|e| e.to_string())?, "id").map_err(|e| e.to_string())?;
                 
-                let join_fn = self.module.get_function("tl_thread_join").unwrap();
-                let call = self.builder.build_call(join_fn, &[id_val.into()], "join_ret").unwrap();
+                let join_fn = self.get_fn("tl_thread_join")?;
+                let call = self.builder.build_call(join_fn, &[id_val.into()], "join_ret").map_err(|e| e.to_string())?;
                 let raw_ptr = match call.try_as_basic_value() {
                     inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
                     _ => return Err("tl_thread_join returned void".into()),
                 };
                 
                 // Check if raw_ptr is Null
-                let is_null = self.builder.build_is_null(raw_ptr, "is_null").unwrap();
+                let is_null = self.builder.build_is_null(raw_ptr, "is_null").map_err(|e| e.to_string())?;
                 
                 let res_ty = Type::Enum(self.mangle_type_name("Result", &[inner_ty.clone(), Type::String("String".to_string())]), vec![]);
                 let llvm_res_ty = self.get_llvm_type(&res_ty)?;
-                let res_alloc = self.builder.build_alloca(llvm_res_ty, "res_alloc").unwrap();
+                let res_alloc = self.builder.build_alloca(llvm_res_ty, "res_alloc").map_err(|e| e.to_string())?;
                 
-                let ok_bb = self.context.append_basic_block(self.builder.get_insert_block().unwrap().get_parent().unwrap(), "join_ok");
-                let err_bb = self.context.append_basic_block(self.builder.get_insert_block().unwrap().get_parent().unwrap(), "join_err");
-                let cont_bb = self.context.append_basic_block(self.builder.get_insert_block().unwrap().get_parent().unwrap(), "join_cont");
+                let ok_bb = self.context.append_basic_block(self.current_function()?, "join_ok");
+                let err_bb = self.context.append_basic_block(self.current_function()?, "join_err");
+                let cont_bb = self.context.append_basic_block(self.current_function()?, "join_cont");
                 
-                self.builder.build_conditional_branch(is_null, err_bb, ok_bb).unwrap();
+                self.builder.build_conditional_branch(is_null, err_bb, ok_bb).map_err(|e| e.to_string())?;
                 
                 // OK block
                 self.builder.position_at_end(ok_bb);
-                let typed_ptr = self.builder.build_pointer_cast(raw_ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "typed").unwrap();
+                let typed_ptr = self.builder.build_pointer_cast(raw_ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "typed").map_err(|e| e.to_string())?;
                 let llvm_inner_ty = self.get_llvm_type(&inner_ty)?;
                 // if it uses sret, or if it is directly loaded:
                 let loaded = if matches!(inner_ty, Type::Tensor(_, _) | Type::Struct(_, _) | Type::Tuple(_) | Type::String(_)) {
-                    self.builder.build_load(llvm_inner_ty, typed_ptr, "inner_val").unwrap()
+                    self.builder.build_load(llvm_inner_ty, typed_ptr, "inner_val").map_err(|e| e.to_string())?
                 } else {
-                    self.builder.build_load(llvm_inner_ty, typed_ptr, "inner_val").unwrap()
+                    self.builder.build_load(llvm_inner_ty, typed_ptr, "inner_val").map_err(|e| e.to_string())?
                 };
                 
                 let res_mangled = self.mangle_type_name("Result", &[inner_ty.clone(), Type::String("String".to_string())]);
@@ -5669,45 +5669,45 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let enum_ty = if let Some(ty) = self.enum_types.get(&res_mangled) { 
                     *ty 
                 } else { 
-                    self.monomorphize_enum("Result", &[inner_ty.clone(), Type::String("String".to_string())]).unwrap();
-                    let specialized_def = self.enum_defs.get(&res_mangled).unwrap().clone();
-                    self.compile_enum_defs(&[specialized_def]).unwrap();
-                    *self.enum_types.get(&res_mangled).unwrap()
+                    self.monomorphize_enum("Result", &[inner_ty.clone(), Type::String("String".to_string())]).map_err(|e| e.to_string())?;
+                    let specialized_def = self.enum_defs.get(&res_mangled).ok_or_else(|| "index out of bounds".to_string())?.clone();
+                    self.compile_enum_defs(&[specialized_def]).map_err(|e| e.to_string())?;
+                    *self.enum_types.get(&res_mangled).ok_or_else(|| "index out of bounds".to_string())?
                 };
-                let malloc_fn = self.module.get_function("malloc").unwrap();
-                let size_ptr = unsafe { self.builder.build_gep(enum_ty, self.context.ptr_type(inkwell::AddressSpace::default()).const_null(), &[self.context.i64_type().const_int(1, false)], "").unwrap() };
-                let size = self.builder.build_ptr_to_int(size_ptr, self.context.i64_type(), "").unwrap();
-                let call_ok = self.builder.build_call(malloc_fn, &[size.into()], "res_ok").unwrap();
+                let malloc_fn = self.get_fn("malloc")?;
+                let size_ptr = unsafe { self.builder.build_gep(enum_ty, self.context.ptr_type(inkwell::AddressSpace::default()).const_null(), &[self.context.i64_type().const_int(1, false)], "").map_err(|e| e.to_string())? };
+                let size = self.builder.build_ptr_to_int(size_ptr, self.context.i64_type(), "").map_err(|e| e.to_string())?;
+                let call_ok = self.builder.build_call(malloc_fn, &[size.into()], "res_ok").map_err(|e| e.to_string())?;
                 let ok_ptr = match call_ok.try_as_basic_value() { inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(), _ => return Err("malloc void".into()), };
-                self.builder.build_store(self.builder.build_struct_gep(enum_ty, ok_ptr, 0, "").unwrap(), self.context.i32_type().const_int(0, false)).unwrap();
-                let payload_ok = self.builder.build_pointer_cast(self.builder.build_struct_gep(enum_ty, ok_ptr, 1, "").unwrap(), self.context.ptr_type(inkwell::AddressSpace::default()), "").unwrap();
+                self.builder.build_store(self.builder.build_struct_gep(enum_ty, ok_ptr, 0, "").map_err(|e| e.to_string())?, self.context.i32_type().const_int(0, false)).map_err(|e| e.to_string())?;
+                let payload_ok = self.builder.build_pointer_cast(self.builder.build_struct_gep(enum_ty, ok_ptr, 1, "").map_err(|e| e.to_string())?, self.context.ptr_type(inkwell::AddressSpace::default()), "").map_err(|e| e.to_string())?;
                 let variant_ok_ty = self.context.struct_type(&[llvm_inner_ty], false);
-                self.builder.build_store(self.builder.build_struct_gep(variant_ok_ty, payload_ok, 0, "").unwrap(), loaded).unwrap();
+                self.builder.build_store(self.builder.build_struct_gep(variant_ok_ty, payload_ok, 0, "").map_err(|e| e.to_string())?, loaded).map_err(|e| e.to_string())?;
                 
-                self.builder.build_store(res_alloc, ok_ptr).unwrap();
+                self.builder.build_store(res_alloc, ok_ptr).map_err(|e| e.to_string())?;
                 
-                let free_tmp_fn = self.module.get_function("tl_free_tmp").unwrap();
-                self.builder.build_call(free_tmp_fn, &[raw_ptr.into()], "").unwrap();
-                self.builder.build_unconditional_branch(cont_bb).unwrap();
+                let free_tmp_fn = self.get_fn("tl_free_tmp")?;
+                self.builder.build_call(free_tmp_fn, &[raw_ptr.into()], "").map_err(|e| e.to_string())?;
+                self.builder.build_unconditional_branch(cont_bb).map_err(|e| e.to_string())?;
                 
                 // ERR block
                 self.builder.position_at_end(err_bb);
                 let err_msg = "Thread panicked: joined null pointer".to_string();
-                let msg_str = self.compile_string_literal(&err_msg).unwrap();
+                let msg_str = self.compile_string_literal(&err_msg).map_err(|e| e.to_string())?;
                 
-                let call_err = self.builder.build_call(malloc_fn, &[size.into()], "res_err").unwrap();
+                let call_err = self.builder.build_call(malloc_fn, &[size.into()], "res_err").map_err(|e| e.to_string())?;
                 let err_ptr = match call_err.try_as_basic_value() { inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(), _ => return Err("malloc void".into()), };
-                self.builder.build_store(self.builder.build_struct_gep(enum_ty, err_ptr, 0, "").unwrap(), self.context.i32_type().const_int(1, false)).unwrap();
-                let payload_err = self.builder.build_pointer_cast(self.builder.build_struct_gep(enum_ty, err_ptr, 1, "").unwrap(), self.context.ptr_type(inkwell::AddressSpace::default()), "").unwrap();
+                self.builder.build_store(self.builder.build_struct_gep(enum_ty, err_ptr, 0, "").map_err(|e| e.to_string())?, self.context.i32_type().const_int(1, false)).map_err(|e| e.to_string())?;
+                let payload_err = self.builder.build_pointer_cast(self.builder.build_struct_gep(enum_ty, err_ptr, 1, "").map_err(|e| e.to_string())?, self.context.ptr_type(inkwell::AddressSpace::default()), "").map_err(|e| e.to_string())?;
                 let variant_err_ty = self.context.struct_type(&[self.get_llvm_type(&Type::String("String".to_string()))?], false);
-                self.builder.build_store(self.builder.build_struct_gep(variant_err_ty, payload_err, 0, "").unwrap(), msg_str.0).unwrap();
+                self.builder.build_store(self.builder.build_struct_gep(variant_err_ty, payload_err, 0, "").map_err(|e| e.to_string())?, msg_str.0).map_err(|e| e.to_string())?;
                 
-                self.builder.build_store(res_alloc, err_ptr).unwrap();
-                self.builder.build_unconditional_branch(cont_bb).unwrap();
+                self.builder.build_store(res_alloc, err_ptr).map_err(|e| e.to_string())?;
+                self.builder.build_unconditional_branch(cont_bb).map_err(|e| e.to_string())?;
                 
                 // CONT block
                 self.builder.position_at_end(cont_bb);
-                let final_res = self.builder.build_load(llvm_res_ty, res_alloc, "final_res").unwrap();
+                let final_res = self.builder.build_load(llvm_res_ty, res_alloc, "final_res").map_err(|e| e.to_string())?;
                 return Ok((final_res, res_ty));
             }
         }
@@ -5742,10 +5742,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                 } else {
                     return Err("Mutex value is not pointer".into());
                 };
-                let id_gep = self.builder.build_struct_gep(m_struct_ty, ptr, 0, "id_field").unwrap();
-                let id_val = self.builder.build_load(self.context.i64_type(), id_gep, "id_val").unwrap();
+                let id_gep = self.builder.build_struct_gep(m_struct_ty, ptr, 0, "id_field").map_err(|e| e.to_string())?;
+                let id_val = self.builder.build_load(self.context.i64_type(), id_gep, "id_val").map_err(|e| e.to_string())?;
                 let fn_val = self.module.get_function("tl_mutex_release").ok_or("tl_mutex_release not found")?;
-                self.builder.build_call(fn_val, &[id_val.into()], "").unwrap();
+                self.builder.build_call(fn_val, &[id_val.into()], "").map_err(|e| e.to_string())?;
                 return Ok((self.context.i64_type().const_zero().into(), Type::Void));
             }
         }
@@ -6103,7 +6103,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                  .ok_or_else(|| format!("Struct type {} not found for SRET allocation (tried {})", simple_lookup_name, simple_lookup_name))?;
              
              let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
-             let alloca = self.create_entry_block_alloca_manual(self.builder.get_insert_block().unwrap().get_parent().unwrap(), "sret_ptr", &ptr_type.into()).map_err(|e| e.to_string())?;
+             let alloca = self.create_entry_block_alloca_manual(self.current_function()?, "sret_ptr", &ptr_type.into()).map_err(|e| e.to_string())?;
              sret_ptr = Some(alloca);
         }
 
@@ -6152,7 +6152,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Return handling
         if let Some(ptr) = sret_ptr {
              let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
-             let loaded = self.builder.build_load(ptr_ty, ptr, "sret_method_loaded").unwrap();
+             let loaded = self.builder.build_load(ptr_ty, ptr, "sret_method_loaded").map_err(|e| e.to_string())?;
              Ok((loaded, ret_ty))
         } else {
             match call.try_as_basic_value() {
@@ -6224,7 +6224,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         tags.push(tag);
                     } else {
                         // Assume constant Entity Name
-                        let add_entity_fn = self.module.get_function("tl_kb_add_entity").unwrap();
+                        let add_entity_fn = self.get_fn("tl_kb_add_entity")?;
                         let name_ptr = self
                             .builder
                             .build_global_string_ptr(sym_name, "ent_name")
@@ -6249,7 +6249,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     }
                 }
                 ExprKind::StringLiteral(s) => {
-                    let add_entity_fn = self.module.get_function("tl_kb_add_entity").unwrap();
+                    let add_entity_fn = self.get_fn("tl_kb_add_entity")?;
                     let name_ptr = self
                         .builder
                         .build_global_string_ptr(s, "ent_name")
@@ -6276,13 +6276,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                      // Force cast to i64
                     let i64_type = self.context.i64_type();
                     let val_i64 = if val.is_int_value() {
-                        self.builder.build_int_cast(val.into_int_value(), i64_type, "arg_cast").unwrap().into()
+                        self.builder.build_int_cast(val.into_int_value(), i64_type, "arg_cast").map_err(|e| e.to_string())?.into()
                     } else {
                         // If float, cast to int? Or bitcast?
                         // For now assume logic args are ints or entities (i64)
                         // If boolean?
                          if val.is_int_value() { // Bool is int(1)
-                             self.builder.build_int_cast(val.into_int_value(), i64_type, "bool_cast").unwrap().into()
+                             self.builder.build_int_cast(val.into_int_value(), i64_type, "bool_cast").map_err(|e| e.to_string())?.into()
                          } else {
                              val // Cannot cast pointer to int easily here without ptrtoint
                          }
@@ -6307,7 +6307,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             self.context.ptr_type(inkwell::AddressSpace::default()).const_null()
         } else {
             let tags_arr_type = i8_type.array_type(tags.len() as u32);
-            let tags_alloca = self.builder.build_alloca(tags_arr_type, "query_tags").unwrap();
+            let tags_alloca = self.builder.build_alloca(tags_arr_type, "query_tags").map_err(|e| e.to_string())?;
             for (i, &tag) in tags.iter().enumerate() {
                 let ptr = unsafe {
                     self.builder
@@ -6320,11 +6320,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                             ],
                             "",
                         )
-                        .unwrap()
+                        .map_err(|e| e.to_string())?
                 };
                 self.builder
                     .build_store(ptr, i8_type.const_int(tag as u64, false))
-                    .unwrap();
+                    .map_err(|e| e.to_string())?;
             }
             unsafe {
                 self.builder
@@ -6334,7 +6334,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         &[i64_type.const_int(0, false), i64_type.const_int(0, false)],
                         "tags_decayed",
                     )
-                    .unwrap()
+                    .map_err(|e| e.to_string())?
             }
         };
 
@@ -6343,7 +6343,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         compiled_args.insert(0, mask_val.into());
         // Append tags pointer at end (as i64)
         // let null_tags = i8_type.ptr_type(inkwell::AddressSpace::default()).const_null();
-        let tags_int = self.builder.build_ptr_to_int(tags_ptr, i64_type, "tags_int").unwrap();
+        let tags_int = self.builder.build_ptr_to_int(tags_ptr, i64_type, "tags_int").map_err(|e| e.to_string())?;
         compiled_args.push(tags_int.into());
         // compiled_args.push(null_tags.into()); // FORCE NULL TAGS
         // compiled_args.push(tags_ptr.into());
@@ -6442,27 +6442,27 @@ impl<'ctx> CodeGenerator<'ctx> {
         let data_ptr_field = self.builder.build_struct_gep(
             vec_struct_ty, vec_ptr, 0, "data_ptr_field",
         ).map_err(|e| e.to_string())?;
-        let data_ptr = self.builder.build_load(ptr_type, data_ptr_field, "data_ptr").unwrap();
+        let data_ptr = self.builder.build_load(ptr_type, data_ptr_field, "data_ptr").map_err(|e| e.to_string())?;
 
         let len_field = self.builder.build_struct_gep(
             vec_struct_ty, vec_ptr, 2, "len_field",
         ).map_err(|e| e.to_string())?;
-        let len = self.builder.build_load(i64_type, len_field, "len").unwrap().into_int_value();
+        let len = self.builder.build_load(i64_type, len_field, "len").map_err(|e| e.to_string())?.into_int_value();
 
         let elem_llvm_ty = self.get_llvm_type(elem_ty)?;
 
-        let current_fn = self.builder.get_insert_block().unwrap().get_parent().unwrap();
+        let current_fn = self.current_function()?;
         let zero = i64_type.const_zero();
 
         match method {
             "map" => {
                 // map(|x| expr) -> Vec<U> where U is the return type of the closure
                 // Allocate result Vec directly: { ptr, cap, len }
-                let result_ptr = self.builder.build_alloca(vec_struct_ty, "result_vec").unwrap();
+                let result_ptr = self.builder.build_alloca(vec_struct_ty, "result_vec").map_err(|e| e.to_string())?;
 
                 // Allocate data buffer: malloc(len * sizeof(elem))
-                let elem_size_val = elem_llvm_ty.size_of().unwrap();
-                let buf_size = self.builder.build_int_mul(len, elem_size_val, "buf_size").unwrap();
+                let elem_size_val = elem_llvm_ty.size_of().ok_or_else(|| "type has no size".to_string())?;
+                let buf_size = self.builder.build_int_mul(len, elem_size_val, "buf_size").map_err(|e| e.to_string())?;
                 let malloc_fn = self.module.get_function("malloc")
                     .ok_or("malloc not found")?;
                 let raw_buf = self.builder.build_call(malloc_fn, &[buf_size.into()], "raw_buf")
@@ -6473,12 +6473,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                 };
 
                 // Set fields: ptr, cap, len
-                let f0 = self.builder.build_struct_gep(vec_struct_ty, result_ptr, 0, "f0").unwrap();
-                self.builder.build_store(f0, buf_ptr).unwrap();
-                let f1 = self.builder.build_struct_gep(vec_struct_ty, result_ptr, 1, "f1").unwrap();
-                self.builder.build_store(f1, len).unwrap(); // cap = len
-                let f2 = self.builder.build_struct_gep(vec_struct_ty, result_ptr, 2, "f2").unwrap();
-                self.builder.build_store(f2, zero).unwrap(); // len = 0 (will be set at end)
+                let f0 = self.builder.build_struct_gep(vec_struct_ty, result_ptr, 0, "f0").map_err(|e| e.to_string())?;
+                self.builder.build_store(f0, buf_ptr).map_err(|e| e.to_string())?;
+                let f1 = self.builder.build_struct_gep(vec_struct_ty, result_ptr, 1, "f1").map_err(|e| e.to_string())?;
+                self.builder.build_store(f1, len).map_err(|e| e.to_string())?; // cap = len
+                let f2 = self.builder.build_struct_gep(vec_struct_ty, result_ptr, 2, "f2").map_err(|e| e.to_string())?;
+                self.builder.build_store(f2, zero).map_err(|e| e.to_string())?; // len = 0 (will be set at end)
 
                 let result_data = buf_ptr;
 
@@ -6488,31 +6488,31 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let done_bb = self.context.append_basic_block(current_fn, "map_done");
 
                 // i = 0
-                let i_alloca = self.builder.build_alloca(i64_type, "i").unwrap();
-                self.builder.build_store(i_alloca, zero).unwrap();
-                self.builder.build_unconditional_branch(loop_bb).unwrap();
+                let i_alloca = self.builder.build_alloca(i64_type, "i").map_err(|e| e.to_string())?;
+                self.builder.build_store(i_alloca, zero).map_err(|e| e.to_string())?;
+                self.builder.build_unconditional_branch(loop_bb).map_err(|e| e.to_string())?;
 
                 // Loop check: i < len
                 self.builder.position_at_end(loop_bb);
-                let i_val = self.builder.build_load(i64_type, i_alloca, "i").unwrap().into_int_value();
+                let i_val = self.builder.build_load(i64_type, i_alloca, "i").map_err(|e| e.to_string())?.into_int_value();
                 let cond = self.builder.build_int_compare(
                     inkwell::IntPredicate::SLT, i_val, len, "cond",
-                ).unwrap();
-                self.builder.build_conditional_branch(cond, body_bb, done_bb).unwrap();
+                ).map_err(|e| e.to_string())?;
+                self.builder.build_conditional_branch(cond, body_bb, done_bb).map_err(|e| e.to_string())?;
 
                 // Body: load element, apply closure, store result
                 self.builder.position_at_end(body_bb);
                 let elem_addr = unsafe {
-                    self.builder.build_gep(elem_llvm_ty, data_ptr.into_pointer_value(), &[i_val], "elem_addr").unwrap()
+                    self.builder.build_gep(elem_llvm_ty, data_ptr.into_pointer_value(), &[i_val], "elem_addr").map_err(|e| e.to_string())?
                 };
-                let elem_val = self.builder.build_load(elem_llvm_ty, elem_addr, "elem").unwrap();
+                let elem_val = self.builder.build_load(elem_llvm_ty, elem_addr, "elem").map_err(|e| e.to_string())?;
 
                 // Bind closure arg to element value
                 self.enter_scope();
                 let arg_name = closure_args.first().map(|(n, _)| n.as_str()).unwrap_or("x");
-                let arg_alloca = self.builder.build_alloca(elem_llvm_ty, arg_name).unwrap();
-                self.builder.build_store(arg_alloca, elem_val).unwrap();
-                self.variables.last_mut().unwrap().insert(
+                let arg_alloca = self.builder.build_alloca(elem_llvm_ty, arg_name).map_err(|e| e.to_string())?;
+                self.builder.build_store(arg_alloca, elem_val).map_err(|e| e.to_string())?;
+                self.variables.last_mut().ok_or_else(|| "no variable scope".to_string())?.insert(
                     arg_name.to_string(),
                     (arg_alloca.into(), elem_ty.clone(), crate::compiler::codegen::CLEANUP_NONE),
                 );
@@ -6537,21 +6537,21 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let (mapped_val, mapped_ty) = result_val.unwrap_or((zero.into(), Type::I64));
                 let mapped_llvm_ty = self.get_llvm_type(&mapped_ty)?;
                 let result_elem_addr = unsafe {
-                    self.builder.build_gep(mapped_llvm_ty, result_data.into_pointer_value(), &[i_val], "result_addr").unwrap()
+                    self.builder.build_gep(mapped_llvm_ty, result_data.into_pointer_value(), &[i_val], "result_addr").map_err(|e| e.to_string())?
                 };
-                self.builder.build_store(result_elem_addr, mapped_val).unwrap();
+                self.builder.build_store(result_elem_addr, mapped_val).map_err(|e| e.to_string())?;
 
                 // i += 1
-                let next_i = self.builder.build_int_add(i_val, i64_type.const_int(1, false), "next_i").unwrap();
-                self.builder.build_store(i_alloca, next_i).unwrap();
-                self.builder.build_unconditional_branch(loop_bb).unwrap();
+                let next_i = self.builder.build_int_add(i_val, i64_type.const_int(1, false), "next_i").map_err(|e| e.to_string())?;
+                self.builder.build_store(i_alloca, next_i).map_err(|e| e.to_string())?;
+                self.builder.build_unconditional_branch(loop_bb).map_err(|e| e.to_string())?;
 
                 // Done: set result len
                 self.builder.position_at_end(done_bb);
                 let result_len_field = self.builder.build_struct_gep(
                     vec_struct_ty, result_ptr, 2, "result_len_field",
                 ).map_err(|e| e.to_string())?;
-                self.builder.build_store(result_len_field, len).unwrap();
+                self.builder.build_store(result_len_field, len).map_err(|e| e.to_string())?;
 
                 // Return type: Vec<mapped_ty> (use same vec type for now)
                 Ok((result_ptr.into(), vec_ty.clone()))
@@ -6559,10 +6559,10 @@ impl<'ctx> CodeGenerator<'ctx> {
             "filter" => {
                 // filter(|x| bool_expr) -> Vec<T>
                 // Allocate result Vec directly
-                let result_ptr = self.builder.build_alloca(vec_struct_ty, "result_vec").unwrap();
+                let result_ptr = self.builder.build_alloca(vec_struct_ty, "result_vec").map_err(|e| e.to_string())?;
 
-                let elem_size_val = elem_llvm_ty.size_of().unwrap();
-                let buf_size = self.builder.build_int_mul(len, elem_size_val, "buf_size").unwrap();
+                let elem_size_val = elem_llvm_ty.size_of().ok_or_else(|| "type has no size".to_string())?;
+                let buf_size = self.builder.build_int_mul(len, elem_size_val, "buf_size").map_err(|e| e.to_string())?;
                 let malloc_fn = self.module.get_function("malloc")
                     .ok_or("malloc not found")?;
                 let raw_buf = self.builder.build_call(malloc_fn, &[buf_size.into()], "raw_buf")
@@ -6572,18 +6572,18 @@ impl<'ctx> CodeGenerator<'ctx> {
                     _ => return Err("malloc returned no value".to_string()),
                 };
 
-                let f0 = self.builder.build_struct_gep(vec_struct_ty, result_ptr, 0, "f0").unwrap();
-                self.builder.build_store(f0, buf_ptr).unwrap();
-                let f1 = self.builder.build_struct_gep(vec_struct_ty, result_ptr, 1, "f1").unwrap();
-                self.builder.build_store(f1, len).unwrap();
-                let f2 = self.builder.build_struct_gep(vec_struct_ty, result_ptr, 2, "f2").unwrap();
-                self.builder.build_store(f2, zero).unwrap();
+                let f0 = self.builder.build_struct_gep(vec_struct_ty, result_ptr, 0, "f0").map_err(|e| e.to_string())?;
+                self.builder.build_store(f0, buf_ptr).map_err(|e| e.to_string())?;
+                let f1 = self.builder.build_struct_gep(vec_struct_ty, result_ptr, 1, "f1").map_err(|e| e.to_string())?;
+                self.builder.build_store(f1, len).map_err(|e| e.to_string())?;
+                let f2 = self.builder.build_struct_gep(vec_struct_ty, result_ptr, 2, "f2").map_err(|e| e.to_string())?;
+                self.builder.build_store(f2, zero).map_err(|e| e.to_string())?;
 
                 let result_data = buf_ptr;
 
                 // Count for result length
-                let count_alloca = self.builder.build_alloca(i64_type, "count").unwrap();
-                self.builder.build_store(count_alloca, zero).unwrap();
+                let count_alloca = self.builder.build_alloca(i64_type, "count").map_err(|e| e.to_string())?;
+                self.builder.build_store(count_alloca, zero).map_err(|e| e.to_string())?;
 
                 let loop_bb = self.context.append_basic_block(current_fn, "filter_loop");
                 let body_bb = self.context.append_basic_block(current_fn, "filter_body");
@@ -6591,29 +6591,29 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let skip_bb = self.context.append_basic_block(current_fn, "filter_skip");
                 let done_bb = self.context.append_basic_block(current_fn, "filter_done");
 
-                let i_alloca = self.builder.build_alloca(i64_type, "i").unwrap();
-                self.builder.build_store(i_alloca, zero).unwrap();
-                self.builder.build_unconditional_branch(loop_bb).unwrap();
+                let i_alloca = self.builder.build_alloca(i64_type, "i").map_err(|e| e.to_string())?;
+                self.builder.build_store(i_alloca, zero).map_err(|e| e.to_string())?;
+                self.builder.build_unconditional_branch(loop_bb).map_err(|e| e.to_string())?;
 
                 self.builder.position_at_end(loop_bb);
-                let i_val = self.builder.build_load(i64_type, i_alloca, "i").unwrap().into_int_value();
+                let i_val = self.builder.build_load(i64_type, i_alloca, "i").map_err(|e| e.to_string())?.into_int_value();
                 let cond = self.builder.build_int_compare(
                     inkwell::IntPredicate::SLT, i_val, len, "cond",
-                ).unwrap();
-                self.builder.build_conditional_branch(cond, body_bb, done_bb).unwrap();
+                ).map_err(|e| e.to_string())?;
+                self.builder.build_conditional_branch(cond, body_bb, done_bb).map_err(|e| e.to_string())?;
 
                 self.builder.position_at_end(body_bb);
                 let elem_addr = unsafe {
-                    self.builder.build_gep(elem_llvm_ty, data_ptr.into_pointer_value(), &[i_val], "elem_addr").unwrap()
+                    self.builder.build_gep(elem_llvm_ty, data_ptr.into_pointer_value(), &[i_val], "elem_addr").map_err(|e| e.to_string())?
                 };
-                let elem_val = self.builder.build_load(elem_llvm_ty, elem_addr, "elem").unwrap();
+                let elem_val = self.builder.build_load(elem_llvm_ty, elem_addr, "elem").map_err(|e| e.to_string())?;
 
                 // Bind closure arg
                 self.enter_scope();
                 let arg_name = closure_args.first().map(|(n, _)| n.as_str()).unwrap_or("x");
-                let arg_alloca = self.builder.build_alloca(elem_llvm_ty, arg_name).unwrap();
-                self.builder.build_store(arg_alloca, elem_val).unwrap();
-                self.variables.last_mut().unwrap().insert(
+                let arg_alloca = self.builder.build_alloca(elem_llvm_ty, arg_name).map_err(|e| e.to_string())?;
+                self.builder.build_store(arg_alloca, elem_val).map_err(|e| e.to_string())?;
+                self.variables.last_mut().ok_or_else(|| "no variable scope".to_string())?.insert(
                     arg_name.to_string(),
                     (arg_alloca.into(), elem_ty.clone(), crate::compiler::codegen::CLEANUP_NONE),
                 );
@@ -6633,46 +6633,46 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 let pred = predicate_val.map(|(v, _)| v.into_int_value())
                     .unwrap_or(self.context.bool_type().const_zero());
-                self.builder.build_conditional_branch(pred, store_bb, skip_bb).unwrap();
+                self.builder.build_conditional_branch(pred, store_bb, skip_bb).map_err(|e| e.to_string())?;
 
                 // Store element in result
                 self.builder.position_at_end(store_bb);
-                let count_val = self.builder.build_load(i64_type, count_alloca, "count").unwrap().into_int_value();
+                let count_val = self.builder.build_load(i64_type, count_alloca, "count").map_err(|e| e.to_string())?.into_int_value();
                 let result_elem_addr = unsafe {
-                    self.builder.build_gep(elem_llvm_ty, result_data.into_pointer_value(), &[count_val], "result_addr").unwrap()
+                    self.builder.build_gep(elem_llvm_ty, result_data.into_pointer_value(), &[count_val], "result_addr").map_err(|e| e.to_string())?
                 };
-                self.builder.build_store(result_elem_addr, elem_val).unwrap();
-                let next_count = self.builder.build_int_add(count_val, i64_type.const_int(1, false), "next_count").unwrap();
-                self.builder.build_store(count_alloca, next_count).unwrap();
-                self.builder.build_unconditional_branch(skip_bb).unwrap();
+                self.builder.build_store(result_elem_addr, elem_val).map_err(|e| e.to_string())?;
+                let next_count = self.builder.build_int_add(count_val, i64_type.const_int(1, false), "next_count").map_err(|e| e.to_string())?;
+                self.builder.build_store(count_alloca, next_count).map_err(|e| e.to_string())?;
+                self.builder.build_unconditional_branch(skip_bb).map_err(|e| e.to_string())?;
 
                 // Skip / increment
                 self.builder.position_at_end(skip_bb);
-                let i_val2 = self.builder.build_load(i64_type, i_alloca, "i2").unwrap().into_int_value();
-                let next_i = self.builder.build_int_add(i_val2, i64_type.const_int(1, false), "next_i").unwrap();
-                self.builder.build_store(i_alloca, next_i).unwrap();
-                self.builder.build_unconditional_branch(loop_bb).unwrap();
+                let i_val2 = self.builder.build_load(i64_type, i_alloca, "i2").map_err(|e| e.to_string())?.into_int_value();
+                let next_i = self.builder.build_int_add(i_val2, i64_type.const_int(1, false), "next_i").map_err(|e| e.to_string())?;
+                self.builder.build_store(i_alloca, next_i).map_err(|e| e.to_string())?;
+                self.builder.build_unconditional_branch(loop_bb).map_err(|e| e.to_string())?;
 
                 // Done: set result len
                 self.builder.position_at_end(done_bb);
-                let final_count = self.builder.build_load(i64_type, count_alloca, "final_count").unwrap();
+                let final_count = self.builder.build_load(i64_type, count_alloca, "final_count").map_err(|e| e.to_string())?;
                 let result_len_field = self.builder.build_struct_gep(
                     vec_struct_ty, result_ptr, 2, "result_len_field",
                 ).map_err(|e| e.to_string())?;
-                self.builder.build_store(result_len_field, final_count).unwrap();
+                self.builder.build_store(result_len_field, final_count).map_err(|e| e.to_string())?;
 
                 Ok((result_ptr.into(), vec_ty.clone()))
             }
             "any" | "all" => {
                 // any(|x| bool_expr) -> bool / all(|x| bool_expr) -> bool
                 let is_any = method == "any";
-                let result_alloca = self.builder.build_alloca(self.context.bool_type(), "result").unwrap();
+                let result_alloca = self.builder.build_alloca(self.context.bool_type(), "result").map_err(|e| e.to_string())?;
                 let init_val = if is_any {
                     self.context.bool_type().const_zero() // any starts false
                 } else {
                     self.context.bool_type().const_all_ones() // all starts true
                 };
-                self.builder.build_store(result_alloca, init_val).unwrap();
+                self.builder.build_store(result_alloca, init_val).map_err(|e| e.to_string())?;
 
                 let loop_bb = self.context.append_basic_block(current_fn, "anyall_loop");
                 let body_bb = self.context.append_basic_block(current_fn, "anyall_body");
@@ -6680,28 +6680,28 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let cont_bb = self.context.append_basic_block(current_fn, "anyall_cont");
                 let done_bb = self.context.append_basic_block(current_fn, "anyall_done");
 
-                let i_alloca = self.builder.build_alloca(i64_type, "i").unwrap();
-                self.builder.build_store(i_alloca, zero).unwrap();
-                self.builder.build_unconditional_branch(loop_bb).unwrap();
+                let i_alloca = self.builder.build_alloca(i64_type, "i").map_err(|e| e.to_string())?;
+                self.builder.build_store(i_alloca, zero).map_err(|e| e.to_string())?;
+                self.builder.build_unconditional_branch(loop_bb).map_err(|e| e.to_string())?;
 
                 self.builder.position_at_end(loop_bb);
-                let i_val = self.builder.build_load(i64_type, i_alloca, "i").unwrap().into_int_value();
+                let i_val = self.builder.build_load(i64_type, i_alloca, "i").map_err(|e| e.to_string())?.into_int_value();
                 let cond = self.builder.build_int_compare(
                     inkwell::IntPredicate::SLT, i_val, len, "cond",
-                ).unwrap();
-                self.builder.build_conditional_branch(cond, body_bb, done_bb).unwrap();
+                ).map_err(|e| e.to_string())?;
+                self.builder.build_conditional_branch(cond, body_bb, done_bb).map_err(|e| e.to_string())?;
 
                 self.builder.position_at_end(body_bb);
                 let elem_addr = unsafe {
-                    self.builder.build_gep(elem_llvm_ty, data_ptr.into_pointer_value(), &[i_val], "elem_addr").unwrap()
+                    self.builder.build_gep(elem_llvm_ty, data_ptr.into_pointer_value(), &[i_val], "elem_addr").map_err(|e| e.to_string())?
                 };
-                let elem_val = self.builder.build_load(elem_llvm_ty, elem_addr, "elem").unwrap();
+                let elem_val = self.builder.build_load(elem_llvm_ty, elem_addr, "elem").map_err(|e| e.to_string())?;
 
                 self.enter_scope();
                 let arg_name = closure_args.first().map(|(n, _)| n.as_str()).unwrap_or("x");
-                let arg_alloca = self.builder.build_alloca(elem_llvm_ty, arg_name).unwrap();
-                self.builder.build_store(arg_alloca, elem_val).unwrap();
-                self.variables.last_mut().unwrap().insert(
+                let arg_alloca = self.builder.build_alloca(elem_llvm_ty, arg_name).map_err(|e| e.to_string())?;
+                self.builder.build_store(arg_alloca, elem_val).map_err(|e| e.to_string())?;
+                self.variables.last_mut().ok_or_else(|| "no variable scope".to_string())?.insert(
                     arg_name.to_string(),
                     (arg_alloca.into(), elem_ty.clone(), crate::compiler::codegen::CLEANUP_NONE),
                 );
@@ -6724,11 +6724,11 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 if is_any {
                     // any: if true, set result=true and break
-                    self.builder.build_conditional_branch(pred, early_bb, cont_bb).unwrap();
+                    self.builder.build_conditional_branch(pred, early_bb, cont_bb).map_err(|e| e.to_string())?;
                 } else {
                     // all: if false, set result=false and break
-                    let not_pred = self.builder.build_not(pred, "not_pred").unwrap();
-                    self.builder.build_conditional_branch(not_pred, early_bb, cont_bb).unwrap();
+                    let not_pred = self.builder.build_not(pred, "not_pred").map_err(|e| e.to_string())?;
+                    self.builder.build_conditional_branch(not_pred, early_bb, cont_bb).map_err(|e| e.to_string())?;
                 }
 
                 // Early exit
@@ -6738,81 +6738,81 @@ impl<'ctx> CodeGenerator<'ctx> {
                 } else {
                     self.context.bool_type().const_zero()
                 };
-                self.builder.build_store(result_alloca, early_val).unwrap();
-                self.builder.build_unconditional_branch(done_bb).unwrap();
+                self.builder.build_store(result_alloca, early_val).map_err(|e| e.to_string())?;
+                self.builder.build_unconditional_branch(done_bb).map_err(|e| e.to_string())?;
 
                 // Continue loop
                 self.builder.position_at_end(cont_bb);
-                let next_i = self.builder.build_int_add(i_val, i64_type.const_int(1, false), "next_i").unwrap();
-                self.builder.build_store(i_alloca, next_i).unwrap();
-                self.builder.build_unconditional_branch(loop_bb).unwrap();
+                let next_i = self.builder.build_int_add(i_val, i64_type.const_int(1, false), "next_i").map_err(|e| e.to_string())?;
+                self.builder.build_store(i_alloca, next_i).map_err(|e| e.to_string())?;
+                self.builder.build_unconditional_branch(loop_bb).map_err(|e| e.to_string())?;
 
                 // Done
                 self.builder.position_at_end(done_bb);
-                let result = self.builder.build_load(self.context.bool_type(), result_alloca, "result").unwrap();
+                let result = self.builder.build_load(self.context.bool_type(), result_alloca, "result").map_err(|e| e.to_string())?;
                 Ok((result, Type::Bool))
             }
             "reduce" => {
                 // reduce(|acc, x| expr) -> T
                 // acc starts with vec[0], loop from i=1 to len
-                let acc_alloca = self.builder.build_alloca(elem_llvm_ty, "acc").unwrap();
+                let acc_alloca = self.builder.build_alloca(elem_llvm_ty, "acc").map_err(|e| e.to_string())?;
 
                 // Handle empty vec: return zero
                 let has_elements = self.builder.build_int_compare(
                     inkwell::IntPredicate::SGT, len, zero, "has_elements",
-                ).unwrap();
+                ).map_err(|e| e.to_string())?;
 
                 let init_bb = self.context.append_basic_block(current_fn, "reduce_init");
                 let loop_bb = self.context.append_basic_block(current_fn, "reduce_loop");
                 let body_bb = self.context.append_basic_block(current_fn, "reduce_body");
                 let done_bb = self.context.append_basic_block(current_fn, "reduce_done");
 
-                self.builder.build_conditional_branch(has_elements, init_bb, done_bb).unwrap();
+                self.builder.build_conditional_branch(has_elements, init_bb, done_bb).map_err(|e| e.to_string())?;
 
                 // Init: acc = vec[0]
                 self.builder.position_at_end(init_bb);
                 let first_addr = unsafe {
-                    self.builder.build_gep(elem_llvm_ty, data_ptr.into_pointer_value(), &[zero], "first_addr").unwrap()
+                    self.builder.build_gep(elem_llvm_ty, data_ptr.into_pointer_value(), &[zero], "first_addr").map_err(|e| e.to_string())?
                 };
-                let first_val = self.builder.build_load(elem_llvm_ty, first_addr, "first").unwrap();
-                self.builder.build_store(acc_alloca, first_val).unwrap();
+                let first_val = self.builder.build_load(elem_llvm_ty, first_addr, "first").map_err(|e| e.to_string())?;
+                self.builder.build_store(acc_alloca, first_val).map_err(|e| e.to_string())?;
 
                 // i = 1
-                let i_alloca = self.builder.build_alloca(i64_type, "i").unwrap();
-                self.builder.build_store(i_alloca, i64_type.const_int(1, false)).unwrap();
-                self.builder.build_unconditional_branch(loop_bb).unwrap();
+                let i_alloca = self.builder.build_alloca(i64_type, "i").map_err(|e| e.to_string())?;
+                self.builder.build_store(i_alloca, i64_type.const_int(1, false)).map_err(|e| e.to_string())?;
+                self.builder.build_unconditional_branch(loop_bb).map_err(|e| e.to_string())?;
 
                 // Loop check: i < len
                 self.builder.position_at_end(loop_bb);
-                let i_val = self.builder.build_load(i64_type, i_alloca, "i").unwrap().into_int_value();
+                let i_val = self.builder.build_load(i64_type, i_alloca, "i").map_err(|e| e.to_string())?.into_int_value();
                 let cond = self.builder.build_int_compare(
                     inkwell::IntPredicate::SLT, i_val, len, "cond",
-                ).unwrap();
-                self.builder.build_conditional_branch(cond, body_bb, done_bb).unwrap();
+                ).map_err(|e| e.to_string())?;
+                self.builder.build_conditional_branch(cond, body_bb, done_bb).map_err(|e| e.to_string())?;
 
                 // Body: acc = closure(acc, elem)
                 self.builder.position_at_end(body_bb);
                 let elem_addr = unsafe {
-                    self.builder.build_gep(elem_llvm_ty, data_ptr.into_pointer_value(), &[i_val], "elem_addr").unwrap()
+                    self.builder.build_gep(elem_llvm_ty, data_ptr.into_pointer_value(), &[i_val], "elem_addr").map_err(|e| e.to_string())?
                 };
-                let elem_val = self.builder.build_load(elem_llvm_ty, elem_addr, "elem").unwrap();
-                let acc_val = self.builder.build_load(elem_llvm_ty, acc_alloca, "acc_val").unwrap();
+                let elem_val = self.builder.build_load(elem_llvm_ty, elem_addr, "elem").map_err(|e| e.to_string())?;
+                let acc_val = self.builder.build_load(elem_llvm_ty, acc_alloca, "acc_val").map_err(|e| e.to_string())?;
 
                 // Bind closure args (acc, x)
                 self.enter_scope();
                 let acc_name = closure_args.first().map(|(n, _)| n.as_str()).unwrap_or("acc");
                 let x_name = closure_args.get(1).map(|(n, _)| n.as_str()).unwrap_or("x");
 
-                let acc_arg = self.builder.build_alloca(elem_llvm_ty, acc_name).unwrap();
-                self.builder.build_store(acc_arg, acc_val).unwrap();
-                self.variables.last_mut().unwrap().insert(
+                let acc_arg = self.builder.build_alloca(elem_llvm_ty, acc_name).map_err(|e| e.to_string())?;
+                self.builder.build_store(acc_arg, acc_val).map_err(|e| e.to_string())?;
+                self.variables.last_mut().ok_or_else(|| "no variable scope".to_string())?.insert(
                     acc_name.to_string(),
                     (acc_arg.into(), elem_ty.clone(), crate::compiler::codegen::CLEANUP_NONE),
                 );
 
-                let x_arg = self.builder.build_alloca(elem_llvm_ty, x_name).unwrap();
-                self.builder.build_store(x_arg, elem_val).unwrap();
-                self.variables.last_mut().unwrap().insert(
+                let x_arg = self.builder.build_alloca(elem_llvm_ty, x_name).map_err(|e| e.to_string())?;
+                self.builder.build_store(x_arg, elem_val).map_err(|e| e.to_string())?;
+                self.variables.last_mut().ok_or_else(|| "no variable scope".to_string())?.insert(
                     x_name.to_string(),
                     (x_arg.into(), elem_ty.clone(), crate::compiler::codegen::CLEANUP_NONE),
                 );
@@ -6834,16 +6834,16 @@ impl<'ctx> CodeGenerator<'ctx> {
                 self.exit_scope();
 
                 let (new_acc, _) = result_val.unwrap_or((elem_llvm_ty.const_zero().into(), elem_ty.clone()));
-                self.builder.build_store(acc_alloca, new_acc).unwrap();
+                self.builder.build_store(acc_alloca, new_acc).map_err(|e| e.to_string())?;
 
                 // i += 1
-                let next_i = self.builder.build_int_add(i_val, i64_type.const_int(1, false), "next_i").unwrap();
-                self.builder.build_store(i_alloca, next_i).unwrap();
-                self.builder.build_unconditional_branch(loop_bb).unwrap();
+                let next_i = self.builder.build_int_add(i_val, i64_type.const_int(1, false), "next_i").map_err(|e| e.to_string())?;
+                self.builder.build_store(i_alloca, next_i).map_err(|e| e.to_string())?;
+                self.builder.build_unconditional_branch(loop_bb).map_err(|e| e.to_string())?;
 
                 // Done
                 self.builder.position_at_end(done_bb);
-                let final_acc = self.builder.build_load(elem_llvm_ty, acc_alloca, "final_acc").unwrap();
+                let final_acc = self.builder.build_load(elem_llvm_ty, acc_alloca, "final_acc").map_err(|e| e.to_string())?;
                 Ok((final_acc, elem_ty.clone()))
             }
             _ => Err(format!("Unknown Vec closure method: {}", method)),
@@ -6875,11 +6875,11 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Load ptr, len
         let data_ptr_field = self.builder.build_struct_gep(vec_struct_ty, vec_ptr, 0, "data_ptr_field")
             .map_err(|e| e.to_string())?;
-        let data_ptr = self.builder.build_load(ptr_type, data_ptr_field, "data_ptr").unwrap();
+        let data_ptr = self.builder.build_load(ptr_type, data_ptr_field, "data_ptr").map_err(|e| e.to_string())?;
 
         let len_field = self.builder.build_struct_gep(vec_struct_ty, vec_ptr, 2, "len_field")
             .map_err(|e| e.to_string())?;
-        let len = self.builder.build_load(i64_type, len_field, "len").unwrap().into_int_value();
+        let len = self.builder.build_load(i64_type, len_field, "len").map_err(|e| e.to_string())?.into_int_value();
 
         // Determine element type from Vec type params
         let elem_ty = match vec_ty {
@@ -6906,7 +6906,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Create empty string as initial result
         let empty_str_fn = self.module.get_function("tl_string_new")
             .ok_or("tl_string_new not found")?;
-        let empty_c_str = self.builder.build_global_string_ptr("", "empty_str").unwrap();
+        let empty_c_str = self.builder.build_global_string_ptr("", "empty_str").map_err(|e| e.to_string())?;
         let init_str = self.builder.build_call(empty_str_fn, &[empty_c_str.as_pointer_value().into()], "init_str")
             .map_err(|e| e.to_string())?;
         let init_str_val = match init_str.try_as_basic_value() {
@@ -6914,27 +6914,27 @@ impl<'ctx> CodeGenerator<'ctx> {
             _ => return Err("tl_string_new returned void".into()),
         };
 
-        let result_alloca = self.builder.build_alloca(ptr_type, "join_result").unwrap();
-        self.builder.build_store(result_alloca, init_str_val).unwrap();
+        let result_alloca = self.builder.build_alloca(ptr_type, "join_result").map_err(|e| e.to_string())?;
+        self.builder.build_store(result_alloca, init_str_val).map_err(|e| e.to_string())?;
 
-        let current_fn = self.builder.get_insert_block().unwrap().get_parent().unwrap();
+        let current_fn = self.current_function()?;
         let zero = i64_type.const_zero();
 
         let loop_bb = self.context.append_basic_block(current_fn, "join_loop");
         let body_bb = self.context.append_basic_block(current_fn, "join_body");
         let done_bb = self.context.append_basic_block(current_fn, "join_done");
 
-        let i_alloca = self.builder.build_alloca(i64_type, "i").unwrap();
-        self.builder.build_store(i_alloca, zero).unwrap();
-        self.builder.build_unconditional_branch(loop_bb).unwrap();
+        let i_alloca = self.builder.build_alloca(i64_type, "i").map_err(|e| e.to_string())?;
+        self.builder.build_store(i_alloca, zero).map_err(|e| e.to_string())?;
+        self.builder.build_unconditional_branch(loop_bb).map_err(|e| e.to_string())?;
 
         // Loop check
         self.builder.position_at_end(loop_bb);
-        let i_val = self.builder.build_load(i64_type, i_alloca, "i").unwrap().into_int_value();
+        let i_val = self.builder.build_load(i64_type, i_alloca, "i").map_err(|e| e.to_string())?.into_int_value();
         let cond = self.builder.build_int_compare(
             inkwell::IntPredicate::SLT, i_val, len, "cond",
-        ).unwrap();
-        self.builder.build_conditional_branch(cond, body_bb, done_bb).unwrap();
+        ).map_err(|e| e.to_string())?;
+        self.builder.build_conditional_branch(cond, body_bb, done_bb).map_err(|e| e.to_string())?;
 
         // Body
         self.builder.position_at_end(body_bb);
@@ -6942,31 +6942,31 @@ impl<'ctx> CodeGenerator<'ctx> {
         // If i > 0, append separator first
         let is_not_first = self.builder.build_int_compare(
             inkwell::IntPredicate::SGT, i_val, zero, "is_not_first",
-        ).unwrap();
+        ).map_err(|e| e.to_string())?;
 
         let sep_bb = self.context.append_basic_block(current_fn, "join_sep");
         let elem_bb = self.context.append_basic_block(current_fn, "join_elem");
 
-        self.builder.build_conditional_branch(is_not_first, sep_bb, elem_bb).unwrap();
+        self.builder.build_conditional_branch(is_not_first, sep_bb, elem_bb).map_err(|e| e.to_string())?;
 
         // Append separator
         self.builder.position_at_end(sep_bb);
-        let cur_str = self.builder.build_load(ptr_type, result_alloca, "cur_str").unwrap();
+        let cur_str = self.builder.build_load(ptr_type, result_alloca, "cur_str").map_err(|e| e.to_string())?;
         let with_sep = self.builder.build_call(concat_fn, &[cur_str.into(), sep_val.into()], "with_sep")
             .map_err(|e| e.to_string())?;
         let with_sep_val = match with_sep.try_as_basic_value() {
             inkwell::values::ValueKind::Basic(v) => v,
             _ => return Err("tl_string_concat returned void".into()),
         };
-        self.builder.build_store(result_alloca, with_sep_val).unwrap();
-        self.builder.build_unconditional_branch(elem_bb).unwrap();
+        self.builder.build_store(result_alloca, with_sep_val).map_err(|e| e.to_string())?;
+        self.builder.build_unconditional_branch(elem_bb).map_err(|e| e.to_string())?;
 
         // Append element
         self.builder.position_at_end(elem_bb);
         let elem_addr = unsafe {
-            self.builder.build_gep(elem_llvm_ty, data_ptr.into_pointer_value(), &[i_val], "elem_addr").unwrap()
+            self.builder.build_gep(elem_llvm_ty, data_ptr.into_pointer_value(), &[i_val], "elem_addr").map_err(|e| e.to_string())?
         };
-        let elem_val = self.builder.build_load(elem_llvm_ty, elem_addr, "elem").unwrap();
+        let elem_val = self.builder.build_load(elem_llvm_ty, elem_addr, "elem").map_err(|e| e.to_string())?;
 
         // Convert element to string if needed
         let elem_str = if let Some(fn_name) = to_string_fn_name {
@@ -6974,11 +6974,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                 .ok_or_else(|| format!("{} not found", fn_name))?;
             let conv_val = match &elem_ty {
                 Type::I32 => {
-                    let ext = self.builder.build_int_s_extend(elem_val.into_int_value(), i64_type, "ext").unwrap();
+                    let ext = self.builder.build_int_s_extend(elem_val.into_int_value(), i64_type, "ext").map_err(|e| e.to_string())?;
                     ext.into()
                 }
                 Type::F32 => {
-                    let ext = self.builder.build_float_ext(elem_val.into_float_value(), self.context.f64_type(), "ext").unwrap();
+                    let ext = self.builder.build_float_ext(elem_val.into_float_value(), self.context.f64_type(), "ext").map_err(|e| e.to_string())?;
                     ext.into()
                 }
                 _ => elem_val,
@@ -6993,23 +6993,23 @@ impl<'ctx> CodeGenerator<'ctx> {
             elem_val
         };
 
-        let cur_str2 = self.builder.build_load(ptr_type, result_alloca, "cur_str2").unwrap();
+        let cur_str2 = self.builder.build_load(ptr_type, result_alloca, "cur_str2").map_err(|e| e.to_string())?;
         let appended = self.builder.build_call(concat_fn, &[cur_str2.into(), elem_str.into()], "appended")
             .map_err(|e| e.to_string())?;
         let appended_val = match appended.try_as_basic_value() {
             inkwell::values::ValueKind::Basic(v) => v,
             _ => return Err("tl_string_concat returned void".into()),
         };
-        self.builder.build_store(result_alloca, appended_val).unwrap();
+        self.builder.build_store(result_alloca, appended_val).map_err(|e| e.to_string())?;
 
         // i += 1
-        let next_i = self.builder.build_int_add(i_val, i64_type.const_int(1, false), "next_i").unwrap();
-        self.builder.build_store(i_alloca, next_i).unwrap();
-        self.builder.build_unconditional_branch(loop_bb).unwrap();
+        let next_i = self.builder.build_int_add(i_val, i64_type.const_int(1, false), "next_i").map_err(|e| e.to_string())?;
+        self.builder.build_store(i_alloca, next_i).map_err(|e| e.to_string())?;
+        self.builder.build_unconditional_branch(loop_bb).map_err(|e| e.to_string())?;
 
         // Done
         self.builder.position_at_end(done_bb);
-        let final_result = self.builder.build_load(ptr_type, result_alloca, "join_result").unwrap();
+        let final_result = self.builder.build_load(ptr_type, result_alloca, "join_result").map_err(|e| e.to_string())?;
         Ok((final_result, string_type_tl))
     }
 
@@ -7030,10 +7030,10 @@ impl<'ctx> CodeGenerator<'ctx> {
             .ok_or_else(|| format!("Vec struct type {} not found", vec_type_name))?;
         let vec_ptr = vec_val.into_pointer_value();
 
-        let data_ptr_field = self.builder.build_struct_gep(vec_struct_ty, vec_ptr, 0, "d_ptr").unwrap();
-        let data_ptr = self.builder.build_load(ptr_type, data_ptr_field, "d").unwrap();
-        let len_field = self.builder.build_struct_gep(vec_struct_ty, vec_ptr, 2, "l_ptr").unwrap();
-        let len = self.builder.build_load(i64_type, len_field, "l").unwrap().into_int_value();
+        let data_ptr_field = self.builder.build_struct_gep(vec_struct_ty, vec_ptr, 0, "d_ptr").map_err(|e| e.to_string())?;
+        let data_ptr = self.builder.build_load(ptr_type, data_ptr_field, "d").map_err(|e| e.to_string())?;
+        let len_field = self.builder.build_struct_gep(vec_struct_ty, vec_ptr, 2, "l_ptr").map_err(|e| e.to_string())?;
+        let len = self.builder.build_load(i64_type, len_field, "l").map_err(|e| e.to_string())?.into_int_value();
 
         let elem_ty = match vec_ty {
             Type::Struct(_, params) if !params.is_empty() => params[0].clone(),
@@ -7041,7 +7041,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         };
         let elem_llvm_ty = self.get_llvm_type(&elem_ty)?;
 
-        let current_fn = self.builder.get_insert_block().unwrap().get_parent().unwrap();
+        let current_fn = self.current_function()?;
         let zero = i64_type.const_zero();
 
         if method == "enumerate" {
@@ -7050,62 +7050,62 @@ impl<'ctx> CodeGenerator<'ctx> {
             let out_vec_ty = Type::Struct("Vec".to_string(), vec![out_elem_ty.clone()]);
             let _ = self.get_or_monomorphize_type(&out_vec_ty)?;
 
-            let res_ptr = self.builder.build_alloca(vec_struct_ty, "res").unwrap();
+            let res_ptr = self.builder.build_alloca(vec_struct_ty, "res").map_err(|e| e.to_string())?;
 
-            let malloc_fn = self.module.get_function("malloc").unwrap();
-            let buf_size = self.builder.build_int_mul(len, out_elem_llvm_ty.size_of().unwrap(), "bsz").unwrap();
-            let raw_buf_call = self.builder.build_call(malloc_fn, &[buf_size.into()], "buf").unwrap();
+            let malloc_fn = self.get_fn("malloc")?;
+            let buf_size = self.builder.build_int_mul(len, out_elem_llvm_ty.size_of().ok_or_else(|| "type has no size".to_string())?, "bsz").map_err(|e| e.to_string())?;
+            let raw_buf_call = self.builder.build_call(malloc_fn, &[buf_size.into()], "buf").map_err(|e| e.to_string())?;
             let raw_buf = match raw_buf_call.try_as_basic_value() {
                 inkwell::values::ValueKind::Basic(v) => v,
                 _ => return Err("malloc failed".into()),
             };
 
-            let f0 = self.builder.build_struct_gep(vec_struct_ty, res_ptr, 0, "f0").unwrap();
-            self.builder.build_store(f0, raw_buf).unwrap();
-            let f1 = self.builder.build_struct_gep(vec_struct_ty, res_ptr, 1, "f1").unwrap();
-            self.builder.build_store(f1, len).unwrap();
-            let f2 = self.builder.build_struct_gep(vec_struct_ty, res_ptr, 2, "f2").unwrap();
-            self.builder.build_store(f2, len).unwrap();
+            let f0 = self.builder.build_struct_gep(vec_struct_ty, res_ptr, 0, "f0").map_err(|e| e.to_string())?;
+            self.builder.build_store(f0, raw_buf).map_err(|e| e.to_string())?;
+            let f1 = self.builder.build_struct_gep(vec_struct_ty, res_ptr, 1, "f1").map_err(|e| e.to_string())?;
+            self.builder.build_store(f1, len).map_err(|e| e.to_string())?;
+            let f2 = self.builder.build_struct_gep(vec_struct_ty, res_ptr, 2, "f2").map_err(|e| e.to_string())?;
+            self.builder.build_store(f2, len).map_err(|e| e.to_string())?;
 
             let loop_bb = self.context.append_basic_block(current_fn, "lp");
             let body_bb = self.context.append_basic_block(current_fn, "bd");
             let done_bb = self.context.append_basic_block(current_fn, "dn");
 
-            let i_var = self.builder.build_alloca(i64_type, "i").unwrap();
-            self.builder.build_store(i_var, zero).unwrap();
-            self.builder.build_unconditional_branch(loop_bb).unwrap();
+            let i_var = self.builder.build_alloca(i64_type, "i").map_err(|e| e.to_string())?;
+            self.builder.build_store(i_var, zero).map_err(|e| e.to_string())?;
+            self.builder.build_unconditional_branch(loop_bb).map_err(|e| e.to_string())?;
 
             self.builder.position_at_end(loop_bb);
-            let i_val = self.builder.build_load(i64_type, i_var, "ival").unwrap().into_int_value();
-            let cond = self.builder.build_int_compare(inkwell::IntPredicate::SLT, i_val, len, "cnd").unwrap();
-            self.builder.build_conditional_branch(cond, body_bb, done_bb).unwrap();
+            let i_val = self.builder.build_load(i64_type, i_var, "ival").map_err(|e| e.to_string())?.into_int_value();
+            let cond = self.builder.build_int_compare(inkwell::IntPredicate::SLT, i_val, len, "cnd").map_err(|e| e.to_string())?;
+            self.builder.build_conditional_branch(cond, body_bb, done_bb).map_err(|e| e.to_string())?;
 
             self.builder.position_at_end(body_bb);
-            let in_addr = unsafe { self.builder.build_gep(elem_llvm_ty, data_ptr.into_pointer_value(), &[i_val], "ia").unwrap() };
-            let in_val = self.builder.build_load(elem_llvm_ty, in_addr, "iv").unwrap();
+            let in_addr = unsafe { self.builder.build_gep(elem_llvm_ty, data_ptr.into_pointer_value(), &[i_val], "ia").map_err(|e| e.to_string())? };
+            let in_val = self.builder.build_load(elem_llvm_ty, in_addr, "iv").map_err(|e| e.to_string())?;
 
             // Malloc tuple
             let tuple_struct_ty = self.context.struct_type(&[i64_type.into(), elem_llvm_ty.into()], false);
-            let tuple_sz = self.builder.build_int_z_extend(tuple_struct_ty.size_of().unwrap(), i64_type, "tsz").unwrap();
-            let tuple_call = self.builder.build_call(malloc_fn, &[tuple_sz.into()], "mtup").unwrap();
+            let tuple_sz = self.builder.build_int_z_extend(tuple_struct_ty.size_of().ok_or_else(|| "type has no size".to_string())?, i64_type, "tsz").map_err(|e| e.to_string())?;
+            let tuple_call = self.builder.build_call(malloc_fn, &[tuple_sz.into()], "mtup").map_err(|e| e.to_string())?;
             let tuple_ptr = match tuple_call.try_as_basic_value() {
                 inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
                 _ => return Err("malloc failed".into()),
             };
 
-            let t0 = self.builder.build_struct_gep(tuple_struct_ty, tuple_ptr, 0, "t0").unwrap();
-            self.builder.build_store(t0, i_val).unwrap();
-            let t1 = self.builder.build_struct_gep(tuple_struct_ty, tuple_ptr, 1, "t1").unwrap();
-            self.builder.build_store(t1, in_val).unwrap();
+            let t0 = self.builder.build_struct_gep(tuple_struct_ty, tuple_ptr, 0, "t0").map_err(|e| e.to_string())?;
+            self.builder.build_store(t0, i_val).map_err(|e| e.to_string())?;
+            let t1 = self.builder.build_struct_gep(tuple_struct_ty, tuple_ptr, 1, "t1").map_err(|e| e.to_string())?;
+            self.builder.build_store(t1, in_val).map_err(|e| e.to_string())?;
 
-            let out_addr = unsafe { self.builder.build_gep(out_elem_llvm_ty, raw_buf.into_pointer_value(), &[i_val], "oa").unwrap() };
-            self.builder.build_store(out_addr, tuple_ptr).unwrap();
+            let out_addr = unsafe { self.builder.build_gep(out_elem_llvm_ty, raw_buf.into_pointer_value(), &[i_val], "oa").map_err(|e| e.to_string())? };
+            self.builder.build_store(out_addr, tuple_ptr).map_err(|e| e.to_string())?;
 
             self.emit_retain(in_val, &elem_ty)?;
 
-            let nxt = self.builder.build_int_add(i_val, i64_type.const_int(1, false), "nxt").unwrap();
-            self.builder.build_store(i_var, nxt).unwrap();
-            self.builder.build_unconditional_branch(loop_bb).unwrap();
+            let nxt = self.builder.build_int_add(i_val, i64_type.const_int(1, false), "nxt").map_err(|e| e.to_string())?;
+            self.builder.build_store(i_var, nxt).map_err(|e| e.to_string())?;
+            self.builder.build_unconditional_branch(loop_bb).map_err(|e| e.to_string())?;
 
             self.builder.position_at_end(done_bb);
             return Ok((res_ptr.into(), out_vec_ty));
@@ -7118,14 +7118,14 @@ impl<'ctx> CodeGenerator<'ctx> {
                 _ => Type::I64,
             };
             let other_elem_llvm_ty = self.get_llvm_type(&other_elem_ty)?;
-            let other_vec_name = other_ty.codegen_name().unwrap();
-            let other_vec_struct_ty = *self.struct_types.get(&other_vec_name).unwrap();
+            let other_vec_name = other_ty.codegen_name().ok_or_else(|| "unexpected None".to_string())?;
+            let other_vec_struct_ty = *self.struct_types.get(&other_vec_name).ok_or_else(|| format!("struct type not found"))?;
             
             let o_ptr = other_val.into_pointer_value();
-            let o_data_field = self.builder.build_struct_gep(other_vec_struct_ty, o_ptr, 0, "od").unwrap();
-            let o_data = self.builder.build_load(ptr_type, o_data_field, "odt").unwrap();
-            let o_len_field = self.builder.build_struct_gep(other_vec_struct_ty, o_ptr, 2, "ol").unwrap();
-            let o_len = self.builder.build_load(i64_type, o_len_field, "oln").unwrap().into_int_value();
+            let o_data_field = self.builder.build_struct_gep(other_vec_struct_ty, o_ptr, 0, "od").map_err(|e| e.to_string())?;
+            let o_data = self.builder.build_load(ptr_type, o_data_field, "odt").map_err(|e| e.to_string())?;
+            let o_len_field = self.builder.build_struct_gep(other_vec_struct_ty, o_ptr, 2, "ol").map_err(|e| e.to_string())?;
+            let o_len = self.builder.build_load(i64_type, o_len_field, "oln").map_err(|e| e.to_string())?.into_int_value();
 
             let out_elem_ty = Type::Tuple(vec![elem_ty.clone(), other_elem_ty.clone()]);
             let out_elem_llvm_ty = self.get_llvm_type(&out_elem_ty)?;
@@ -7133,66 +7133,66 @@ impl<'ctx> CodeGenerator<'ctx> {
             let _ = self.get_or_monomorphize_type(&out_vec_ty)?;
 
             let min_len = self.builder.build_select(
-                self.builder.build_int_compare(inkwell::IntPredicate::SLT, len, o_len, "cmp").unwrap(),
+                self.builder.build_int_compare(inkwell::IntPredicate::SLT, len, o_len, "cmp").map_err(|e| e.to_string())?,
                 len, o_len, "min"
-            ).unwrap().into_int_value();
+            ).map_err(|e| e.to_string())?.into_int_value();
 
-            let res_ptr = self.builder.build_alloca(vec_struct_ty, "res").unwrap();
-            let malloc_fn = self.module.get_function("malloc").unwrap();
-            let buf_sz = self.builder.build_int_mul(min_len, out_elem_llvm_ty.size_of().unwrap(), "bsz").unwrap();
-            let raw_buf_call = self.builder.build_call(malloc_fn, &[buf_sz.into()], "buf").unwrap();
+            let res_ptr = self.builder.build_alloca(vec_struct_ty, "res").map_err(|e| e.to_string())?;
+            let malloc_fn = self.get_fn("malloc")?;
+            let buf_sz = self.builder.build_int_mul(min_len, out_elem_llvm_ty.size_of().ok_or_else(|| "type has no size".to_string())?, "bsz").map_err(|e| e.to_string())?;
+            let raw_buf_call = self.builder.build_call(malloc_fn, &[buf_sz.into()], "buf").map_err(|e| e.to_string())?;
             let raw_buf = match raw_buf_call.try_as_basic_value() {
                 inkwell::values::ValueKind::Basic(v) => v,
                 _ => return Err("malloc failed".into()),
             };
 
-            let f0 = self.builder.build_struct_gep(vec_struct_ty, res_ptr, 0, "f0").unwrap();
-            self.builder.build_store(f0, raw_buf).unwrap();
-            let f1 = self.builder.build_struct_gep(vec_struct_ty, res_ptr, 1, "f1").unwrap();
-            self.builder.build_store(f1, min_len).unwrap();
-            let f2 = self.builder.build_struct_gep(vec_struct_ty, res_ptr, 2, "f2").unwrap();
-            self.builder.build_store(f2, min_len).unwrap();
+            let f0 = self.builder.build_struct_gep(vec_struct_ty, res_ptr, 0, "f0").map_err(|e| e.to_string())?;
+            self.builder.build_store(f0, raw_buf).map_err(|e| e.to_string())?;
+            let f1 = self.builder.build_struct_gep(vec_struct_ty, res_ptr, 1, "f1").map_err(|e| e.to_string())?;
+            self.builder.build_store(f1, min_len).map_err(|e| e.to_string())?;
+            let f2 = self.builder.build_struct_gep(vec_struct_ty, res_ptr, 2, "f2").map_err(|e| e.to_string())?;
+            self.builder.build_store(f2, min_len).map_err(|e| e.to_string())?;
 
             let loop_bb = self.context.append_basic_block(current_fn, "lp");
             let body_bb = self.context.append_basic_block(current_fn, "bd");
             let done_bb = self.context.append_basic_block(current_fn, "dn");
 
-            let i_var = self.builder.build_alloca(i64_type, "i").unwrap();
-            self.builder.build_store(i_var, zero).unwrap();
-            self.builder.build_unconditional_branch(loop_bb).unwrap();
+            let i_var = self.builder.build_alloca(i64_type, "i").map_err(|e| e.to_string())?;
+            self.builder.build_store(i_var, zero).map_err(|e| e.to_string())?;
+            self.builder.build_unconditional_branch(loop_bb).map_err(|e| e.to_string())?;
 
             self.builder.position_at_end(loop_bb);
-            let i_val = self.builder.build_load(i64_type, i_var, "iv").unwrap().into_int_value();
-            let cond = self.builder.build_int_compare(inkwell::IntPredicate::SLT, i_val, min_len, "cnd").unwrap();
-            self.builder.build_conditional_branch(cond, body_bb, done_bb).unwrap();
+            let i_val = self.builder.build_load(i64_type, i_var, "iv").map_err(|e| e.to_string())?.into_int_value();
+            let cond = self.builder.build_int_compare(inkwell::IntPredicate::SLT, i_val, min_len, "cnd").map_err(|e| e.to_string())?;
+            self.builder.build_conditional_branch(cond, body_bb, done_bb).map_err(|e| e.to_string())?;
 
             self.builder.position_at_end(body_bb);
-            let in1 = self.builder.build_load(elem_llvm_ty, unsafe { self.builder.build_gep(elem_llvm_ty, data_ptr.into_pointer_value(), &[i_val], "ia1").unwrap() }, "v1").unwrap();
-            let in2 = self.builder.build_load(other_elem_llvm_ty, unsafe { self.builder.build_gep(other_elem_llvm_ty, o_data.into_pointer_value(), &[i_val], "ia2").unwrap() }, "v2").unwrap();
+            let in1 = self.builder.build_load(elem_llvm_ty, unsafe { self.builder.build_gep(elem_llvm_ty, data_ptr.into_pointer_value(), &[i_val], "ia1").map_err(|e| e.to_string())? }, "v1").map_err(|e| e.to_string())?;
+            let in2 = self.builder.build_load(other_elem_llvm_ty, unsafe { self.builder.build_gep(other_elem_llvm_ty, o_data.into_pointer_value(), &[i_val], "ia2").map_err(|e| e.to_string())? }, "v2").map_err(|e| e.to_string())?;
 
             // Malloc tuple
             let tuple_struct_ty = self.context.struct_type(&[elem_llvm_ty.into(), other_elem_llvm_ty.into()], false);
-            let tuple_sz = self.builder.build_int_z_extend(tuple_struct_ty.size_of().unwrap(), i64_type, "tsz").unwrap();
-            let tuple_call = self.builder.build_call(malloc_fn, &[tuple_sz.into()], "mtup").unwrap();
+            let tuple_sz = self.builder.build_int_z_extend(tuple_struct_ty.size_of().ok_or_else(|| "type has no size".to_string())?, i64_type, "tsz").map_err(|e| e.to_string())?;
+            let tuple_call = self.builder.build_call(malloc_fn, &[tuple_sz.into()], "mtup").map_err(|e| e.to_string())?;
             let tuple_ptr = match tuple_call.try_as_basic_value() {
                 inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
                 _ => return Err("malloc failed".into()),
             };
 
-            let t0 = self.builder.build_struct_gep(tuple_struct_ty, tuple_ptr, 0, "t0").unwrap();
-            self.builder.build_store(t0, in1).unwrap();
-            let t1 = self.builder.build_struct_gep(tuple_struct_ty, tuple_ptr, 1, "t1").unwrap();
-            self.builder.build_store(t1, in2).unwrap();
+            let t0 = self.builder.build_struct_gep(tuple_struct_ty, tuple_ptr, 0, "t0").map_err(|e| e.to_string())?;
+            self.builder.build_store(t0, in1).map_err(|e| e.to_string())?;
+            let t1 = self.builder.build_struct_gep(tuple_struct_ty, tuple_ptr, 1, "t1").map_err(|e| e.to_string())?;
+            self.builder.build_store(t1, in2).map_err(|e| e.to_string())?;
 
-            let out_addr = unsafe { self.builder.build_gep(out_elem_llvm_ty, raw_buf.into_pointer_value(), &[i_val], "oa").unwrap() };
-            self.builder.build_store(out_addr, tuple_ptr).unwrap();
+            let out_addr = unsafe { self.builder.build_gep(out_elem_llvm_ty, raw_buf.into_pointer_value(), &[i_val], "oa").map_err(|e| e.to_string())? };
+            self.builder.build_store(out_addr, tuple_ptr).map_err(|e| e.to_string())?;
 
             self.emit_retain(in1, &elem_ty)?;
             self.emit_retain(in2, &other_elem_ty)?;
 
-            let nxt = self.builder.build_int_add(i_val, i64_type.const_int(1, false), "nxt").unwrap();
-            self.builder.build_store(i_var, nxt).unwrap();
-            self.builder.build_unconditional_branch(loop_bb).unwrap();
+            let nxt = self.builder.build_int_add(i_val, i64_type.const_int(1, false), "nxt").map_err(|e| e.to_string())?;
+            self.builder.build_store(i_var, nxt).map_err(|e| e.to_string())?;
+            self.builder.build_unconditional_branch(loop_bb).map_err(|e| e.to_string())?;
 
             self.builder.position_at_end(done_bb);
             return Ok((res_ptr.into(), out_vec_ty));
@@ -7207,97 +7207,97 @@ impl<'ctx> CodeGenerator<'ctx> {
             let out_vec_ty = Type::Struct("Vec".to_string(), vec![inner_elem_ty.clone()]);
             let _ = self.get_or_monomorphize_type(&out_vec_ty)?;
 
-            let elem_vec_name = elem_ty.codegen_name().unwrap();
-            let elem_vec_struct_ty = *self.struct_types.get(&elem_vec_name).unwrap();
+            let elem_vec_name = elem_ty.codegen_name().ok_or_else(|| "unexpected None".to_string())?;
+            let elem_vec_struct_ty = *self.struct_types.get(&elem_vec_name).ok_or_else(|| format!("struct type not found"))?;
 
-            let tot_var = self.builder.build_alloca(i64_type, "tot").unwrap();
-            self.builder.build_store(tot_var, zero).unwrap();
+            let tot_var = self.builder.build_alloca(i64_type, "tot").map_err(|e| e.to_string())?;
+            self.builder.build_store(tot_var, zero).map_err(|e| e.to_string())?;
 
             // Pass 1
             let p1_lp = self.context.append_basic_block(current_fn, "p1lp");
             let p1_bd = self.context.append_basic_block(current_fn, "p1bd");
             let p1_dn = self.context.append_basic_block(current_fn, "p1dn");
 
-            let i_var = self.builder.build_alloca(i64_type, "i").unwrap();
-            self.builder.build_store(i_var, zero).unwrap();
-            self.builder.build_unconditional_branch(p1_lp).unwrap();
+            let i_var = self.builder.build_alloca(i64_type, "i").map_err(|e| e.to_string())?;
+            self.builder.build_store(i_var, zero).map_err(|e| e.to_string())?;
+            self.builder.build_unconditional_branch(p1_lp).map_err(|e| e.to_string())?;
 
             self.builder.position_at_end(p1_lp);
-            let i_val = self.builder.build_load(i64_type, i_var, "iv").unwrap().into_int_value();
-            let cond = self.builder.build_int_compare(inkwell::IntPredicate::SLT, i_val, len, "cnd").unwrap();
-            self.builder.build_conditional_branch(cond, p1_bd, p1_dn).unwrap();
+            let i_val = self.builder.build_load(i64_type, i_var, "iv").map_err(|e| e.to_string())?.into_int_value();
+            let cond = self.builder.build_int_compare(inkwell::IntPredicate::SLT, i_val, len, "cnd").map_err(|e| e.to_string())?;
+            self.builder.build_conditional_branch(cond, p1_bd, p1_dn).map_err(|e| e.to_string())?;
 
             self.builder.position_at_end(p1_bd);
-            let sub_vec = self.builder.build_load(elem_llvm_ty, unsafe { self.builder.build_gep(elem_llvm_ty, data_ptr.into_pointer_value(), &[i_val], "sa").unwrap() }, "sv").unwrap().into_pointer_value();
-            let sub_len = self.builder.build_load(i64_type, self.builder.build_struct_gep(elem_vec_struct_ty, sub_vec, 2, "slf").unwrap(), "sln").unwrap().into_int_value();
-            let ctot = self.builder.build_load(i64_type, tot_var, "ct").unwrap().into_int_value();
-            self.builder.build_store(tot_var, self.builder.build_int_add(ctot, sub_len, "nt").unwrap()).unwrap();
+            let sub_vec = self.builder.build_load(elem_llvm_ty, unsafe { self.builder.build_gep(elem_llvm_ty, data_ptr.into_pointer_value(), &[i_val], "sa").map_err(|e| e.to_string())? }, "sv").map_err(|e| e.to_string())?.into_pointer_value();
+            let sub_len = self.builder.build_load(i64_type, self.builder.build_struct_gep(elem_vec_struct_ty, sub_vec, 2, "slf").map_err(|e| e.to_string())?, "sln").map_err(|e| e.to_string())?.into_int_value();
+            let ctot = self.builder.build_load(i64_type, tot_var, "ct").map_err(|e| e.to_string())?.into_int_value();
+            self.builder.build_store(tot_var, self.builder.build_int_add(ctot, sub_len, "nt").map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
             
-            self.builder.build_store(i_var, self.builder.build_int_add(i_val, i64_type.const_int(1, false), "nxt").unwrap()).unwrap();
-            self.builder.build_unconditional_branch(p1_lp).unwrap();
+            self.builder.build_store(i_var, self.builder.build_int_add(i_val, i64_type.const_int(1, false), "nxt").map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+            self.builder.build_unconditional_branch(p1_lp).map_err(|e| e.to_string())?;
 
             // Pass 2
             self.builder.position_at_end(p1_dn);
-            let tot_val = self.builder.build_load(i64_type, tot_var, "tv").unwrap().into_int_value();
-            let res_ptr = self.builder.build_alloca(vec_struct_ty, "res").unwrap();
-            let malloc_fn = self.module.get_function("malloc").unwrap();
-            let buf_sz = self.builder.build_int_mul(tot_val, inner_elem_llvm_ty.size_of().unwrap(), "bsz").unwrap();
-            let raw_buf_call = self.builder.build_call(malloc_fn, &[buf_sz.into()], "buf").unwrap();
+            let tot_val = self.builder.build_load(i64_type, tot_var, "tv").map_err(|e| e.to_string())?.into_int_value();
+            let res_ptr = self.builder.build_alloca(vec_struct_ty, "res").map_err(|e| e.to_string())?;
+            let malloc_fn = self.get_fn("malloc")?;
+            let buf_sz = self.builder.build_int_mul(tot_val, inner_elem_llvm_ty.size_of().ok_or_else(|| "type has no size".to_string())?, "bsz").map_err(|e| e.to_string())?;
+            let raw_buf_call = self.builder.build_call(malloc_fn, &[buf_sz.into()], "buf").map_err(|e| e.to_string())?;
             let raw_buf = match raw_buf_call.try_as_basic_value() {
                 inkwell::values::ValueKind::Basic(v) => v,
                 _ => return Err("malloc failed".into()),
             };
 
-            self.builder.build_store(self.builder.build_struct_gep(vec_struct_ty, res_ptr, 0, "f0").unwrap(), raw_buf).unwrap();
-            self.builder.build_store(self.builder.build_struct_gep(vec_struct_ty, res_ptr, 1, "f1").unwrap(), tot_val).unwrap();
-            self.builder.build_store(self.builder.build_struct_gep(vec_struct_ty, res_ptr, 2, "f2").unwrap(), tot_val).unwrap();
+            self.builder.build_store(self.builder.build_struct_gep(vec_struct_ty, res_ptr, 0, "f0").map_err(|e| e.to_string())?, raw_buf).map_err(|e| e.to_string())?;
+            self.builder.build_store(self.builder.build_struct_gep(vec_struct_ty, res_ptr, 1, "f1").map_err(|e| e.to_string())?, tot_val).map_err(|e| e.to_string())?;
+            self.builder.build_store(self.builder.build_struct_gep(vec_struct_ty, res_ptr, 2, "f2").map_err(|e| e.to_string())?, tot_val).map_err(|e| e.to_string())?;
 
             let p2_lp = self.context.append_basic_block(current_fn, "p2lp");
             let p2_bd = self.context.append_basic_block(current_fn, "p2bd");
             let p2_dn = self.context.append_basic_block(current_fn, "p2dn");
             
-            self.builder.build_store(i_var, zero).unwrap();
-            let out_idx = self.builder.build_alloca(i64_type, "oidx").unwrap();
-            self.builder.build_store(out_idx, zero).unwrap();
-            self.builder.build_unconditional_branch(p2_lp).unwrap();
+            self.builder.build_store(i_var, zero).map_err(|e| e.to_string())?;
+            let out_idx = self.builder.build_alloca(i64_type, "oidx").map_err(|e| e.to_string())?;
+            self.builder.build_store(out_idx, zero).map_err(|e| e.to_string())?;
+            self.builder.build_unconditional_branch(p2_lp).map_err(|e| e.to_string())?;
 
             self.builder.position_at_end(p2_lp);
-            let i_val2 = self.builder.build_load(i64_type, i_var, "iv2").unwrap().into_int_value();
-            let cond2 = self.builder.build_int_compare(inkwell::IntPredicate::SLT, i_val2, len, "cnd2").unwrap();
-            self.builder.build_conditional_branch(cond2, p2_bd, p2_dn).unwrap();
+            let i_val2 = self.builder.build_load(i64_type, i_var, "iv2").map_err(|e| e.to_string())?.into_int_value();
+            let cond2 = self.builder.build_int_compare(inkwell::IntPredicate::SLT, i_val2, len, "cnd2").map_err(|e| e.to_string())?;
+            self.builder.build_conditional_branch(cond2, p2_bd, p2_dn).map_err(|e| e.to_string())?;
 
             self.builder.position_at_end(p2_bd);
-            let sub_vec2 = self.builder.build_load(elem_llvm_ty, unsafe { self.builder.build_gep(elem_llvm_ty, data_ptr.into_pointer_value(), &[i_val2], "sa2").unwrap() }, "sv2").unwrap().into_pointer_value();
-            let sub_dat = self.builder.build_load(ptr_type, self.builder.build_struct_gep(elem_vec_struct_ty, sub_vec2, 0, "sdf").unwrap(), "sd").unwrap();
-            let sub_ln = self.builder.build_load(i64_type, self.builder.build_struct_gep(elem_vec_struct_ty, sub_vec2, 2, "slf2").unwrap(), "sln2").unwrap().into_int_value();
+            let sub_vec2 = self.builder.build_load(elem_llvm_ty, unsafe { self.builder.build_gep(elem_llvm_ty, data_ptr.into_pointer_value(), &[i_val2], "sa2").map_err(|e| e.to_string())? }, "sv2").map_err(|e| e.to_string())?.into_pointer_value();
+            let sub_dat = self.builder.build_load(ptr_type, self.builder.build_struct_gep(elem_vec_struct_ty, sub_vec2, 0, "sdf").map_err(|e| e.to_string())?, "sd").map_err(|e| e.to_string())?;
+            let sub_ln = self.builder.build_load(i64_type, self.builder.build_struct_gep(elem_vec_struct_ty, sub_vec2, 2, "slf2").map_err(|e| e.to_string())?, "sln2").map_err(|e| e.to_string())?.into_int_value();
 
             let in_lp = self.context.append_basic_block(current_fn, "ilp");
             let in_bd = self.context.append_basic_block(current_fn, "ibd");
             let in_dn = self.context.append_basic_block(current_fn, "idn");
 
-            let j_var = self.builder.build_alloca(i64_type, "j").unwrap();
-            self.builder.build_store(j_var, zero).unwrap();
-            self.builder.build_unconditional_branch(in_lp).unwrap();
+            let j_var = self.builder.build_alloca(i64_type, "j").map_err(|e| e.to_string())?;
+            self.builder.build_store(j_var, zero).map_err(|e| e.to_string())?;
+            self.builder.build_unconditional_branch(in_lp).map_err(|e| e.to_string())?;
 
             self.builder.position_at_end(in_lp);
-            let j_val = self.builder.build_load(i64_type, j_var, "jv").unwrap().into_int_value();
-            let cond3 = self.builder.build_int_compare(inkwell::IntPredicate::SLT, j_val, sub_ln, "cnd3").unwrap();
-            self.builder.build_conditional_branch(cond3, in_bd, in_dn).unwrap();
+            let j_val = self.builder.build_load(i64_type, j_var, "jv").map_err(|e| e.to_string())?.into_int_value();
+            let cond3 = self.builder.build_int_compare(inkwell::IntPredicate::SLT, j_val, sub_ln, "cnd3").map_err(|e| e.to_string())?;
+            self.builder.build_conditional_branch(cond3, in_bd, in_dn).map_err(|e| e.to_string())?;
 
             self.builder.position_at_end(in_bd);
-            let e_val = self.builder.build_load(inner_elem_llvm_ty, unsafe { self.builder.build_gep(inner_elem_llvm_ty, sub_dat.into_pointer_value(), &[j_val], "ea").unwrap() }, "ev").unwrap();
-            let cur_oidx = self.builder.build_load(i64_type, out_idx, "co").unwrap().into_int_value();
-            self.builder.build_store(unsafe { self.builder.build_gep(inner_elem_llvm_ty, raw_buf.into_pointer_value(), &[cur_oidx], "ofa").unwrap() }, e_val).unwrap();
+            let e_val = self.builder.build_load(inner_elem_llvm_ty, unsafe { self.builder.build_gep(inner_elem_llvm_ty, sub_dat.into_pointer_value(), &[j_val], "ea").map_err(|e| e.to_string())? }, "ev").map_err(|e| e.to_string())?;
+            let cur_oidx = self.builder.build_load(i64_type, out_idx, "co").map_err(|e| e.to_string())?.into_int_value();
+            self.builder.build_store(unsafe { self.builder.build_gep(inner_elem_llvm_ty, raw_buf.into_pointer_value(), &[cur_oidx], "ofa").map_err(|e| e.to_string())? }, e_val).map_err(|e| e.to_string())?;
 
             self.emit_retain(e_val, &inner_elem_ty)?;
 
-            self.builder.build_store(out_idx, self.builder.build_int_add(cur_oidx, i64_type.const_int(1, false), "no").unwrap()).unwrap();
-            self.builder.build_store(j_var, self.builder.build_int_add(j_val, i64_type.const_int(1, false), "nj").unwrap()).unwrap();
-            self.builder.build_unconditional_branch(in_lp).unwrap();
+            self.builder.build_store(out_idx, self.builder.build_int_add(cur_oidx, i64_type.const_int(1, false), "no").map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+            self.builder.build_store(j_var, self.builder.build_int_add(j_val, i64_type.const_int(1, false), "nj").map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+            self.builder.build_unconditional_branch(in_lp).map_err(|e| e.to_string())?;
 
             self.builder.position_at_end(in_dn);
-            self.builder.build_store(i_var, self.builder.build_int_add(i_val2, i64_type.const_int(1, false), "ni2").unwrap()).unwrap();
-            self.builder.build_unconditional_branch(p2_lp).unwrap();
+            self.builder.build_store(i_var, self.builder.build_int_add(i_val2, i64_type.const_int(1, false), "ni2").map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+            self.builder.build_unconditional_branch(p2_lp).map_err(|e| e.to_string())?;
 
             self.builder.position_at_end(p2_dn);
             return Ok((res_ptr.into(), out_vec_ty));
@@ -7337,19 +7337,19 @@ impl<'ctx> CodeGenerator<'ctx> {
         let tag_ptr = self.builder.build_struct_gep(enum_ty, opt_ptr, 0, "tag_ptr")
             .map_err(|e| e.to_string())?;
         let tag = self.builder.build_load(i32_type, tag_ptr, "tag")
-            .unwrap().into_int_value();
+            .map_err(|e| e.to_string())?.into_int_value();
 
         // Check: tag == 0 (Some)
         let is_some = self.builder.build_int_compare(
             inkwell::IntPredicate::EQ, tag, i32_type.const_zero(), "is_some",
-        ).unwrap();
+        ).map_err(|e| e.to_string())?;
 
-        let current_fn = self.builder.get_insert_block().unwrap().get_parent().unwrap();
+        let current_fn = self.current_function()?;
         let some_bb = self.context.append_basic_block(current_fn, "opt_some");
         let none_bb = self.context.append_basic_block(current_fn, "opt_none");
         let merge_bb = self.context.append_basic_block(current_fn, "opt_merge");
 
-        self.builder.build_conditional_branch(is_some, some_bb, none_bb).unwrap();
+        self.builder.build_conditional_branch(is_some, some_bb, none_bb).map_err(|e| e.to_string())?;
 
         // === Some branch ===
         self.builder.position_at_end(some_bb);
@@ -7357,16 +7357,16 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Read payload from Option (field 1 = payload area)
         let payload_ptr = self.builder.build_struct_gep(enum_ty, opt_ptr, 1, "payload_ptr")
             .map_err(|e| e.to_string())?;
-        let payload_cast = self.builder.build_pointer_cast(payload_ptr, ptr_type, "payload_cast").unwrap();
+        let payload_cast = self.builder.build_pointer_cast(payload_ptr, ptr_type, "payload_cast").map_err(|e| e.to_string())?;
         let elem_llvm_ty = self.get_llvm_type(elem_ty)?;
-        let payload_val = self.builder.build_load(elem_llvm_ty, payload_cast, "payload_val").unwrap();
+        let payload_val = self.builder.build_load(elem_llvm_ty, payload_cast, "payload_val").map_err(|e| e.to_string())?;
 
         // Bind closure argument
         self.enter_scope();
         let arg_name = closure_args.first().map(|(n, _)| n.as_str()).unwrap_or("x");
-        let arg_alloca = self.builder.build_alloca(elem_llvm_ty, arg_name).unwrap();
-        self.builder.build_store(arg_alloca, payload_val).unwrap();
-        self.variables.last_mut().unwrap().insert(
+        let arg_alloca = self.builder.build_alloca(elem_llvm_ty, arg_name).map_err(|e| e.to_string())?;
+        self.builder.build_store(arg_alloca, payload_val).map_err(|e| e.to_string())?;
+        self.variables.last_mut().ok_or_else(|| "no variable scope".to_string())?.insert(
             arg_name.to_string(),
             (arg_alloca.into(), elem_ty.clone(), crate::compiler::codegen::CLEANUP_NONE),
         );
@@ -7394,8 +7394,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // Some: return the payload directly (no closure call needed for Some)
                 // Actually, unwrap_or_else: Some(x) -> x, None -> closure()
                 // So for Some branch, just return payload_val
-                self.builder.build_unconditional_branch(merge_bb).unwrap();
-                let some_end_bb = self.builder.get_insert_block().unwrap();
+                self.builder.build_unconditional_branch(merge_bb).map_err(|e| e.to_string())?;
+                let some_end_bb = self.current_block()?;
 
                 // None branch: call the closure (with no arg?) to get default
                 self.builder.position_at_end(none_bb);
@@ -7414,9 +7414,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // Actually, `mapped_val` was compiled in some_bb, so it's only valid there.
                 // For the None branch, we need to compile closure body again.
                 self.enter_scope();
-                let none_arg_alloca = self.builder.build_alloca(elem_llvm_ty, arg_name).unwrap();
-                self.builder.build_store(none_arg_alloca, elem_llvm_ty.const_zero()).unwrap();
-                self.variables.last_mut().unwrap().insert(
+                let none_arg_alloca = self.builder.build_alloca(elem_llvm_ty, arg_name).map_err(|e| e.to_string())?;
+                self.builder.build_store(none_arg_alloca, elem_llvm_ty.const_zero()).map_err(|e| e.to_string())?;
+                self.variables.last_mut().ok_or_else(|| "no variable scope".to_string())?.insert(
                     arg_name.to_string(),
                     (none_arg_alloca.into(), elem_ty.clone(), crate::compiler::codegen::CLEANUP_NONE),
                 );
@@ -7435,12 +7435,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                 self.exit_scope();
                 let (none_val, _) = none_result.unwrap_or((elem_llvm_ty.const_zero().into(), elem_ty.clone()));
 
-                self.builder.build_unconditional_branch(merge_bb).unwrap();
-                let none_end_bb = self.builder.get_insert_block().unwrap();
+                self.builder.build_unconditional_branch(merge_bb).map_err(|e| e.to_string())?;
+                let none_end_bb = self.current_block()?;
 
                 // Merge: phi between payload_val (from Some) and none_val (from closure in None)
                 self.builder.position_at_end(merge_bb);
-                let phi = self.builder.build_phi(elem_llvm_ty, "unwrap_or_else_result").unwrap();
+                let phi = self.builder.build_phi(elem_llvm_ty, "unwrap_or_else_result").map_err(|e| e.to_string())?;
                 phi.add_incoming(&[(&payload_val, some_end_bb), (&none_val, none_end_bb)]);
 
                 Ok((phi.as_basic_value(), elem_ty.clone()))
@@ -7449,8 +7449,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // and_then: Some(x) -> f(x) [returns Option<U>], None -> None
                 // mapped_val is the result of f(x) which should be an Option
                 let some_result_ptr = mapped_val;
-                self.builder.build_unconditional_branch(merge_bb).unwrap();
-                let some_end_bb = self.builder.get_insert_block().unwrap();
+                self.builder.build_unconditional_branch(merge_bb).map_err(|e| e.to_string())?;
+                let some_end_bb = self.current_block()?;
 
                 // None branch: return None as-is
                 self.builder.position_at_end(none_bb);
@@ -7466,14 +7466,14 @@ impl<'ctx> CodeGenerator<'ctx> {
                 };
                 let none_tag_ptr = self.builder.build_struct_gep(enum_ty, none_ptr, 0, "none_tag")
                     .map_err(|e| e.to_string())?;
-                self.builder.build_store(none_tag_ptr, i32_type.const_int(1, false)).unwrap();
+                self.builder.build_store(none_tag_ptr, i32_type.const_int(1, false)).map_err(|e| e.to_string())?;
 
-                self.builder.build_unconditional_branch(merge_bb).unwrap();
-                let none_end_bb = self.builder.get_insert_block().unwrap();
+                self.builder.build_unconditional_branch(merge_bb).map_err(|e| e.to_string())?;
+                let none_end_bb = self.current_block()?;
 
                 // Merge
                 self.builder.position_at_end(merge_bb);
-                let phi = self.builder.build_phi(ptr_type, "and_then_result").unwrap();
+                let phi = self.builder.build_phi(ptr_type, "and_then_result").map_err(|e| e.to_string())?;
                 phi.add_incoming(&[(&some_result_ptr.into_pointer_value(), some_end_bb), (&none_ptr, none_end_bb)]);
 
                 Ok((phi.as_basic_value(), mapped_ty))
@@ -7495,31 +7495,31 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // Set tag = 0 (Some)
                 let some_tag_ptr = self.builder.build_struct_gep(enum_ty, some_ptr, 0, "some_tag")
                     .map_err(|e| e.to_string())?;
-                self.builder.build_store(some_tag_ptr, i32_type.const_zero()).unwrap();
+                self.builder.build_store(some_tag_ptr, i32_type.const_zero()).map_err(|e| e.to_string())?;
 
                 // Set payload
                 let some_payload_ptr = self.builder.build_struct_gep(enum_ty, some_ptr, 1, "some_payload")
                     .map_err(|e| e.to_string())?;
-                let some_payload_cast = self.builder.build_pointer_cast(some_payload_ptr, ptr_type, "payload_cast").unwrap();
+                let some_payload_cast = self.builder.build_pointer_cast(some_payload_ptr, ptr_type, "payload_cast").map_err(|e| e.to_string())?;
                 let store_ptr = self.builder.build_pointer_cast(some_payload_cast,
-                    self.context.ptr_type(inkwell::AddressSpace::default()), "store_ptr").unwrap();
-                self.builder.build_store(store_ptr, mapped_val).unwrap();
+                    self.context.ptr_type(inkwell::AddressSpace::default()), "store_ptr").map_err(|e| e.to_string())?;
+                self.builder.build_store(store_ptr, mapped_val).map_err(|e| e.to_string())?;
 
                 // Register with memory manager
                 if let Some(reg_fn) = self.module.get_function("tl_mem_register") {
-                    let file_str = self.builder.build_global_string_ptr("option_map", "opt_map_file").unwrap();
-                    let tag_str = self.builder.build_global_string_ptr(&opt_type_name, "opt_map_tag").unwrap();
+                    let file_str = self.builder.build_global_string_ptr("option_map", "opt_map_file").map_err(|e| e.to_string())?;
+                    let tag_str = self.builder.build_global_string_ptr(&opt_type_name, "opt_map_tag").map_err(|e| e.to_string())?;
                     self.builder.build_call(
                         reg_fn,
                         &[some_ptr.into(), file_str.as_pointer_value().into(),
                           i32_type.const_zero().into(), i32_type.const_zero().into(),
                           tag_str.as_pointer_value().into()],
                         "",
-                    ).unwrap();
+                    ).map_err(|e| e.to_string())?;
                 }
 
-                self.builder.build_unconditional_branch(merge_bb).unwrap();
-                let some_end_bb = self.builder.get_insert_block().unwrap();
+                self.builder.build_unconditional_branch(merge_bb).map_err(|e| e.to_string())?;
+                let some_end_bb = self.current_block()?;
 
                 // === None branch ===
                 self.builder.position_at_end(none_bb);
@@ -7533,26 +7533,26 @@ impl<'ctx> CodeGenerator<'ctx> {
                 };
                 let none_tag_ptr = self.builder.build_struct_gep(enum_ty, none_ptr, 0, "none_tag")
                     .map_err(|e| e.to_string())?;
-                self.builder.build_store(none_tag_ptr, i32_type.const_int(1, false)).unwrap();
+                self.builder.build_store(none_tag_ptr, i32_type.const_int(1, false)).map_err(|e| e.to_string())?;
 
                 if let Some(reg_fn) = self.module.get_function("tl_mem_register") {
-                    let file_str = self.builder.build_global_string_ptr("option_map", "opt_map_file2").unwrap();
-                    let tag_str = self.builder.build_global_string_ptr(&opt_type_name, "opt_map_tag2").unwrap();
+                    let file_str = self.builder.build_global_string_ptr("option_map", "opt_map_file2").map_err(|e| e.to_string())?;
+                    let tag_str = self.builder.build_global_string_ptr(&opt_type_name, "opt_map_tag2").map_err(|e| e.to_string())?;
                     self.builder.build_call(
                         reg_fn,
                         &[none_ptr.into(), file_str.as_pointer_value().into(),
                           i32_type.const_zero().into(), i32_type.const_zero().into(),
                           tag_str.as_pointer_value().into()],
                         "",
-                    ).unwrap();
+                    ).map_err(|e| e.to_string())?;
                 }
 
-                self.builder.build_unconditional_branch(merge_bb).unwrap();
-                let none_end_bb = self.builder.get_insert_block().unwrap();
+                self.builder.build_unconditional_branch(merge_bb).map_err(|e| e.to_string())?;
+                let none_end_bb = self.current_block()?;
 
                 // === Merge ===
                 self.builder.position_at_end(merge_bb);
-                let phi = self.builder.build_phi(ptr_type, "opt_mapped").unwrap();
+                let phi = self.builder.build_phi(ptr_type, "opt_mapped").map_err(|e| e.to_string())?;
                 phi.add_incoming(&[(&some_ptr, some_end_bb), (&none_ptr, none_end_bb)]);
 
                 Ok((phi.as_basic_value(), opt_ty.clone()))
@@ -7587,24 +7587,24 @@ impl<'ctx> CodeGenerator<'ctx> {
         let tag_ptr = self.builder.build_struct_gep(enum_ty, result_ptr, 0, "tag_ptr")
             .map_err(|e| e.to_string())?;
         let tag = self.builder.build_load(i32_type, tag_ptr, "tag")
-            .unwrap().into_int_value();
+            .map_err(|e| e.to_string())?.into_int_value();
 
         // tag == 0 means Ok
         let is_ok = self.builder.build_int_compare(
             inkwell::IntPredicate::EQ, tag, i32_type.const_zero(), "is_ok",
-        ).unwrap();
+        ).map_err(|e| e.to_string())?;
 
-        let current_fn = self.builder.get_insert_block().unwrap().get_parent().unwrap();
+        let current_fn = self.current_function()?;
         let ok_bb = self.context.append_basic_block(current_fn, "result_ok");
         let err_bb = self.context.append_basic_block(current_fn, "result_err");
         let merge_bb = self.context.append_basic_block(current_fn, "result_merge");
 
         let payload_ptr = self.builder.build_struct_gep(enum_ty, result_ptr, 1, "payload_ptr")
             .map_err(|e| e.to_string())?;
-        let payload_cast = self.builder.build_pointer_cast(payload_ptr, ptr_type, "payload_cast").unwrap();
+        let payload_cast = self.builder.build_pointer_cast(payload_ptr, ptr_type, "payload_cast").map_err(|e| e.to_string())?;
         let elem_llvm_ty = self.get_llvm_type(elem_ty)?;
 
-        self.builder.build_conditional_branch(is_ok, ok_bb, err_bb).unwrap();
+        self.builder.build_conditional_branch(is_ok, ok_bb, err_bb).map_err(|e| e.to_string())?;
 
         let target_data = self.execution_engine.get_target_data();
         let enum_size = target_data.get_store_size(&enum_ty);
@@ -7615,13 +7615,13 @@ impl<'ctx> CodeGenerator<'ctx> {
             "map" => {
                 // map: Ok(x) -> Ok(f(x)), Err(e) -> Err(e)
                 self.builder.position_at_end(ok_bb);
-                let payload_val = self.builder.build_load(elem_llvm_ty, payload_cast, "ok_val").unwrap();
+                let payload_val = self.builder.build_load(elem_llvm_ty, payload_cast, "ok_val").map_err(|e| e.to_string())?;
 
                 self.enter_scope();
                 let arg_name = closure_args.first().map(|(n, _)| n.as_str()).unwrap_or("x");
-                let arg_alloca = self.builder.build_alloca(elem_llvm_ty, arg_name).unwrap();
-                self.builder.build_store(arg_alloca, payload_val).unwrap();
-                self.variables.last_mut().unwrap().insert(
+                let arg_alloca = self.builder.build_alloca(elem_llvm_ty, arg_name).map_err(|e| e.to_string())?;
+                self.builder.build_store(arg_alloca, payload_val).map_err(|e| e.to_string())?;
+                self.variables.last_mut().ok_or_else(|| "no variable scope".to_string())?.insert(
                     arg_name.to_string(),
                     (arg_alloca.into(), elem_ty.clone(), crate::compiler::codegen::CLEANUP_NONE),
                 );
@@ -7647,22 +7647,22 @@ impl<'ctx> CodeGenerator<'ctx> {
                 };
                 let ok_tag_ptr = self.builder.build_struct_gep(enum_ty, ok_ptr, 0, "ok_tag")
                     .map_err(|e| e.to_string())?;
-                self.builder.build_store(ok_tag_ptr, i32_type.const_zero()).unwrap();
+                self.builder.build_store(ok_tag_ptr, i32_type.const_zero()).map_err(|e| e.to_string())?;
                 let ok_payload_ptr = self.builder.build_struct_gep(enum_ty, ok_ptr, 1, "ok_payload")
                     .map_err(|e| e.to_string())?;
-                let ok_payload_cast = self.builder.build_pointer_cast(ok_payload_ptr, ptr_type, "ok_pc").unwrap();
-                self.builder.build_store(ok_payload_cast, mapped_val).unwrap();
+                let ok_payload_cast = self.builder.build_pointer_cast(ok_payload_ptr, ptr_type, "ok_pc").map_err(|e| e.to_string())?;
+                self.builder.build_store(ok_payload_cast, mapped_val).map_err(|e| e.to_string())?;
 
-                self.builder.build_unconditional_branch(merge_bb).unwrap();
-                let ok_end_bb = self.builder.get_insert_block().unwrap();
+                self.builder.build_unconditional_branch(merge_bb).map_err(|e| e.to_string())?;
+                let ok_end_bb = self.current_block()?;
 
                 // Err branch: pass through
                 self.builder.position_at_end(err_bb);
-                self.builder.build_unconditional_branch(merge_bb).unwrap();
-                let err_end_bb = self.builder.get_insert_block().unwrap();
+                self.builder.build_unconditional_branch(merge_bb).map_err(|e| e.to_string())?;
+                let err_end_bb = self.current_block()?;
 
                 self.builder.position_at_end(merge_bb);
-                let phi = self.builder.build_phi(ptr_type, "result_mapped").unwrap();
+                let phi = self.builder.build_phi(ptr_type, "result_mapped").map_err(|e| e.to_string())?;
                 phi.add_incoming(&[(&ok_ptr, ok_end_bb), (&result_ptr, err_end_bb)]);
 
                 Ok((phi.as_basic_value(), result_ty.clone()))
@@ -7670,17 +7670,17 @@ impl<'ctx> CodeGenerator<'ctx> {
             "map_err" => {
                 // map_err: Ok(x) -> Ok(x), Err(e) -> Err(f(e))
                 self.builder.position_at_end(ok_bb);
-                self.builder.build_unconditional_branch(merge_bb).unwrap();
-                let ok_end_bb = self.builder.get_insert_block().unwrap();
+                self.builder.build_unconditional_branch(merge_bb).map_err(|e| e.to_string())?;
+                let ok_end_bb = self.current_block()?;
 
                 self.builder.position_at_end(err_bb);
-                let err_payload = self.builder.build_load(elem_llvm_ty, payload_cast, "err_val").unwrap();
+                let err_payload = self.builder.build_load(elem_llvm_ty, payload_cast, "err_val").map_err(|e| e.to_string())?;
 
                 self.enter_scope();
                 let arg_name = closure_args.first().map(|(n, _)| n.as_str()).unwrap_or("e");
-                let arg_alloca = self.builder.build_alloca(elem_llvm_ty, arg_name).unwrap();
-                self.builder.build_store(arg_alloca, err_payload).unwrap();
-                self.variables.last_mut().unwrap().insert(
+                let arg_alloca = self.builder.build_alloca(elem_llvm_ty, arg_name).map_err(|e| e.to_string())?;
+                self.builder.build_store(arg_alloca, err_payload).map_err(|e| e.to_string())?;
+                self.variables.last_mut().ok_or_else(|| "no variable scope".to_string())?.insert(
                     arg_name.to_string(),
                     (arg_alloca.into(), elem_ty.clone(), crate::compiler::codegen::CLEANUP_NONE),
                 );
@@ -7704,17 +7704,17 @@ impl<'ctx> CodeGenerator<'ctx> {
                 };
                 let err_tag = self.builder.build_struct_gep(enum_ty, err_ptr, 0, "err_tag")
                     .map_err(|e| e.to_string())?;
-                self.builder.build_store(err_tag, i32_type.const_int(1, false)).unwrap();
+                self.builder.build_store(err_tag, i32_type.const_int(1, false)).map_err(|e| e.to_string())?;
                 let err_payload_ptr2 = self.builder.build_struct_gep(enum_ty, err_ptr, 1, "err_payload2")
                     .map_err(|e| e.to_string())?;
-                let err_pc = self.builder.build_pointer_cast(err_payload_ptr2, ptr_type, "err_pc").unwrap();
-                self.builder.build_store(err_pc, mapped_err).unwrap();
+                let err_pc = self.builder.build_pointer_cast(err_payload_ptr2, ptr_type, "err_pc").map_err(|e| e.to_string())?;
+                self.builder.build_store(err_pc, mapped_err).map_err(|e| e.to_string())?;
 
-                self.builder.build_unconditional_branch(merge_bb).unwrap();
-                let err_end_bb = self.builder.get_insert_block().unwrap();
+                self.builder.build_unconditional_branch(merge_bb).map_err(|e| e.to_string())?;
+                let err_end_bb = self.current_block()?;
 
                 self.builder.position_at_end(merge_bb);
-                let phi = self.builder.build_phi(ptr_type, "result_map_err").unwrap();
+                let phi = self.builder.build_phi(ptr_type, "result_map_err").map_err(|e| e.to_string())?;
                 phi.add_incoming(&[(&result_ptr, ok_end_bb), (&err_ptr, err_end_bb)]);
 
                 Ok((phi.as_basic_value(), result_ty.clone()))
@@ -7722,13 +7722,13 @@ impl<'ctx> CodeGenerator<'ctx> {
             "and_then" => {
                 // and_then: Ok(x) -> f(x) [returns Result], Err(e) -> Err(e)
                 self.builder.position_at_end(ok_bb);
-                let payload_val = self.builder.build_load(elem_llvm_ty, payload_cast, "ok_val").unwrap();
+                let payload_val = self.builder.build_load(elem_llvm_ty, payload_cast, "ok_val").map_err(|e| e.to_string())?;
 
                 self.enter_scope();
                 let arg_name = closure_args.first().map(|(n, _)| n.as_str()).unwrap_or("x");
-                let arg_alloca = self.builder.build_alloca(elem_llvm_ty, arg_name).unwrap();
-                self.builder.build_store(arg_alloca, payload_val).unwrap();
-                self.variables.last_mut().unwrap().insert(
+                let arg_alloca = self.builder.build_alloca(elem_llvm_ty, arg_name).map_err(|e| e.to_string())?;
+                self.builder.build_store(arg_alloca, payload_val).map_err(|e| e.to_string())?;
+                self.variables.last_mut().ok_or_else(|| "no variable scope".to_string())?.insert(
                     arg_name.to_string(),
                     (arg_alloca.into(), elem_ty.clone(), crate::compiler::codegen::CLEANUP_NONE),
                 );
@@ -7745,16 +7745,16 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let (chained_val, chained_ty) = result_val_inner.unwrap_or((result_ptr.into(), result_ty.clone()));
                 let chained_ptr = chained_val.into_pointer_value();
 
-                self.builder.build_unconditional_branch(merge_bb).unwrap();
-                let ok_end_bb = self.builder.get_insert_block().unwrap();
+                self.builder.build_unconditional_branch(merge_bb).map_err(|e| e.to_string())?;
+                let ok_end_bb = self.current_block()?;
 
                 // Err branch: pass through
                 self.builder.position_at_end(err_bb);
-                self.builder.build_unconditional_branch(merge_bb).unwrap();
-                let err_end_bb = self.builder.get_insert_block().unwrap();
+                self.builder.build_unconditional_branch(merge_bb).map_err(|e| e.to_string())?;
+                let err_end_bb = self.current_block()?;
 
                 self.builder.position_at_end(merge_bb);
-                let phi = self.builder.build_phi(ptr_type, "result_and_then").unwrap();
+                let phi = self.builder.build_phi(ptr_type, "result_and_then").map_err(|e| e.to_string())?;
                 phi.add_incoming(&[(&chained_ptr, ok_end_bb), (&result_ptr, err_end_bb)]);
 
                 Ok((phi.as_basic_value(), chained_ty))
@@ -7762,18 +7762,18 @@ impl<'ctx> CodeGenerator<'ctx> {
             "unwrap_or_else" => {
                 // unwrap_or_else: Ok(x) -> x, Err(e) -> f(e)
                 self.builder.position_at_end(ok_bb);
-                let ok_payload = self.builder.build_load(elem_llvm_ty, payload_cast, "ok_val").unwrap();
-                self.builder.build_unconditional_branch(merge_bb).unwrap();
-                let ok_end_bb = self.builder.get_insert_block().unwrap();
+                let ok_payload = self.builder.build_load(elem_llvm_ty, payload_cast, "ok_val").map_err(|e| e.to_string())?;
+                self.builder.build_unconditional_branch(merge_bb).map_err(|e| e.to_string())?;
+                let ok_end_bb = self.current_block()?;
 
                 // Err branch: call closure with err payload
                 self.builder.position_at_end(err_bb);
-                let err_payload = self.builder.build_load(elem_llvm_ty, payload_cast, "err_val").unwrap();
+                let err_payload = self.builder.build_load(elem_llvm_ty, payload_cast, "err_val").map_err(|e| e.to_string())?;
                 self.enter_scope();
                 let arg_name = closure_args.first().map(|(n, _)| n.as_str()).unwrap_or("e");
-                let arg_alloca = self.builder.build_alloca(elem_llvm_ty, arg_name).unwrap();
-                self.builder.build_store(arg_alloca, err_payload).unwrap();
-                self.variables.last_mut().unwrap().insert(
+                let arg_alloca = self.builder.build_alloca(elem_llvm_ty, arg_name).map_err(|e| e.to_string())?;
+                self.builder.build_store(arg_alloca, err_payload).map_err(|e| e.to_string())?;
+                self.variables.last_mut().ok_or_else(|| "no variable scope".to_string())?.insert(
                     arg_name.to_string(),
                     (arg_alloca.into(), elem_ty.clone(), crate::compiler::codegen::CLEANUP_NONE),
                 );
@@ -7789,11 +7789,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                 self.exit_scope();
                 let (fallback_val, _) = result_val_inner.unwrap_or((elem_llvm_ty.const_zero().into(), elem_ty.clone()));
 
-                self.builder.build_unconditional_branch(merge_bb).unwrap();
-                let err_end_bb = self.builder.get_insert_block().unwrap();
+                self.builder.build_unconditional_branch(merge_bb).map_err(|e| e.to_string())?;
+                let err_end_bb = self.current_block()?;
 
                 self.builder.position_at_end(merge_bb);
-                let phi = self.builder.build_phi(elem_llvm_ty, "unwrap_or_else").unwrap();
+                let phi = self.builder.build_phi(elem_llvm_ty, "unwrap_or_else").map_err(|e| e.to_string())?;
                 phi.add_incoming(&[(&ok_payload, ok_end_bb), (&fallback_val, err_end_bb)]);
 
                 Ok((phi.as_basic_value(), elem_ty.clone()))
@@ -7855,15 +7855,15 @@ impl<'ctx> CodeGenerator<'ctx> {
                     closure_struct_ty,
                     fn_ptr_alloca.into_pointer_value(),
                     "load_fat_ptr",
-                ).unwrap();
+                ).map_err(|e| e.to_string())?;
 
                 // Extract fn_ptr and env_ptr from the fat pointer struct
                 let fn_ptr = self.builder.build_extract_value(
                     fat_ptr.into_struct_value(), 0, "extract_fn_ptr"
-                ).unwrap();
+                ).map_err(|e| e.to_string())?;
                 let env_ptr = self.builder.build_extract_value(
                     fat_ptr.into_struct_value(), 1, "extract_env_ptr"
-                ).unwrap();
+                ).map_err(|e| e.to_string())?;
 
                 // Build LLVM function type (ALL closures have env_ptr as first param)
                 let mut llvm_param_types: Vec<inkwell::types::BasicMetadataTypeEnum<'ctx>> = Vec::new();
@@ -7937,19 +7937,19 @@ impl<'ctx> CodeGenerator<'ctx> {
 
             let res: inkwell::values::IntValue = match &ty {
                 Type::I64 => val.into_int_value(),
-                Type::I32 | Type::Char(_) => self.builder.build_int_z_extend(val.into_int_value(), i64_type, "zext").unwrap(),
-                Type::Bool => self.builder.build_int_z_extend(val.into_int_value(), i64_type, "zext").unwrap(),
+                Type::I32 | Type::Char(_) => self.builder.build_int_z_extend(val.into_int_value(), i64_type, "zext").map_err(|e| e.to_string())?,
+                Type::Bool => self.builder.build_int_z_extend(val.into_int_value(), i64_type, "zext").map_err(|e| e.to_string())?,
                 Type::F32 => {
-                    let i32_val = self.builder.build_bit_cast(val.into_float_value(), self.context.i32_type(), "f32_cast").unwrap().into_int_value();
-                    self.builder.build_int_z_extend(i32_val, i64_type, "zext").unwrap()
+                    let i32_val = self.builder.build_bit_cast(val.into_float_value(), self.context.i32_type(), "f32_cast").map_err(|e| e.to_string())?.into_int_value();
+                    self.builder.build_int_z_extend(i32_val, i64_type, "zext").map_err(|e| e.to_string())?
                 },
                 Type::F64 => {
-                     self.builder.build_bit_cast(val.into_float_value(), i64_type, "f64_cast").unwrap().into_int_value()
+                     self.builder.build_bit_cast(val.into_float_value(), i64_type, "f64_cast").map_err(|e| e.to_string())?.into_int_value()
                 },
                 Type::String(_) => {
                      let fn_val = self.module.get_function("tl_hash_string")
                          .ok_or("tl_hash_string runtime function not found")?;
-                     let call = self.builder.build_call(fn_val, &[val.into()], "hash_call").unwrap();
+                     let call = self.builder.build_call(fn_val, &[val.into()], "hash_call").map_err(|e| e.to_string())?;
                      match call.try_as_basic_value() {
                         inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
                         _ => return Err("tl_hash_string did not return a value".to_string()),
@@ -7957,7 +7957,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 },
                 Type::Struct(_, _) | Type::Enum(_, _) | Type::Tensor(_, _) | Type::Tuple(_) | Type::SpecializedType { .. } => {
                     if val.is_pointer_value() {
-                         self.builder.build_ptr_to_int(val.into_pointer_value(), i64_type, "ptr_int").unwrap()
+                         self.builder.build_ptr_to_int(val.into_pointer_value(), i64_type, "ptr_int").map_err(|e| e.to_string())?
                     } else {
                          // Fallback for immediate structs (very small ones potentially? not standard in TL currently)
                          // Return 0 to be safe/lazy, or error?
@@ -7984,17 +7984,17 @@ impl<'ctx> CodeGenerator<'ctx> {
                         i.into()
                     } else {
                         // Extend (zext)
-                        self.builder.build_int_z_extend(i, i64_type, "zext").unwrap().into()
+                        self.builder.build_int_z_extend(i, i64_type, "zext").map_err(|e| e.to_string())?.into()
                     }
                 }
                 inkwell::values::BasicValueEnum::PointerValue(p) => {
-                    self.builder.build_ptr_to_int(p, i64_type, "ptr2int").unwrap().into()
+                    self.builder.build_ptr_to_int(p, i64_type, "ptr2int").map_err(|e| e.to_string())?.into()
                 }
                 inkwell::values::BasicValueEnum::FloatValue(f) => {
                     // Bitcast to i32 then zext to i64
                     let i32_type = self.context.i32_type();
-                    let as_i32 = self.builder.build_bit_cast(f, i32_type, "f32cast").unwrap().into_int_value();
-                    self.builder.build_int_z_extend(as_i32, i64_type, "zext").unwrap().into()
+                    let as_i32 = self.builder.build_bit_cast(f, i32_type, "f32cast").map_err(|e| e.to_string())?.into_int_value();
+                    self.builder.build_int_z_extend(as_i32, i64_type, "zext").map_err(|e| e.to_string())?.into()
                 }
                 _ => return Err(format!("Unsupported type for unsafe_to_i64: {:?}", ty)),
             };
@@ -8043,7 +8043,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     // i64 -> ptr
                     let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
                     if val.is_int_value() {
-                        self.builder.build_int_to_ptr(val.into_int_value(), ptr_type, "int2ptr").unwrap().into()
+                        self.builder.build_int_to_ptr(val.into_int_value(), ptr_type, "int2ptr").map_err(|e| e.to_string())?.into()
                     } else if val.is_pointer_value() {
                         val // Identity if already ptr? But arg 0 should be i64.
                     } else {
@@ -8053,18 +8053,18 @@ impl<'ctx> CodeGenerator<'ctx> {
                 Type::Bool => {
                      // i64 -> bool (trunc)
                      let i1_type = self.context.bool_type();
-                     self.builder.build_int_truncate(val.into_int_value(), i1_type, "trunc_bool").unwrap().into()
+                     self.builder.build_int_truncate(val.into_int_value(), i1_type, "trunc_bool").map_err(|e| e.to_string())?.into()
                 },
                 Type::String(_) => {
                      // i64 -> ptr
                      let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
-                     self.builder.build_int_to_ptr(val.into_int_value(), ptr_type, "int2ptr_str").unwrap().into()
+                     self.builder.build_int_to_ptr(val.into_int_value(), ptr_type, "int2ptr_str").map_err(|e| e.to_string())?.into()
                 },
                 // Add more types if needed (u8, f32)
                 Type::F32 => {
                      // i64 -> i32 -> float
-                     let i32_val = self.builder.build_int_truncate(val.into_int_value(), self.context.i32_type(), "trunc_f32").unwrap();
-                     self.builder.build_bit_cast(i32_val, self.context.f32_type(), "bitcast").unwrap().into()
+                     let i32_val = self.builder.build_int_truncate(val.into_int_value(), self.context.i32_type(), "trunc_f32").map_err(|e| e.to_string())?;
+                     self.builder.build_bit_cast(i32_val, self.context.f32_type(), "bitcast").map_err(|e| e.to_string())?.into()
                 },
                 _ => return Err(format!("Unsupported target type for from_i64: {:?}", target_type)),
             };
@@ -8210,7 +8210,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                  let size = struct_type.size_of().ok_or("Cannot determine size for SRET struct")?;
                  
                  let malloc_fn = self.module.get_function("malloc").ok_or("malloc not found")?;
-                 let size_i64 = self.builder.build_int_z_extend(size, self.context.i64_type(), "size_i64").unwrap();
+                 let size_i64 = self.builder.build_int_z_extend(size, self.context.i64_type(), "size_i64").map_err(|e| e.to_string())?;
                  let call_malloc = self.builder.build_call(malloc_fn, &[size_i64.into()], "sret_malloc").map_err(|e| e.to_string())?;
                  
                  let raw_ptr = match call_malloc.try_as_basic_value() {
@@ -8222,10 +8222,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                      Type::Struct(n, _) => n.as_str(),
                      _ => "AnonymousStruct",
                  };
-                 let name_global = self.builder.build_global_string_ptr(struct_name_str, "struct_name").unwrap();
+                 let name_global = self.builder.build_global_string_ptr(struct_name_str, "struct_name").map_err(|e| e.to_string())?;
                  let register_fn = self.module.get_function("tl_mem_register_struct_named").ok_or("tl_mem_register_struct_named not found")?;
                  
-                 let cast_ptr = self.builder.build_pointer_cast(raw_ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "cast_ptr").unwrap();
+                 let cast_ptr = self.builder.build_pointer_cast(raw_ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "cast_ptr").map_err(|e| e.to_string())?;
                  let _ = self.builder.build_call(register_fn, &[cast_ptr.into(), name_global.as_pointer_value().into()], "");
     
                  dest_val = Some(cast_ptr.into());
@@ -8281,7 +8281,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         if let Some(d) = dest_val {
              let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
-             let loaded = self.builder.build_load(ptr_ty, d.into_pointer_value(), "sret_loaded").unwrap();
+             let loaded = self.builder.build_load(ptr_ty, d.into_pointer_value(), "sret_loaded").map_err(|e| e.to_string())?;
              return Ok((loaded, ret_type));
         }
 
@@ -8395,7 +8395,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Store Tag
         let tag_ptr = self.builder.build_struct_gep(enum_ty, alloca, 0, "tag_ptr").map_err(|e| e.to_string())?;
         let tag_val = variant_idx as u64;
-        self.builder.build_store(tag_ptr, self.context.i32_type().const_int(tag_val, false)).unwrap();
+        self.builder.build_store(tag_ptr, self.context.i32_type().const_int(tag_val, false)).map_err(|e| e.to_string())?;
         
         // Store Payload if any
         if !args.is_empty() {
@@ -8416,13 +8416,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                         payload_ptr_raw,
                         self.context.ptr_type(inkwell::AddressSpace::default()),
                         "payload_cast"
-                    ).unwrap();
+                    ).map_err(|e| e.to_string())?;
                     
                     for (idx, (arg, _f_ty)) in args.iter().zip(types.iter()).enumerate() {
                         let (val, _) = self.compile_expr(arg)?;
                         let f_ptr = self.builder.build_struct_gep(variant_struct_ty, payload_ptr, idx as u32, "field_ptr")
                             .map_err(|e| e.to_string())?;
-                        self.builder.build_store(f_ptr, val).unwrap();
+                        self.builder.build_store(f_ptr, val).map_err(|e| e.to_string())?;
                     }
                 }
                 VariantKind::Struct(fields) => {
@@ -8441,13 +8441,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                         payload_ptr_raw,
                         self.context.ptr_type(inkwell::AddressSpace::default()),
                         "payload_cast"
-                    ).unwrap();
+                    ).map_err(|e| e.to_string())?;
                     
                     for (idx, arg) in args.iter().enumerate() {
                         let (val, _) = self.compile_expr(arg)?;
                         let f_ptr = self.builder.build_struct_gep(variant_struct_ty, payload_ptr, idx as u32, "field_ptr")
                             .map_err(|e| e.to_string())?;
-                        self.builder.build_store(f_ptr, val).unwrap();
+                        self.builder.build_store(f_ptr, val).map_err(|e| e.to_string())?;
                     }
                 }
                 _ => {}
@@ -8476,8 +8476,8 @@ impl<'ctx> CodeGenerator<'ctx> {
         
         // closure_val is a StructValue { fn_ptr, env_ptr }
         let closure_struct = closure_val.into_struct_value();
-        let actual_fn_ptr = self.builder.build_extract_value(closure_struct, 0, "fn_ptr").unwrap().into_pointer_value();
-        let actual_env_ptr = self.builder.build_extract_value(closure_struct, 1, "env_ptr").unwrap().into_pointer_value();
+        let actual_fn_ptr = self.builder.build_extract_value(closure_struct, 0, "fn_ptr").map_err(|e| e.to_string())?.into_pointer_value();
+        let actual_env_ptr = self.builder.build_extract_value(closure_struct, 1, "env_ptr").map_err(|e| e.to_string())?.into_pointer_value();
         
         // Generate a Trampoline function: void trampoline(env_ptr, arg_ptr, out_ptr)
         let void_ty = self.context.void_type();
@@ -8492,9 +8492,9 @@ impl<'ctx> CodeGenerator<'ctx> {
         let tramp_bb = self.context.append_basic_block(trampoline_fn, "entry");
         self.builder.position_at_end(tramp_bb);
         
-        let t_env_ptr = trampoline_fn.get_nth_param(0).unwrap().into_pointer_value();
-        let t_arg_ptr = trampoline_fn.get_nth_param(1).unwrap().into_pointer_value();
-        let t_out_ptr = trampoline_fn.get_nth_param(2).unwrap().into_pointer_value();
+        let t_env_ptr = trampoline_fn.get_nth_param(0).ok_or_else(|| "missing function parameter".to_string())?.into_pointer_value();
+        let t_arg_ptr = trampoline_fn.get_nth_param(1).ok_or_else(|| "missing function parameter".to_string())?.into_pointer_value();
+        let t_out_ptr = trampoline_fn.get_nth_param(2).ok_or_else(|| "missing function parameter".to_string())?.into_pointer_value();
         
         // Get the arg according to elem_ty
         let llvm_elem_ty = self.get_llvm_type(_elem_ty)?;
@@ -8509,10 +8509,10 @@ impl<'ctx> CodeGenerator<'ctx> {
             if matches!(_elem_ty, Type::Tensor(_,_) | Type::Struct(_,_) | Type::Tuple(_) | Type::String(_)) {
                 t_arg_ptr.into()
             } else {
-                self.builder.build_load(llvm_elem_ty, t_arg_ptr, "arg_loaded").unwrap()
+                self.builder.build_load(llvm_elem_ty, t_arg_ptr, "arg_loaded").map_err(|e| e.to_string())?
             }
         } else {
-            self.builder.build_load(llvm_elem_ty, t_arg_ptr, "arg_loaded").unwrap()
+            self.builder.build_load(llvm_elem_ty, t_arg_ptr, "arg_loaded").map_err(|e| e.to_string())?
         };
         
         // Ret type
@@ -8527,25 +8527,25 @@ impl<'ctx> CodeGenerator<'ctx> {
             llvm_ret_ty.fn_type(&[ptr_type.into(), llvm_elem_ty.into()], false)
         };
         
-        let call_res = self.builder.build_indirect_call(actual_fn_type, actual_fn_ptr, &[t_env_ptr.into(), t_arg_val.into()], "call_res").unwrap();
+        let call_res = self.builder.build_indirect_call(actual_fn_type, actual_fn_ptr, &[t_env_ptr.into(), t_arg_val.into()], "call_res").map_err(|e| e.to_string())?;
         
         if let inkwell::values::ValueKind::Basic(res_val) = call_res.try_as_basic_value() {
             // Store res_val into t_out_ptr
             if llvm_ret_ty.is_pointer_type() {
                 if matches!(ret_ty, Type::Tensor(_,_) | Type::Struct(_,_) | Type::Tuple(_) | Type::String(_)) {
-                    let out_ptr_cast = self.builder.build_pointer_cast(t_out_ptr, ptr_type, "out_ptr_cast").unwrap();
-                    self.builder.build_store(out_ptr_cast, res_val).unwrap();
+                    let out_ptr_cast = self.builder.build_pointer_cast(t_out_ptr, ptr_type, "out_ptr_cast").map_err(|e| e.to_string())?;
+                    self.builder.build_store(out_ptr_cast, res_val).map_err(|e| e.to_string())?;
                 } else {
-                    let out_ptr_cast = self.builder.build_pointer_cast(t_out_ptr, ptr_type, "out_ptr_cast").unwrap();
-                    self.builder.build_store(out_ptr_cast, res_val).unwrap();
+                    let out_ptr_cast = self.builder.build_pointer_cast(t_out_ptr, ptr_type, "out_ptr_cast").map_err(|e| e.to_string())?;
+                    self.builder.build_store(out_ptr_cast, res_val).map_err(|e| e.to_string())?;
                 }
             } else {
-                let out_ptr_cast = self.builder.build_pointer_cast(t_out_ptr, ptr_type, "out_ptr_cast").unwrap();
-                self.builder.build_store(out_ptr_cast, res_val).unwrap();
+                let out_ptr_cast = self.builder.build_pointer_cast(t_out_ptr, ptr_type, "out_ptr_cast").map_err(|e| e.to_string())?;
+                self.builder.build_store(out_ptr_cast, res_val).map_err(|e| e.to_string())?;
             }
         }
         
-        self.builder.build_return(None).unwrap();
+        self.builder.build_return(None).map_err(|e| e.to_string())?;
         
         // Restore builder
         if let Some(sb) = saved_block {
@@ -8556,12 +8556,12 @@ impl<'ctx> CodeGenerator<'ctx> {
         let env_ptr = actual_env_ptr;
         
         let m_struct_ty = self.context.struct_type(&[self.context.i64_type().into()], false);
-        let id_gep = self.builder.build_struct_gep(m_struct_ty, obj_val.into_pointer_value(), 0, "id_gep").unwrap();
-        let id_val = self.builder.build_load(self.context.i64_type(), id_gep, "id_val").unwrap();
+        let id_gep = self.builder.build_struct_gep(m_struct_ty, obj_val.into_pointer_value(), 0, "id_gep").map_err(|e| e.to_string())?;
+        let id_val = self.builder.build_load(self.context.i64_type(), id_gep, "id_val").map_err(|e| e.to_string())?;
         
         if method == "modify" {
             let fn_val = self.module.get_function("tl_mutex_modify").ok_or("tl_mutex_modify not found")?;
-            self.builder.build_call(fn_val, &[id_val.into(), fn_ptr.into(), env_ptr.into()], "").unwrap();
+            self.builder.build_call(fn_val, &[id_val.into(), fn_ptr.into(), env_ptr.into()], "").map_err(|e| e.to_string())?;
             Ok((self.context.i64_type().const_zero().into(), Type::Void))
         } else {
             let fn_val = self.module.get_function("tl_mutex_read").ok_or("tl_mutex_read not found")?;
@@ -8573,17 +8573,17 @@ impl<'ctx> CodeGenerator<'ctx> {
             };
             
             let llvm_ret_ty = self.get_llvm_type(&ret_ty)?;
-            let _size = if llvm_ret_ty.is_sized() { llvm_ret_ty.size_of().unwrap() } else { self.context.i64_type().const_zero() };
+            let _size = if llvm_ret_ty.is_sized() { llvm_ret_ty.size_of().ok_or_else(|| "type has no size".to_string())? } else { self.context.i64_type().const_zero() };
             // Wait, we need to pass a pointer to output. The FFI copies `out_size` bytes into `out_ptr`.
             // Wait, does our FFI require `out_size` in `read`?
             // Signature of tl_mutex_read: void tl_mutex_read(int64_t id, MutexAccessorFn accessor, void* env_ptr, void* out_data);
             // It does not take out_size. It just takes `out_data` pointer to cast back.
-            let ret_ptr = self.builder.build_alloca(llvm_ret_ty, "ret_val").unwrap();
-            let ret_ptr_cast = self.builder.build_pointer_cast(ret_ptr, ptr_type, "ret_ptr_cast").unwrap();
+            let ret_ptr = self.builder.build_alloca(llvm_ret_ty, "ret_val").map_err(|e| e.to_string())?;
+            let ret_ptr_cast = self.builder.build_pointer_cast(ret_ptr, ptr_type, "ret_ptr_cast").map_err(|e| e.to_string())?;
             
-            self.builder.build_call(fn_val, &[id_val.into(), fn_ptr.into(), env_ptr.into(), ret_ptr_cast.into()], "").unwrap();
+            self.builder.build_call(fn_val, &[id_val.into(), fn_ptr.into(), env_ptr.into(), ret_ptr_cast.into()], "").map_err(|e| e.to_string())?;
             
-            let res = self.builder.build_load(llvm_ret_ty, ret_ptr, "res").unwrap();
+            let res = self.builder.build_load(llvm_ret_ty, ret_ptr, "res").map_err(|e| e.to_string())?;
             Ok((res, ret_ty))
         }
     }

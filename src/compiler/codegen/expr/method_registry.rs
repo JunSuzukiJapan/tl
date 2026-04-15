@@ -20,7 +20,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         let fat_ptr_type = self.context.struct_type(&[ptr_type.into(), ptr_type.into()], false);
 
         let data_ptr = if val.is_pointer_value() {
-            self.builder.build_pointer_cast(val.into_pointer_value(), ptr_type, "trait_data_cast").unwrap()
+            self.builder.build_pointer_cast(val.into_pointer_value(), ptr_type, "trait_data_cast").map_err(|e| e.to_string())?
         } else {
             return Err("Expected pointer value for upcast".to_string());
         };
@@ -47,8 +47,8 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         let vtable_ptr = vtable_global.as_pointer_value();
         let mut fat_ptr_val = fat_ptr_type.const_zero();
-        fat_ptr_val = self.builder.build_insert_value(fat_ptr_val, data_ptr, 0, "fat_d").unwrap().into_struct_value();
-        fat_ptr_val = self.builder.build_insert_value(fat_ptr_val, vtable_ptr, 1, "fat_v").unwrap().into_struct_value();
+        fat_ptr_val = self.builder.build_insert_value(fat_ptr_val, data_ptr, 0, "fat_d").map_err(|e| e.to_string())?.into_struct_value();
+        fat_ptr_val = self.builder.build_insert_value(fat_ptr_val, vtable_ptr, 1, "fat_v").map_err(|e| e.to_string())?.into_struct_value();
         Ok(fat_ptr_val.into())
     }
     pub(super) fn substitute_type_generic(&self, ty: &Type, generics: &[String], args: &[Type]) -> Type {

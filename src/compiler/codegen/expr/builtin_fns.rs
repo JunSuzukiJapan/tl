@@ -27,17 +27,17 @@ pub(super) fn compile_varbuilder_get_static<'ctx>(
         let ptr_to_first_field = codegen
             .builder
             .build_pointer_cast(ptr_to_struct, i64_ptr_ty, "str_ptr_cast")
-            .unwrap();
+            .map_err(|e| e.to_string())?;
         let str_addr_i64 = codegen
             .builder
             .build_load(codegen.context.i64_type(), ptr_to_first_field, "str_addr")
-            .unwrap()
+            .map_err(|e| e.to_string())?
             .into_int_value();
         let i8_ptr_ty = codegen.context.i8_type().ptr_type(inkwell::AddressSpace::default());
         codegen
             .builder
             .build_int_to_ptr(str_addr_i64, i8_ptr_ty, "cstr_ptr")
-            .unwrap()
+            .map_err(|e| e.to_string())?
     } else {
          return Err("VarBuilder::get name must be String".into());
     };
@@ -282,7 +282,8 @@ pub(super) fn compile_print_common<'ctx>(
             } else {
                 "tl_display_i64"
             };
-            let fn_val = codegen.module.get_function(fn_name).unwrap();
+            let fn_val = codegen.module.get_function(fn_name)
+                .ok_or_else(|| format!("{} not found", fn_name))?;
             codegen
                 .builder
                 .build_call(fn_val, &[(*arg_val).into()], "print_call")
@@ -298,14 +299,15 @@ pub(super) fn compile_print_common<'ctx>(
              // char_at returns Char which usually maps to i8/u8. 
              // If arg_val is i8, we might need cast if function expects i32/u8?
              // Runtime signatures in lib.rs define what expectations are.
-             let fn_val = codegen.module.get_function(fn_name).unwrap();
-             
+             let fn_val = codegen.module.get_function(fn_name)
+                 .ok_or_else(|| format!("{} not found", fn_name))?;
+
              // If we need a cast:
              let arg_casted = if arg_val.is_int_value() {
                  let int_val = arg_val.into_int_value();
                  let i32_type = codegen.context.i32_type();
                  if int_val.get_type() != i32_type {
-                      codegen.builder.build_int_cast(int_val, i32_type, "char_cast").unwrap().into()
+                      codegen.builder.build_int_cast(int_val, i32_type, "char_cast").map_err(|e| e.to_string())?.into()
                  } else {
                       (*arg_val).into()
                  }
@@ -324,7 +326,8 @@ pub(super) fn compile_print_common<'ctx>(
             } else {
                 "tl_display_i32"
             };
-            let fn_val = codegen.module.get_function(fn_name).unwrap();
+            let fn_val = codegen.module.get_function(fn_name)
+                .ok_or_else(|| format!("{} not found", fn_name))?;
             codegen
                 .builder
                 .build_call(fn_val, &[(*arg_val).into()], "print_call")
@@ -336,7 +339,8 @@ pub(super) fn compile_print_common<'ctx>(
             } else {
                 "tl_display_f32"
             };
-            let fn_val = codegen.module.get_function(fn_name).unwrap();
+            let fn_val = codegen.module.get_function(fn_name)
+                .ok_or_else(|| format!("{} not found", fn_name))?;
             codegen
                 .builder
                 .build_call(fn_val, &[(*arg_val).into()], "print_call")
@@ -348,7 +352,8 @@ pub(super) fn compile_print_common<'ctx>(
             } else {
                 "tl_display_f64"
             };
-            let fn_val = codegen.module.get_function(fn_name).unwrap();
+            let fn_val = codegen.module.get_function(fn_name)
+                .ok_or_else(|| format!("{} not found", fn_name))?;
             codegen
                 .builder
                 .build_call(fn_val, &[(*arg_val).into()], "print_call")
@@ -360,7 +365,8 @@ pub(super) fn compile_print_common<'ctx>(
             } else {
                 "tl_display_bool"
             };
-            let fn_val = codegen.module.get_function(fn_name).unwrap();
+            let fn_val = codegen.module.get_function(fn_name)
+                .ok_or_else(|| format!("{} not found", fn_name))?;
             codegen
                 .builder
                 .build_call(fn_val, &[(*arg_val).into()], "print_call")
@@ -435,7 +441,8 @@ pub(super) fn compile_print_common<'ctx>(
             } else {
                 "tl_tensor_display"
             };
-            let fn_val = codegen.module.get_function(fn_name).unwrap();
+            let fn_val = codegen.module.get_function(fn_name)
+                .ok_or_else(|| format!("{} not found", fn_name))?;
             codegen
                 .builder
                 .build_call(fn_val, &[(*arg_val).into()], "print_call")
@@ -447,7 +454,8 @@ pub(super) fn compile_print_common<'ctx>(
             } else {
                 "tl_tensor_display"
             };
-            let fn_val = codegen.module.get_function(fn_name).unwrap();
+            let fn_val = codegen.module.get_function(fn_name)
+                .ok_or_else(|| format!("{} not found", fn_name))?;
             codegen
                 .builder
                 .build_call(fn_val, &[(*arg_val).into()], "print_call")
@@ -630,10 +638,10 @@ pub(super) fn compile_value_to_string<'ctx>(
             // Cast to i64/f64 first, then convert
             let i64_type = codegen.context.i64_type();
             let casted = if matches!(ty, Type::I32) {
-                codegen.builder.build_int_s_extend(val.into_int_value(), i64_type, "i32_ext").unwrap().into()
+                codegen.builder.build_int_s_extend(val.into_int_value(), i64_type, "i32_ext").map_err(|e| e.to_string())?.into()
             } else {
                 let f64_type = codegen.context.f64_type();
-                codegen.builder.build_float_ext(val.into_float_value(), f64_type, "f32_ext").unwrap().into()
+                codegen.builder.build_float_ext(val.into_float_value(), f64_type, "f32_ext").map_err(|e| e.to_string())?.into()
             };
             let fn_name = if matches!(ty, Type::I32) { "tl_string_from_int" } else { "tl_string_from_f64" };
             let fn_val = codegen.module.get_function(fn_name)
@@ -651,7 +659,7 @@ pub(super) fn compile_value_to_string<'ctx>(
                 .ok_or("tl_string_from_int not found")?;
             let i64_type = codegen.context.i64_type();
             let int_val = if val.is_int_value() {
-                codegen.builder.build_int_s_extend_or_bit_cast(val.into_int_value(), i64_type, "to_i64").unwrap().into()
+                codegen.builder.build_int_s_extend_or_bit_cast(val.into_int_value(), i64_type, "to_i64").map_err(|e| e.to_string())?.into()
             } else {
                 val.into()
             };
@@ -707,21 +715,21 @@ pub(super) fn compile_panic_uneval<'ctx>(
     
     // Print "[PANIC] " prefix using compile_string_literal for proper TL string format
     let (prefix_val, _) = codegen.compile_string_literal("[PANIC] ")?;
-    codegen.builder.build_call(display_fn, &[prefix_val.into()], "").unwrap();
-    
+    codegen.builder.build_call(display_fn, &[prefix_val.into()], "").map_err(|e| e.to_string())?;
+
     // Print the actual message
-    codegen.builder.build_call(display_fn, &[msg_val.into()], "").unwrap();
-    
+    codegen.builder.build_call(display_fn, &[msg_val.into()], "").map_err(|e| e.to_string())?;
+
     // Print newline
     let (newline_val, _) = codegen.compile_string_literal("\n")?;
-    codegen.builder.build_call(display_fn, &[newline_val.into()], "").unwrap();
-    
+    codegen.builder.build_call(display_fn, &[newline_val.into()], "").map_err(|e| e.to_string())?;
+
     // Call abort() to terminate the program
     let abort_fn = codegen.module.get_function("abort").ok_or("abort function not found")?;
-    codegen.builder.build_call(abort_fn, &[], "").unwrap();
-    
+    codegen.builder.build_call(abort_fn, &[], "").map_err(|e| e.to_string())?;
+
     // Insert LLVM unreachable instruction to indicate control doesn't reach here
-    codegen.builder.build_unreachable().unwrap();
+    codegen.builder.build_unreachable().map_err(|e| e.to_string())?;
     
     // Return a dummy value with Never type (code won't actually reach here)
     let dummy = codegen.context.i64_type().const_zero();
@@ -1176,11 +1184,12 @@ pub(super) fn compile_update_all_params<'ctx>(
         return Err("update_all_params requires 1 argument".into());
     }
     let (lr_val, _) = &args[0];
-    let fn_val = codegen.module.get_function("tl_update_all_params").unwrap();
+    let fn_val = codegen.module.get_function("tl_update_all_params")
+        .ok_or_else(|| "tl_update_all_params not found".to_string())?;
     codegen
         .builder
         .build_call(fn_val, &[(*lr_val).into()], "")
-        .unwrap();
+        .map_err(|e| e.to_string())?;
     Ok((
         codegen.context.i64_type().const_int(0, false).into(),
         Type::Void,
@@ -1203,13 +1212,14 @@ pub(super) fn compile_add_parameter<'ctx>(
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
     _target: Option<&Type>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    let fn_val = codegen.module.get_function("tl_add_parameter").unwrap();
+    let fn_val = codegen.module.get_function("tl_add_parameter")
+        .ok_or_else(|| "tl_add_parameter not found".to_string())?;
     let (name_val, _) = &args[0];
     let (tensor_val, _) = &args[1];
     codegen
         .builder
         .build_call(fn_val, &[(*name_val).into(), (*tensor_val).into()], "")
-        .unwrap();
+        .map_err(|e| e.to_string())?;
     Ok((
         codegen.context.i64_type().const_int(0, false).into(),
         Type::Void,
@@ -1221,7 +1231,8 @@ pub(super) fn compile_load_all_params<'ctx>(
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
     _target: Option<&Type>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    let fn_val = codegen.module.get_function("tl_load_all_params").unwrap();
+    let fn_val = codegen.module.get_function("tl_load_all_params")
+        .ok_or_else(|| "tl_load_all_params not found".to_string())?;
     let path_val = if args.len() == 2 {
         let (struct_val, struct_ty) = &args[0];
         let struct_name = match struct_ty {
@@ -1275,7 +1286,8 @@ pub(super) fn compile_save_all_params<'ctx>(
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
     _target: Option<&Type>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    let fn_val = codegen.module.get_function("tl_save_all_params").unwrap();
+    let fn_val = codegen.module.get_function("tl_save_all_params")
+        .ok_or_else(|| "tl_save_all_params not found".to_string())?;
     let path_val = if args.len() == 2 {
         let (struct_val, struct_ty) = &args[0];
         let struct_name = match struct_ty {
@@ -1360,7 +1372,7 @@ pub(super) fn compile_varbuilder_get<'ctx>(
         let shape_alloca = codegen
             .builder
             .build_alloca(i64_type.array_type(num_elements as u32), "shape_arr")
-            .unwrap();
+            .map_err(|e| e.to_string())?;
         for (i, val) in shape_vals.iter().enumerate() {
             let idx = codegen.context.i64_type().const_int(i as u64, false);
             let ptr = unsafe {
@@ -1372,12 +1384,12 @@ pub(super) fn compile_varbuilder_get<'ctx>(
                         &[codegen.context.i64_type().const_zero(), idx],
                         "shptr",
                     )
-                    .unwrap()
+                    .map_err(|e| e.to_string())?
             };
             codegen
                 .builder
                 .build_store(ptr, val.into_int_value())
-                .unwrap();
+                .map_err(|e| e.to_string())?;
         }
         (num_elements, shape_alloca)
     } else {
@@ -1386,7 +1398,7 @@ pub(super) fn compile_varbuilder_get<'ctx>(
         let shape_alloca = codegen
             .builder
             .build_alloca(i64_type.array_type(num_dims as u32), "shape_arr")
-            .unwrap();
+            .map_err(|e| e.to_string())?;
         for (i, arg) in args[1..].iter().enumerate() {
             let (val, _) = codegen.compile_expr(arg)?;
             let idx = i64_type.const_int(i as u64, false);
@@ -1399,17 +1411,18 @@ pub(super) fn compile_varbuilder_get<'ctx>(
                         &[i64_type.const_zero(), idx],
                         "shptr",
                     )
-                    .unwrap()
+                    .map_err(|e| e.to_string())?
             };
             codegen
                 .builder
                 .build_store(ptr, val.into_int_value())
-                .unwrap();
+                .map_err(|e| e.to_string())?;
         }
         (num_dims, shape_alloca)
     };
 
-    let fn_val = codegen.module.get_function("tl_varbuilder_get").unwrap();
+    let fn_val = codegen.module.get_function("tl_varbuilder_get")
+        .ok_or_else(|| "tl_varbuilder_get not found".to_string())?;
     let call = codegen
         .builder
         .build_call(
@@ -1425,7 +1438,7 @@ pub(super) fn compile_varbuilder_get<'ctx>(
             ],
             "varbuilder_get_result",
         )
-        .unwrap();
+        .map_err(|e| e.to_string())?;
     let res = codegen.check_tensor_result(call, "varbuilder_get_error")?;
     let res_ty = Type::Tensor(Box::new(Type::F32), 0);
     codegen.emit_register_tensor(res, &res_ty)?;

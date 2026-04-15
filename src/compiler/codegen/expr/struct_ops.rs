@@ -171,7 +171,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         
         let size_int = size;
         let size_i64 = if size_int.get_type() == self.context.i32_type() {
-             self.builder.build_int_z_extend(size_int, self.context.i64_type(), "size_i64").unwrap()
+             self.builder.build_int_z_extend(size_int, self.context.i64_type(), "size_i64").map_err(|e| e.to_string())?
         } else {
              size_int
         };
@@ -199,7 +199,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 self.context.ptr_type(inkwell::AddressSpace::default()),
                 "cast_ptr",
             )
-            .unwrap();
+            .map_err(|e| e.to_string())?;
 
         let name_global = self
             .builder

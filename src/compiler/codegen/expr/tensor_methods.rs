@@ -27,9 +27,9 @@ pub(super) fn compile_tensor_get<'ctx>(
     let index_array_type = i64_type.array_type(rank as u32);
 
     // Move to entry block for alloca to avoid stack overflow in loops
-    let current_block = codegen.builder.get_insert_block().unwrap();
-    let func = current_block.get_parent().unwrap();
-    let entry_block = func.get_first_basic_block().unwrap();
+    let current_block = codegen.current_block()?;
+    let func = current_block.get_parent().ok_or_else(|| "block has no parent function".to_string())?;
+    let entry_block = func.get_first_basic_block().ok_or_else(|| "function has no entry block".to_string())?;
 
     if let Some(first_inst) = entry_block.get_first_instruction() {
         codegen.builder.position_before(&first_inst);
@@ -40,7 +40,7 @@ pub(super) fn compile_tensor_get<'ctx>(
     let index_array_ptr = codegen
         .builder
         .build_alloca(index_array_type, "index_array")
-        .unwrap();
+        .map_err(|e| e.to_string())?;
 
     // Move back to current block
     codegen.builder.position_at_end(current_block);
@@ -116,7 +116,7 @@ pub(super) fn compile_tensor_backward<'ctx>(
     _obj_ty: Type,
     _args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    let fn_val = codegen.module.get_function("tl_tensor_backward").unwrap();
+    let fn_val = codegen.get_fn("tl_tensor_backward")?;
     codegen
         .builder
         .build_call(fn_val, &[obj_val.into()], "backward_call")
@@ -134,7 +134,7 @@ pub(super) fn compile_tensor_clone<'ctx>(
     obj_ty: Type,
     _args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    let fn_val = codegen.module.get_function("tl_tensor_clone").unwrap();
+    let fn_val = codegen.get_fn("tl_tensor_clone")?;
     let call = codegen
         .builder
         .build_call(fn_val, &[obj_val.into()], "clone_res")
@@ -152,7 +152,7 @@ pub(super) fn compile_tensor_detach<'ctx>(
     obj_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    let fn_val = codegen.module.get_function("tl_tensor_detach").unwrap();
+    let fn_val = codegen.get_fn("tl_tensor_detach")?;
     // Optional arg: req_grad (bool). Default to false.
     let req_grad = if !args.is_empty() {
         let (arg_val, _) = args[0].clone();
@@ -178,7 +178,7 @@ pub(super) fn compile_tensor_grad<'ctx>(
     obj_ty: Type,
     _args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    let fn_val = codegen.module.get_function("tl_tensor_grad").unwrap();
+    let fn_val = codegen.get_fn("tl_tensor_grad")?;
     let call = codegen
         .builder
         .build_call(fn_val, &[obj_val.into()], "grad_res")
@@ -196,7 +196,7 @@ pub(super) fn compile_tensor_contiguous<'ctx>(
     obj_ty: Type,
     _args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    let fn_val = codegen.module.get_function("tl_tensor_contiguous").unwrap();
+    let fn_val = codegen.get_fn("tl_tensor_contiguous")?;
     let call = codegen
         .builder
         .build_call(fn_val, &[obj_val.into()], "contiguous_res")
@@ -220,7 +220,7 @@ pub(super) fn compile_tensor_save<'ctx>(
     if args.len() != 1 {
         return Err("save requires 1 argument (path)".into());
     }
-    let fn_val = codegen.module.get_function("tl_tensor_save").unwrap();
+    let fn_val = codegen.get_fn("tl_tensor_save")?;
     let (path_val, _) = args[0].clone();
 
     codegen
@@ -314,7 +314,7 @@ pub(super) fn compile_tensor_slice2<'ctx>(
         .map_err(|e| e.to_string())?;
     let step = i64_ty.const_int(1, false);
 
-    let fn_val = codegen.module.get_function("tl_tensor_slice").unwrap();
+    let fn_val = codegen.get_fn("tl_tensor_slice")?;
     let call = codegen.builder
         .build_call(fn_val, &[obj_val.into(), dim.into(), start.into(), end.into(), step.into()], "slice_res")
         .map_err(|e| e.to_string())?;
@@ -343,7 +343,7 @@ pub(super) fn compile_tensor_slice3<'ctx>(
         .map_err(|e| e.to_string())?;
     let step = i64_ty.const_int(1, false);
 
-    let fn_val = codegen.module.get_function("tl_tensor_slice").unwrap();
+    let fn_val = codegen.get_fn("tl_tensor_slice")?;
     let call = codegen.builder
         .build_call(fn_val, &[obj_val.into(), dim.into(), start.into(), end.into(), step.into()], "slice_res")
         .map_err(|e| e.to_string())?;
@@ -607,16 +607,16 @@ pub(super) fn compile_transpose<'ctx>(
             let handle_i64 = if t_val.is_pointer_value() {
                 let ptr = t_val.into_pointer_value();
                 let i64_type = codegen.context.i64_type();
-                let cast_ptr = codegen.builder.build_pointer_cast(ptr, codegen.context.ptr_type(inkwell::AddressSpace::default()), "cast_tensor_handle").unwrap();
-                codegen.builder.build_load(i64_type, cast_ptr, "tensor_handle").unwrap().into_int_value()
+                let cast_ptr = codegen.builder.build_pointer_cast(ptr, codegen.context.ptr_type(inkwell::AddressSpace::default()), "cast_tensor_handle").map_err(|e| e.to_string())?;
+                codegen.builder.build_load(i64_type, cast_ptr, "tensor_handle").map_err(|e| e.to_string())?.into_int_value()
             } else if t_val.is_struct_value() {
-                codegen.builder.build_extract_value(t_val.into_struct_value(), 0, "tensor_handle").unwrap().into_int_value()
+                codegen.builder.build_extract_value(t_val.into_struct_value(), 0, "tensor_handle").map_err(|e| e.to_string())?.into_int_value()
             } else {
                 return Err(format!("Unexpected value kind for Struct Tensor: {:?}", t_val));
             };
             
             // Cast i64 handle to Pointer
-            codegen.builder.build_int_to_ptr(handle_i64, codegen.context.ptr_type(inkwell::AddressSpace::default()), "handle_ptr").unwrap().into()
+            codegen.builder.build_int_to_ptr(handle_i64, codegen.context.ptr_type(inkwell::AddressSpace::default()), "handle_ptr").map_err(|e| e.to_string())?.into()
         } else {
             *t_val
         }
@@ -640,29 +640,29 @@ pub(super) fn compile_transpose<'ctx>(
     if let Type::Struct(name, _) = t_ty {
         if name == "Tensor" {
             // Wrap primitive result (ptr) into Struct { handle: i64 }
-            let current_block = codegen.builder.get_insert_block().unwrap();
-            let parent_fn = current_block.get_parent().unwrap();
+            let current_block = codegen.current_block()?;
+            let parent_fn = current_block.get_parent().ok_or_else(|| "block has no parent function".to_string())?;
             
             // Alloca struct
             let i64_type = codegen.context.i64_type();
             let struct_type = codegen.context.struct_type(&[i64_type.into()], false);
             
             // Manual entry block alloca
-            let entry = parent_fn.get_first_basic_block().unwrap();
+            let entry = parent_fn.get_first_basic_block().ok_or_else(|| "function has no entry block".to_string())?;
             let builder = codegen.context.create_builder();
             if let Some(first_instr) = entry.get_first_instruction() {
                 builder.position_before(&first_instr);
             } else {
                 builder.position_at_end(entry);
             }
-            let struct_alloca = builder.build_alloca(struct_type, "tensor_struct_res").unwrap();
+            let struct_alloca = builder.build_alloca(struct_type, "tensor_struct_res").map_err(|e| e.to_string())?;
             
             // Convert ptr -> i64
-            let handle_i64 = codegen.builder.build_ptr_to_int(res.into_pointer_value(), i64_type, "handle_i64").unwrap();
+            let handle_i64 = codegen.builder.build_ptr_to_int(res.into_pointer_value(), i64_type, "handle_i64").map_err(|e| e.to_string())?;
             
             // Store handle (field 0)
-            let handle_ptr = codegen.builder.build_struct_gep(struct_type, struct_alloca, 0, "handle_ptr").unwrap();
-            codegen.builder.build_store(handle_ptr, handle_i64).unwrap();
+            let handle_ptr = codegen.builder.build_struct_gep(struct_type, struct_alloca, 0, "handle_ptr").map_err(|e| e.to_string())?;
+            codegen.builder.build_store(handle_ptr, handle_i64).map_err(|e| e.to_string())?;
             
             // Return pointer to struct
             return Ok((struct_alloca.into(), t_ty.clone()));
