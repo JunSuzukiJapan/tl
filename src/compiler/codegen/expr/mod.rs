@@ -2280,7 +2280,8 @@ impl<'ctx> CodeGenerator<'ctx> {
             ExprKind::MethodCall(obj, method, args) => self.compile_method_call(obj, method, args),
             ExprKind::FnCall(name, args) => self.compile_fn_call(name, args),
             ExprKind::IndexAccess(target, indices) => {
-                let (val, val_type) = self.compile_expr(target)?;
+                let (val, raw_val_type) = self.compile_expr(target)?;
+                let val_type = raw_val_type.flatten_specialized();
                 match val_type.clone() {
                     Type::Struct(name, _) if name == "Tensor" => {
                         let rank = indices.len();

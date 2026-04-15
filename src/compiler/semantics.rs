@@ -6984,15 +6984,19 @@ impl SemanticAnalyzer {
 
                 // === Vec methods: enumerate, flatten, zip ===
                 if method_name == "enumerate" || method_name == "flatten" || method_name == "zip" {
-                    let is_vec = match &obj_type {
+                    let resolved_obj_type = self.resolve_inferred_type(&obj_type);
+                    let is_vec = match &resolved_obj_type {
                         Type::Struct(name, _) if name.starts_with("Vec") => true,
-                        _ => obj_type.get_base_name() == "Vec",
+                        _ => resolved_obj_type.get_base_name() == "Vec",
                     };
                     if is_vec {
-                        let elem_ty = match &obj_type {
-                            Type::Struct(_, type_args) => type_args.first().cloned().ok_or_else(|| {
-                                SemanticError::Generic("Vec must have generic type parameter".to_string()).to_tl_error(Some(expr.span.clone()))
-                            })?,
+                        let elem_ty = match &resolved_obj_type {
+                            Type::Struct(_, type_args) => {
+                                let raw = type_args.first().cloned().ok_or_else(|| {
+                                    SemanticError::Generic("Vec must have generic type parameter".to_string()).to_tl_error(Some(expr.span.clone()))
+                                })?;
+                                self.resolve_inferred_type(&raw)
+                            }
                             _ => return self.err(SemanticError::Generic("Expected Vec".to_string()), Some(expr.span.clone())),
                         };
                         match method_name.as_str() {
@@ -7004,9 +7008,12 @@ impl SemanticAnalyzer {
                             "flatten" => {
                                 if args.len() == 0 {
                                     let inner_elem_ty = match &elem_ty {
-                                        Type::Struct(name, type_args) if name == "Vec" => type_args.first().cloned().ok_or_else(|| {
-                                            SemanticError::Generic("Inner Vec must have generic type parameter".to_string()).to_tl_error(Some(expr.span.clone()))
-                                        })?,
+                                        Type::Struct(name, type_args) if name == "Vec" => {
+                                            let raw = type_args.first().cloned().ok_or_else(|| {
+                                                SemanticError::Generic("Inner Vec must have generic type parameter".to_string()).to_tl_error(Some(expr.span.clone()))
+                                            })?;
+                                            self.resolve_inferred_type(&raw)
+                                        }
                                         _ => return self.err(SemanticError::Generic("flatten requires inner type to be Vec".to_string()), Some(expr.span.clone())),
                                     };
                                     return Ok(Type::Struct("Vec".to_string(), vec![inner_elem_ty]));
@@ -7015,10 +7022,14 @@ impl SemanticAnalyzer {
                             "zip" => {
                                 if args.len() == 1 {
                                     let arg_ty = self.check_expr(&mut args[0])?;
-                                    let arg_elem_ty = match &arg_ty {
-                                        Type::Struct(name, type_args) if name == "Vec" => type_args.first().cloned().ok_or_else(|| {
-                                            SemanticError::Generic("Argument to zip must be a Vec with generic type parameter".to_string()).to_tl_error(Some(expr.span.clone()))
-                                        })?,
+                                    let resolved_arg_ty = self.resolve_inferred_type(&arg_ty);
+                                    let arg_elem_ty = match &resolved_arg_ty {
+                                        Type::Struct(name, type_args) if name == "Vec" => {
+                                            let raw = type_args.first().cloned().ok_or_else(|| {
+                                                SemanticError::Generic("Argument to zip must be a Vec with generic type parameter".to_string()).to_tl_error(Some(expr.span.clone()))
+                                            })?;
+                                            self.resolve_inferred_type(&raw)
+                                        }
                                         _ => return self.err(SemanticError::Generic("zip argument must be Vec".to_string()), Some(expr.span.clone())),
                                     };
                                     return Ok(Type::Struct("Vec".to_string(), vec![Type::Tuple(vec![elem_ty, arg_elem_ty])]));
