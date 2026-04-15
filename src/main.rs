@@ -64,69 +64,12 @@ struct Cli {
 }
 
 fn main() -> Result<()> {
-    // env_logger::init(); // Moved to after CLI parse to use verbose flag
     let cli = Cli::parse();
+    init_logger(&cli);
+    init_env(&cli);
 
-    // Initialize Logger
-    let mut builder = env_logger::Builder::new();
-    // Default level: WARN
-    builder.filter_level(log::LevelFilter::Warn);
-    // Suppress tokenizers crate warnings (ID mismatch etc)
-    builder.filter_module("tokenizers", log::LevelFilter::Error);
+    let (source_files, object_files) = classify_input_files(&cli.files);
 
-    // Override with CLI verbose level
-    match cli.verbose {
-        0 => {
-            // Check RUST_LOG env var if no -v flag
-            if std::env::var("RUST_LOG").is_ok() {
-                builder.parse_default_env();
-            }
-        }
-        1 => {
-            builder.filter_level(log::LevelFilter::Info);
-        }
-        2 => {
-            builder.filter_level(log::LevelFilter::Debug);
-        }
-        _ => {
-            builder.filter_level(log::LevelFilter::Trace);
-        }
-    };
-
-    builder.init();
-
-    // Set device environment variable
-    if std::env::var("TL_DEVICE").is_err() {
-        unsafe {
-            std::env::set_var("TL_DEVICE", &cli.device);
-        }
-    }
-    if cli.mem_log {
-        unsafe {
-            std::env::set_var("TL_MEM_LOG", "1");
-        }
-    }
-
-    let mut source_files = Vec::new();
-    let mut object_files = Vec::new();
-
-    for f in &cli.files {
-        let p = PathBuf::from(f);
-        if let Some(ext) = p.extension() {
-            if ext == "tl" {
-                source_files.push(p);
-            } else if ext == "o" || ext == "s" {
-                object_files.push(p);
-            } else {
-                // Assume source file if unknown
-                source_files.push(p);
-            }
-        } else {
-            source_files.push(p);
-        }
-    }
-
-    // Load builtins
     let builtins = load_builtins().context("Failed to load builtins")?;
     log::info!(
         "Loaded builtins: {} structs, {} impls",
@@ -134,357 +77,279 @@ fn main() -> Result<()> {
         builtins.impls.len()
     );
 
-    // Determine mode
     let is_compile_mode = cli.compile || cli.output.is_some() || cli.save_asm || cli.emit_llvm;
-
     if is_compile_mode {
-        // Compile Mode
-        let mut generated_objects = Vec::new();
-
-        for file in &source_files {
-            log::info!("Compiling file: {:?}", file);
-            let (mut ast, source) = match load_module_with_source(file.clone()) {
-                Ok((ast, source)) => (ast, source),
-                Err(e) => {
-                    let source = fs::read_to_string(file).unwrap_or_default();
-                    print_tl_error_with_source(
-                        &e,
-                        &source,
-                        Some(file.to_str().unwrap_or("unknown")),
-                    );
-                    std::process::exit(1);
-                }
-            };
-
-            // Inject builtins
-            ast.structs.extend(builtins.structs.clone());
-            ast.enums.extend(builtins.enums.clone());
-            ast.impls.extend(builtins.impls.clone());
-            ast.traits.extend(builtins.traits.clone());
-            ast.trait_impls.extend(builtins.trait_impls.clone());
-            ast.functions.extend(builtins.functions.clone());
-            // No need to inject imports/modules unless structured?
-
-            // DEBUG removed;
-
-            // Semantics
-            let mut analyzer = SemanticAnalyzer::new(String::new());
-            if let Err(e) = analyzer.check_module(&mut ast) {
-                let tl_err = e.with_file(file.to_str().unwrap_or("unknown"));
-                print_tl_error_with_source(
-                    &tl_err,
-                    &source,
-                    Some(file.to_str().unwrap_or("unknown")),
-                );
-                std::process::exit(1);
-            }
-
-            // Monomorphization
-            let mut monomorphizer = tl_lang::compiler::monomorphize::Monomorphizer::new();
-            if let Err(e) = monomorphizer.run(&mut ast) {
-                let tl_err = e.with_file(file.to_str().unwrap_or("unknown"));
-                print_tl_error_with_source(
-                    &tl_err,
-                    &source,
-                    Some(file.to_str().unwrap_or("unknown")),
-                );
-                std::process::exit(1);
-            }
-
-            // Codegen
-            let context = InkwellContext::create();
-            // Module name from filename
-            let module_name = file.file_stem().unwrap().to_str().unwrap();
-            let mut codegen = CodeGenerator::new(&context, module_name);
-
-            if let Err(e) = codegen.compile_module(&ast, "main") {
-                let tl_err = TlError::Codegen {
-                    kind: tl_lang::compiler::error::CodegenErrorKind::Generic(e),
-                    span: None,
-                }
-                .with_file(file.to_str().unwrap_or("unknown"));
-                print_tl_error_with_source(
-                    &tl_err,
-                    &source,
-                    Some(file.to_str().unwrap_or("unknown")),
-                );
-                std::process::exit(1);
-            }
-
-            if std::env::var("TL_DUMP_IR").is_ok() {
-                codegen.dump_ir();
-            }
-
-            if cli.emit_llvm {
-                let ll_path = file.with_extension("ll");
-                if let Err(e) = codegen.emit_llvm_file(&ll_path) {
-                    log::error!("Failed to emit LLVM IR for {:?}: {}", file, e);
-                    std::process::exit(1);
-                }
-                log::info!("Generated LLVM IR: {:?}", ll_path);
-            }
-
-            if cli.save_asm {
-                let asm_path = file.with_extension("s");
-                if let Err(e) = codegen.emit_assembly_file(&asm_path) {
-                    log::error!("Failed to emit assembly for {:?}: {}", file, e);
-                    std::process::exit(1);
-                }
-                log::info!("Generated assembly: {:?}", asm_path);
-            } else if !cli.emit_llvm {
-                let obj_path = file.with_extension("o");
-                if let Err(e) = codegen.emit_object_file(&obj_path) {
-                    log::error!("Failed to emit object file for {:?}: {}", file, e);
-                    std::process::exit(1);
-                }
-                generated_objects.push(obj_path);
-            }
-        }
-
-        // Check if output file indicates object file (skip linking)
-        let output_is_object = cli
-            .output
-            .as_ref()
-            .map(|p| p.extension().map_or(false, |e| e == "o"))
-            .unwrap_or(false);
-
-        // Link Step (only if compiling and not just saving asm, and not explicitly outputting object)
-        if (cli.compile || cli.output.is_some())
-            && !cli.save_asm
-            && !cli.emit_llvm
-            && !output_is_object
-        {
-            let mut link_args = Vec::new();
-            link_args.extend(
-                generated_objects
-                    .iter()
-                    .map(|p| p.to_str().unwrap().to_string()),
-            );
-            link_args.extend(object_files.iter().map(|p| p.to_str().unwrap().to_string()));
-
-            // Determine output filename
-            let output_exe = if let Some(out) = cli.output {
-                out
-            } else {
-                // Default to first source filename without extension
-                if !source_files.is_empty() {
-                    let mut p = source_files[0].clone();
-                    p.set_extension("");
-                    p
-                } else {
-                    PathBuf::from("a.out")
-                }
-            };
-
-            log::info!("Linking to {:?}", output_exe);
-
-            // Invoke cc
-            // We need to link against runtime libs if needed.
-            // For now assume standard linking. If we user uses external tensor library (candle),
-            // static linking might be complex. But let's try basic link.
-            // WARNING: The JIT engine links candle symbols in memory.
-            // A standalone executable needs to link against the Rust static library or dylib containing these symbols?
-            // Wait, currently `tl` is self-contained.
-            // To produce a standalone executable, we need `libtl_runtime.a` or similar?
-            // Or we just produce object files and user has to link?
-            // The prompt asks to "create executable".
-            // Since we don't have a library distribution yet, linking might fail due to missing symbols (tl_runtime functions).
-            // However, implementing the CLI structure is the first step.
-            // I will attempt to run `cc` with the objects.
-
-            // Add runtime library path and dependency
-            // Try to find target directory
-            // heuristic: check target/debug or target/release based on current build profile?
-            // Since we are running `tl`, we don't strictly know if `libtl_runtime` is debug or release.
-            // But usually we build them together.
-            let runtime_path = PathBuf::from("target/debug"); // Default to debug for dev
-
-            link_args.push(format!("-L{}", runtime_path.display()));
-            link_args.push("-ltl_runtime".to_string());
-
-            // System libraries and Frameworks (MacOS)
-            link_args.push("-lpthread".to_string());
-            link_args.push("-ldl".to_string());
-            link_args.push("-lm".to_string());
-            link_args.push("-lc++".to_string());
-
-            #[cfg(target_os = "macos")]
-            {
-                link_args.push("-framework".to_string());
-                link_args.push("Accelerate".to_string());
-                link_args.push("-framework".to_string());
-                link_args.push("Metal".to_string());
-                link_args.push("-framework".to_string());
-                link_args.push("Foundation".to_string());
-                link_args.push("-framework".to_string());
-                link_args.push("MetalPerformanceShaders".to_string());
-                link_args.push("-framework".to_string());
-                link_args.push("Security".to_string());
-                link_args.push("-framework".to_string());
-                link_args.push("CoreFoundation".to_string());
-                link_args.push("-framework".to_string());
-                link_args.push("SystemConfiguration".to_string());
-            }
-
-            let status = Command::new("cc")
-                .args(&link_args)
-                .arg("-o")
-                .arg(&output_exe)
-                .status()
-                .context("Failed to run linker (cc)")?;
-
-            if !status.success() {
-                log::error!("Linking failed");
-                std::process::exit(1);
-            }
-            log::info!("Build successful: {:?}", output_exe);
-        }
+        run_compile_mode(&cli, &source_files, &object_files, &builtins)?;
     } else {
-        // Interpreter Mode
-        // Initialize args
-        tl_runtime::args::init_args(cli.args.clone());
-        tl_runtime::force_link();
+        run_interpret_mode(&cli, &source_files, &builtins)?;
+    }
 
-        let mut combined_module = tl_lang::compiler::ast::Module {
-            structs: vec![],
-            enums: vec![],
-            impls: vec![],
-            traits: vec![],
-            trait_impls: vec![],
-            functions: vec![],
-            tensor_decls: vec![],
-            relations: vec![],
-            rules: vec![],
-            queries: vec![],
-            imports: vec![],
-            submodules: std::collections::HashMap::new(),
+    Ok(())
+}
+
+/// ロガーを CLI フラグに従って初期化する。
+fn init_logger(cli: &Cli) {
+    let mut builder = env_logger::Builder::new();
+    builder.filter_level(log::LevelFilter::Warn);
+    // tokenizers クレートの警告を抑制（ID ミスマッチ等）
+    builder.filter_module("tokenizers", log::LevelFilter::Error);
+    match cli.verbose {
+        0 => {
+            if std::env::var("RUST_LOG").is_ok() {
+                builder.parse_default_env();
+            }
+        }
+        1 => { builder.filter_level(log::LevelFilter::Info); }
+        2 => { builder.filter_level(log::LevelFilter::Debug); }
+        _ => { builder.filter_level(log::LevelFilter::Trace); }
+    }
+    builder.init();
+}
+
+/// 環境変数を CLI フラグから設定する。
+fn init_env(cli: &Cli) {
+    if std::env::var("TL_DEVICE").is_err() {
+        unsafe { std::env::set_var("TL_DEVICE", &cli.device); }
+    }
+    if cli.mem_log {
+        unsafe { std::env::set_var("TL_MEM_LOG", "1"); }
+    }
+}
+
+/// 入力ファイルを拡張子でソースファイルとオブジェクトファイルに分類する。
+fn classify_input_files(files: &[String]) -> (Vec<PathBuf>, Vec<PathBuf>) {
+    let mut source_files = Vec::new();
+    let mut object_files = Vec::new();
+    for f in files {
+        let p = PathBuf::from(f);
+        match p.extension().and_then(|e| e.to_str()) {
+            Some("o") | Some("s") => object_files.push(p),
+            _ => source_files.push(p),
+        }
+    }
+    (source_files, object_files)
+}
+
+/// AOT コンパイルモード：ソースファイルをオブジェクトファイルに変換してリンクする。
+fn run_compile_mode(
+    cli: &Cli,
+    source_files: &[PathBuf],
+    object_files: &[PathBuf],
+    builtins: &tl_lang::compiler::ast::Module,
+) -> Result<()> {
+    let mut generated_objects = Vec::new();
+
+    for file in source_files {
+        log::info!("Compiling file: {:?}", file);
+        let (mut ast, source) = match load_module_with_source(file.clone()) {
+            Ok((ast, source)) => (ast, source),
+            Err(e) => {
+                let source = fs::read_to_string(file).unwrap_or_default();
+                print_tl_error_with_source(&e, &source, file.to_str());
+                std::process::exit(1);
+            }
         };
 
-        // ソースコードを保持（スニペット表示用）
-        let mut combined_source = String::new();
+        // ビルトインをインジェクト
+        ast.merge(builtins.clone());
 
-        for file in &source_files {
-            match load_module_with_source(file.clone()) {
-                Ok((mod_, source)) => {
-                    // Merge
-                    combined_module.structs.extend(mod_.structs);
-                    combined_module.enums.extend(mod_.enums);
-                    combined_module.impls.extend(mod_.impls);
-                    combined_module.traits.extend(mod_.traits);
-                    combined_module.trait_impls.extend(mod_.trait_impls);
-                    combined_module.functions.extend(mod_.functions);
-                    combined_module.tensor_decls.extend(mod_.tensor_decls);
-                    combined_module.relations.extend(mod_.relations);
-                    combined_module.rules.extend(mod_.rules);
-                    combined_module.queries.extend(mod_.queries);
-                    combined_module.imports.extend(mod_.imports);
-                    combined_module.submodules.extend(mod_.submodules);
-                    // 主要なファイルのソースを保持
-                    if combined_source.is_empty() {
-                        combined_source = source;
-                    }
-                }
-                Err(e) => {
-                    // パースエラーはソースが必要なので、ファイルを再読み込み
-                    let source = fs::read_to_string(file).unwrap_or_default();
-                    print_tl_error_with_source(
-                        &e,
-                        &source,
-                        Some(file.to_str().unwrap_or("unknown")),
-                    );
-                    std::process::exit(1);
-                }
-            }
-        }
-
-        // Merge builtins
-        combined_module.structs.extend(builtins.structs.clone());
-        combined_module.enums.extend(builtins.enums.clone());
-        combined_module.impls.extend(builtins.impls.clone());
-        combined_module.traits.extend(builtins.traits.clone());
-        combined_module.trait_impls.extend(builtins.trait_impls.clone());
-        combined_module.functions.extend(builtins.functions.clone());
-
-        // DEBUG removed;
-
-        // TRACE removed;
-        // Semantics (Check only)
+        // 意味解析
         let mut analyzer = SemanticAnalyzer::new(String::new());
-        if let Err(e) = analyzer.check_module(&mut combined_module) {
-            let file_hint = if !source_files.is_empty() {
-                source_files[0].to_str()
-            } else {
-                None
-            };
-
-            let tl_err = if let Some(f) = file_hint {
-                e.with_file(f)
-            } else {
-                e
-            };
-
-            print_tl_error_with_source(&tl_err, &combined_source, file_hint);
+        if let Err(e) = analyzer.check_module(&mut ast) {
+            let tl_err = e.with_file(file.to_str().unwrap_or("unknown"));
+            print_tl_error_with_source(&tl_err, &source, file.to_str());
             std::process::exit(1);
         }
-        // TRACE removed;
 
-        // TRACE removed;
-        // Monomorphization (JIT)
+        // 単相化
         let mut monomorphizer = tl_lang::compiler::monomorphize::Monomorphizer::new();
-        if let Err(e) = monomorphizer.run(&mut combined_module) {
-            print_tl_error_with_source(&e, &combined_source, None);
+        if let Err(e) = monomorphizer.run(&mut ast) {
+            let tl_err = e.with_file(file.to_str().unwrap_or("unknown"));
+            print_tl_error_with_source(&tl_err, &source, file.to_str());
             std::process::exit(1);
         }
-        
 
-        // TRACE removed;
-
-        // JIT Execution
-        use tl_runtime::registry;
-        registry::reset_global_context();
-
-        // TRACE removed;
+        // コード生成
         let context = InkwellContext::create();
-        let mut codegen = CodeGenerator::new(&context, "main");
+        let module_name = file.file_stem().unwrap().to_str().unwrap();
+        let mut codegen = CodeGenerator::new(&context, module_name);
 
-        if let Err(e) = codegen.compile_module(&combined_module, "main") {
-            // StringエラーをTlErrorに変換
+        if let Err(e) = codegen.compile_module(&ast, "main") {
             let tl_err = TlError::Codegen {
                 kind: tl_lang::compiler::error::CodegenErrorKind::Generic(e),
                 span: None,
-            };
-            print_tl_error_with_source(&tl_err, &combined_source, None);
+            }
+            .with_file(file.to_str().unwrap_or("unknown"));
+            print_tl_error_with_source(&tl_err, &source, file.to_str());
             std::process::exit(1);
         }
-        // TRACE removed;
 
-        if std::env::var("TL_DUMP_IR").is_ok() {
-            codegen.dump_ir();
+        if std::env::var("TL_DUMP_IR").is_ok() { codegen.dump_ir(); }
+
+        if cli.emit_llvm {
+            let ll_path = file.with_extension("ll");
+            if let Err(e) = codegen.emit_llvm_file(&ll_path) {
+                log::error!("Failed to emit LLVM IR for {:?}: {}", file, e);
+                std::process::exit(1);
+            }
+            log::info!("Generated LLVM IR: {:?}", ll_path);
+        } else if cli.save_asm {
+            let asm_path = file.with_extension("s");
+            if let Err(e) = codegen.emit_assembly_file(&asm_path) {
+                log::error!("Failed to emit assembly for {:?}: {}", file, e);
+                std::process::exit(1);
+            }
+            log::info!("Generated assembly: {:?}", asm_path);
+        } else {
+            let obj_path = file.with_extension("o");
+            if let Err(e) = codegen.emit_object_file(&obj_path) {
+                log::error!("Failed to emit object file for {:?}: {}", file, e);
+                std::process::exit(1);
+            }
+            generated_objects.push(obj_path);
         }
+    }
 
-        // TRACE removed;
-        match codegen.jit_execute("main") {
-            Ok(ret) => {
-                let _ = ret; // suppress unused
+    // リンクステップ
+    let output_is_object = cli
+        .output
+        .as_ref()
+        .map(|p| p.extension().map_or(false, |e| e == "o"))
+        .unwrap_or(false);
+
+    if (cli.compile || cli.output.is_some()) && !cli.save_asm && !cli.emit_llvm && !output_is_object {
+        link_objects(cli, &generated_objects, object_files)?;
+    }
+    Ok(())
+}
+
+/// オブジェクトファイルをリンクして実行ファイルを生成する。
+fn link_objects(
+    cli: &Cli,
+    generated_objects: &[PathBuf],
+    extra_objects: &[PathBuf],
+) -> Result<()> {
+    let mut link_args: Vec<String> = generated_objects
+        .iter()
+        .chain(extra_objects.iter())
+        .map(|p| p.to_str().unwrap().to_string())
+        .collect();
+
+    let output_exe = cli.output.clone().unwrap_or_else(|| PathBuf::from("a.out"));
+    log::info!("Linking to {:?}", output_exe);
+
+    link_args.push("-Ltarget/debug".to_string());
+    link_args.push("-ltl_runtime".to_string());
+    link_args.push("-lpthread".to_string());
+    link_args.push("-ldl".to_string());
+    link_args.push("-lm".to_string());
+    link_args.push("-lc++".to_string());
+
+    #[cfg(target_os = "macos")]
+    for fw in &["Accelerate", "Metal", "Foundation", "MetalPerformanceShaders",
+                "Security", "CoreFoundation", "SystemConfiguration"] {
+        link_args.push("-framework".to_string());
+        link_args.push(fw.to_string());
+    }
+
+    let status = Command::new("cc")
+        .args(&link_args)
+        .arg("-o")
+        .arg(&output_exe)
+        .status()
+        .context("Failed to run linker (cc)")?;
+
+    if !status.success() {
+        log::error!("Linking failed");
+        std::process::exit(1);
+    }
+    log::info!("Build successful: {:?}", output_exe);
+    Ok(())
+}
+
+/// JIT インタープリタモード：ソースファイルをその場で実行する。
+fn run_interpret_mode(
+    cli: &Cli,
+    source_files: &[PathBuf],
+    builtins: &tl_lang::compiler::ast::Module,
+) -> Result<()> {
+    tl_runtime::args::init_args(cli.args.clone());
+    tl_runtime::force_link();
+
+    let mut combined_module = tl_lang::compiler::ast::Module::new();
+    let mut combined_source = String::new();
+
+    for file in source_files {
+        match load_module_with_source(file.clone()) {
+            Ok((mod_, source)) => {
+                combined_module.merge(mod_);
+                if combined_source.is_empty() {
+                    combined_source = source;
+                }
             }
             Err(e) => {
-                println!("Execution failed: {}", e);
+                let source = fs::read_to_string(file).unwrap_or_default();
+                print_tl_error_with_source(&e, &source, file.to_str());
                 std::process::exit(1);
             }
         }
+    }
 
-        // Metal GPU 同期 — プロセス終了前にすべての GPU 処理の完了を保証
-        tl_runtime::system::tl_metal_sync();
+    // ビルトインをインジェクト
+    combined_module.merge(builtins.clone());
 
-        // Logic program logic
-        let is_logic_program = !combined_module.relations.is_empty()
-            || !combined_module.rules.is_empty()
-            || !combined_module.queries.is_empty();
+    // 意味解析
+    let mut analyzer = SemanticAnalyzer::new(String::new());
+    if let Err(e) = analyzer.check_module(&mut combined_module) {
+        let file_hint = source_files.first().and_then(|p| p.to_str());
+        let tl_err = if let Some(f) = file_hint { e.with_file(f) } else { e };
+        print_tl_error_with_source(&tl_err, &combined_source, file_hint);
+        std::process::exit(1);
+    }
 
-        if is_logic_program {
-            let tensor_context = registry::get_global_context();
-            run_logic_program(&combined_module, &tensor_context);
+    // 単相化
+    let mut monomorphizer = tl_lang::compiler::monomorphize::Monomorphizer::new();
+    if let Err(e) = monomorphizer.run(&mut combined_module) {
+        print_tl_error_with_source(&e, &combined_source, None);
+        std::process::exit(1);
+    }
+
+    // JIT 実行
+    use tl_runtime::registry;
+    registry::reset_global_context();
+
+    let context = InkwellContext::create();
+    let mut codegen = CodeGenerator::new(&context, "main");
+
+    if let Err(e) = codegen.compile_module(&combined_module, "main") {
+        let tl_err = TlError::Codegen {
+            kind: tl_lang::compiler::error::CodegenErrorKind::Generic(e),
+            span: None,
+        };
+        print_tl_error_with_source(&tl_err, &combined_source, None);
+        std::process::exit(1);
+    }
+
+    if std::env::var("TL_DUMP_IR").is_ok() { codegen.dump_ir(); }
+
+    match codegen.jit_execute("main") {
+        Ok(_) => {}
+        Err(e) => {
+            println!("Execution failed: {}", e);
+            std::process::exit(1);
         }
+    }
+
+    // Metal GPU 同期 — プロセス終了前にすべての GPU 処理の完了を保証
+    tl_runtime::system::tl_metal_sync();
+
+    // ロジックプログラムの実行
+    if !combined_module.relations.is_empty()
+        || !combined_module.rules.is_empty()
+        || !combined_module.queries.is_empty()
+    {
+        let tensor_context = registry::get_global_context();
+        run_logic_program(&combined_module, &tensor_context);
     }
 
     Ok(())
@@ -671,19 +536,20 @@ fn load_module_recursive(
         match load_module_recursive(import_path, visited) {
             Ok((submodule, _)) => {
                 if is_wildcard {
-                    // Merge content into current module
+                    // ワイルドカードインポート: サブモジュールの内容を現在のモジュールにマージ。
+                    // imports はマージしない（再帰ロードで既に処理済みのため）。
                     module.structs.extend(submodule.structs);
                     module.enums.extend(submodule.enums);
                     module.impls.extend(submodule.impls);
+                    module.traits.extend(submodule.traits);
+                    module.trait_impls.extend(submodule.trait_impls);
                     module.functions.extend(submodule.functions);
                     module.tensor_decls.extend(submodule.tensor_decls);
                     module.relations.extend(submodule.relations);
                     module.rules.extend(submodule.rules);
                     module.queries.extend(submodule.queries);
-                    // module.imports.extend(submodule.imports); // Should we merge imports? Recursive loading handles it?
-                    // If submodule had imports, they are already loaded into submodule.submodules.
-                    // We need to merge submodules too!
                     module.submodules.extend(submodule.submodules);
+
                 } else {
                     module.submodules.insert(import_name.clone(), submodule);
                 }
@@ -727,36 +593,11 @@ fn load_builtins() -> Result<tl_lang::compiler::ast::Module> {
         builtin_types::non_generic::net::SOURCE,
     ];
 
-    let mut combined = tl_lang::compiler::ast::Module {
-        structs: vec![],
-        enums: vec![],
-        impls: vec![],
-        traits: vec![],
-        trait_impls: vec![],
-        functions: vec![],
-        tensor_decls: vec![],
-        relations: vec![],
-        rules: vec![],
-        queries: vec![],
-        imports: vec![],
-        submodules: std::collections::HashMap::new(),
-    };
-
+    let mut combined = tl_lang::compiler::ast::Module::new();
     for (i, src) in sources.iter().enumerate() {
         let m = tl_lang::compiler::parser::parse_from_source(src)
             .map_err(|e| anyhow::anyhow!("Failed to parse builtin {}: {:?}", i, e))?;
-
-        combined.structs.extend(m.structs);
-        combined.enums.extend(m.enums);
-        combined.impls.extend(m.impls);
-        combined.traits.extend(m.traits);
-        combined.trait_impls.extend(m.trait_impls);
-        combined.functions.extend(m.functions);
-        combined.tensor_decls.extend(m.tensor_decls);
-        combined.relations.extend(m.relations);
-        combined.rules.extend(m.rules);
-        combined.queries.extend(m.queries);
+        combined.merge(m);
     }
-
     Ok(combined)
 }
