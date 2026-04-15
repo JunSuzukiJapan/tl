@@ -676,19 +676,27 @@ fn compile_tensor_to<'ctx>(
     Ok((res, obj_ty))
 }
 
-fn compile_tensor_add_assign<'ctx>(
+/// `add_assign` / `sub_assign` / `mul_assign` / `div_assign` の共通実装。
+///
+/// - テンソル同士: `tl_tensor_{op}_assign(obj, rhs)` を呼ぶ。
+/// - スカラー:   rhs を f32 に変換して `tl_tensor_{op}_assign_scalar_f32(obj, scalar)` を呼ぶ。
+fn compile_tensor_assign_op<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
+    op: &str, // "add" | "sub" | "mul" | "div"
     obj_val: BasicValueEnum<'ctx>,
-    _obj_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
     if args.len() != 1 {
-        return Err("add_assign requires 1 argument".into());
+        return Err(format!("{}_assign requires 1 argument", op));
     }
     let (rhs_val, rhs_ty) = args[0].clone();
 
-    if matches!(rhs_ty, Type::Tensor(_, _)) {
-        let fn_val = codegen.module.get_function("tl_tensor_add_assign").unwrap();
+    if matches!(rhs_ty, Type::Tensor(_, _) | Type::GradTensor(_, _)) {
+        let ffi_name = format!("tl_tensor_{}_assign", op);
+        let fn_val = codegen
+            .module
+            .get_function(&ffi_name)
+            .ok_or_else(|| format!("{} not found in module", ffi_name))?;
         codegen
             .builder
             .build_call(fn_val, &[obj_val.into(), rhs_val.into()], "assign_res")
@@ -712,20 +720,21 @@ fn compile_tensor_add_assign<'ctx>(
                     "int_to_f32",
                 )
                 .map_err(|e| e.to_string())?,
-            _ => return Err(format!("add_assign scalar: unsupported type {:?}", rhs_ty)),
+            _ => return Err(format!("{}_assign scalar: unsupported type {:?}", op, rhs_ty)),
         };
+        let ffi_name = format!("tl_tensor_{}_assign_scalar_f32", op);
         let fn_val = codegen
             .module
-            .get_function("tl_tensor_add_assign_scalar_f32")
-            .unwrap();
+            .get_function(&ffi_name)
+            .ok_or_else(|| format!("{} not found in module", ffi_name))?;
         codegen
             .builder
             .build_call(fn_val, &[obj_val.into(), scalar_f32.into()], "assign_res")
             .map_err(|e| e.to_string())?;
     } else {
         return Err(format!(
-            "add_assign requires Tensor or scalar argument, got {:?}",
-            rhs_ty
+            "{}_assign requires Tensor or scalar argument, got {:?}",
+            op, rhs_ty
         ));
     }
 
@@ -733,6 +742,15 @@ fn compile_tensor_add_assign<'ctx>(
         codegen.context.i64_type().const_int(0, false).into(),
         Type::Void,
     ))
+}
+
+fn compile_tensor_add_assign<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    obj_val: BasicValueEnum<'ctx>,
+    _obj_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    compile_tensor_assign_op(codegen, "add", obj_val, args)
 }
 
 fn compile_tensor_sub_assign<'ctx>(
@@ -741,175 +759,27 @@ fn compile_tensor_sub_assign<'ctx>(
     _obj_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    if args.len() != 1 {
-        return Err("sub_assign requires 1 argument".into());
-    }
-    let (rhs_val, rhs_ty) = args[0].clone();
-
-    if matches!(rhs_ty, Type::Tensor(_, _)) {
-        let fn_val = codegen.module.get_function("tl_tensor_sub_assign").unwrap();
-        codegen
-            .builder
-            .build_call(fn_val, &[obj_val.into(), rhs_val.into()], "assign_res")
-            .map_err(|e| e.to_string())?;
-    } else if matches!(rhs_ty, Type::F32 | Type::F64 | Type::I64 | Type::I32) {
-        let scalar_f32 = match rhs_ty {
-            Type::F32 => rhs_val.into_float_value(),
-            Type::F64 => codegen
-                .builder
-                .build_float_cast(
-                    rhs_val.into_float_value(),
-                    codegen.context.f32_type(),
-                    "f64_to_f32",
-                )
-                .map_err(|e| e.to_string())?,
-            Type::I64 | Type::I32 => codegen
-                .builder
-                .build_signed_int_to_float(
-                    rhs_val.into_int_value(),
-                    codegen.context.f32_type(),
-                    "int_to_f32",
-                )
-                .map_err(|e| e.to_string())?,
-            _ => return Err(format!("sub_assign scalar: unsupported type {:?}", rhs_ty)),
-        };
-        let fn_val = codegen
-            .module
-            .get_function("tl_tensor_sub_assign_scalar_f32")
-            .unwrap();
-        codegen
-            .builder
-            .build_call(fn_val, &[obj_val.into(), scalar_f32.into()], "assign_res")
-            .map_err(|e| e.to_string())?;
-    } else {
-        return Err(format!(
-            "sub_assign requires Tensor or scalar argument, got {:?}",
-            rhs_ty
-        ));
-    }
-
-    Ok((
-        codegen.context.i64_type().const_int(0, false).into(),
-        Type::Void,
-    ))
+    compile_tensor_assign_op(codegen, "sub", obj_val, args)
 }
+
 fn compile_tensor_mul_assign<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     obj_val: BasicValueEnum<'ctx>,
     _obj_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    if args.len() != 1 {
-        return Err("mul_assign requires 1 argument".into());
-    }
-    let (rhs_val, rhs_ty) = args[0].clone();
-
-    if matches!(rhs_ty, Type::Tensor(_, _)) {
-        let fn_val = codegen.module.get_function("tl_tensor_mul_assign").unwrap();
-        codegen
-            .builder
-            .build_call(fn_val, &[obj_val.into(), rhs_val.into()], "assign_res")
-            .map_err(|e| e.to_string())?;
-    } else if matches!(rhs_ty, Type::F32 | Type::F64 | Type::I64 | Type::I32) {
-        // Convert to f32 if necessary and call scalar version
-        let scalar_f32 = match rhs_ty {
-            Type::F32 => rhs_val.into_float_value(),
-            Type::F64 => codegen
-                .builder
-                .build_float_cast(
-                    rhs_val.into_float_value(),
-                    codegen.context.f32_type(),
-                    "f64_to_f32",
-                )
-                .map_err(|e| e.to_string())?,
-            Type::I64 | Type::I32 => codegen
-                .builder
-                .build_signed_int_to_float(
-                    rhs_val.into_int_value(),
-                    codegen.context.f32_type(),
-                    "int_to_f32",
-                )
-                .map_err(|e| e.to_string())?,
-            _ => return Err(format!("mul_assign scalar: unsupported type {:?}", rhs_ty)),
-        };
-        let fn_val = codegen
-            .module
-            .get_function("tl_tensor_mul_assign_scalar_f32")
-            .unwrap();
-        codegen
-            .builder
-            .build_call(fn_val, &[obj_val.into(), scalar_f32.into()], "assign_res")
-            .map_err(|e| e.to_string())?;
-    } else {
-        return Err(format!(
-            "mul_assign requires Tensor or scalar argument, got {:?}",
-            rhs_ty
-        ));
-    }
-
-    Ok((
-        codegen.context.i64_type().const_int(0, false).into(),
-        Type::Void,
-    ))
+    compile_tensor_assign_op(codegen, "mul", obj_val, args)
 }
+
 fn compile_tensor_div_assign<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     obj_val: BasicValueEnum<'ctx>,
     _obj_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    if args.len() != 1 {
-        return Err("div_assign requires 1 argument".into());
-    }
-    let (rhs_val, rhs_ty) = args[0].clone();
-
-    if matches!(rhs_ty, Type::Tensor(_, _)) {
-        let fn_val = codegen.module.get_function("tl_tensor_div_assign").unwrap();
-        codegen
-            .builder
-            .build_call(fn_val, &[obj_val.into(), rhs_val.into()], "assign_res")
-            .map_err(|e| e.to_string())?;
-    } else if matches!(rhs_ty, Type::F32 | Type::F64 | Type::I64 | Type::I32) {
-        let scalar_f32 = match rhs_ty {
-            Type::F32 => rhs_val.into_float_value(),
-            Type::F64 => codegen
-                .builder
-                .build_float_cast(
-                    rhs_val.into_float_value(),
-                    codegen.context.f32_type(),
-                    "f64_to_f32",
-                )
-                .map_err(|e| e.to_string())?,
-            Type::I64 | Type::I32 => codegen
-                .builder
-                .build_signed_int_to_float(
-                    rhs_val.into_int_value(),
-                    codegen.context.f32_type(),
-                    "int_to_f32",
-                )
-                .map_err(|e| e.to_string())?,
-            _ => return Err(format!("div_assign scalar: unsupported type {:?}", rhs_ty)),
-        };
-        let fn_val = codegen
-            .module
-            .get_function("tl_tensor_div_assign_scalar_f32")
-            .unwrap();
-        codegen
-            .builder
-            .build_call(fn_val, &[obj_val.into(), scalar_f32.into()], "assign_res")
-            .map_err(|e| e.to_string())?;
-    } else {
-        return Err(format!(
-            "div_assign requires Tensor or scalar argument, got {:?}",
-            rhs_ty
-        ));
-    }
-
-    Ok((
-        codegen.context.i64_type().const_int(0, false).into(),
-        Type::Void,
-    ))
+    compile_tensor_assign_op(codegen, "div", obj_val, args)
 }
+
 
 #[allow(deprecated)]
 fn compile_varbuilder_get_static<'ctx>(
