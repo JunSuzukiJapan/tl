@@ -1638,6 +1638,14 @@ impl<'ctx> CodeGenerator<'ctx> {
                 Ok((ok_val, ok_ty))
             }
 
+            // `.await` 式: Phase 4 でステートマシン変換として完全実装する。
+            // Phase 1〜3 では構文解析・型チェックのみ対応し、codegen はエラーを返す。
+            ExprKind::Await(_inner) => {
+                Err(TlError::from(CodegenErrorKind::UnsupportedOperation(
+                    "`.await` is not yet supported (Phase 4: state machine codegen not implemented)".to_string(),
+                )))
+            }
+
             ExprKind::Closure { args, return_type, body, captures } => {
                 // Generate a unique anonymous function name using $ (invalid in TL identifiers)
                 let closure_id = self.next_closure_id();

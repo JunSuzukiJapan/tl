@@ -318,6 +318,7 @@ pub struct FunctionDef {
     pub where_clause: Option<WhereClause>,
     pub is_extern: bool,
     pub is_pub: bool,
+    pub is_async: bool, // async fn
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -517,6 +518,7 @@ pub enum ExprKind {
     BinOp(Box<Expr>, BinOp, Box<Expr>),
     UnOp(UnOp, Box<Expr>),
     Try(Box<Expr>), // expr?
+    Await(Box<Expr>), // expr.await
 
     // Calls
     FnCall(String, Vec<Expr>),
