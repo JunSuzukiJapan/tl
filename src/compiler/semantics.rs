@@ -651,7 +651,7 @@ impl SemanticAnalyzer {
         }
 
         // Last segment is variant name, rest is enum path
-        let variant_name = segments.last().unwrap();
+        let variant_name = segments.last().expect("segments.len() >= 2 checked above");
         let enum_segments = &segments[..segments.len() - 1];
 
         let resolved_enum_name = self.resolve_symbol_path(enum_segments);
@@ -781,7 +781,7 @@ impl SemanticAnalyzer {
                     return Type::Enum(first, enum_args);
                 }
                 // Not an enum variant, use last segment as struct name
-                path.last().unwrap().clone()
+                path.last().expect("Type::Path has non-empty path").clone()
             };
 
             // Recursively resolve generic args
@@ -954,7 +954,7 @@ impl SemanticAnalyzer {
                                 );
 
                             self.declare_variable(var_name.clone(), concrete_ty, true)
-                                .unwrap();
+                                .expect("declare_variable in pattern binding should not fail");
                         }
                         Ok(Some(variant_idx))
                     }
@@ -1311,14 +1311,14 @@ impl SemanticAnalyzer {
                         strongconnect(
                             w, index, indices, lowlink, stack, on_stack, edges, scc_id, scc_count,
                         );
-                        let low_v = *lowlink.get(v).unwrap();
-                        let low_w = *lowlink.get(w).unwrap();
+                        let low_v = *lowlink.get(v).expect("v inserted at strongconnect entry");
+                        let low_w = *lowlink.get(w).expect("w inserted at recursive call");
                         if low_w < low_v {
                             lowlink.insert(v.to_string(), low_w);
                         }
                     } else if on_stack.contains(w) {
-                        let low_v = *lowlink.get(v).unwrap();
-                        let idx_w = *indices.get(w).unwrap();
+                        let low_v = *lowlink.get(v).expect("v inserted at strongconnect entry");
+                        let idx_w = *indices.get(w).expect("w inserted before on_stack check");
                         if idx_w < low_v {
                             lowlink.insert(v.to_string(), idx_w);
                         }
@@ -1326,8 +1326,8 @@ impl SemanticAnalyzer {
                 }
             }
 
-            let low_v = *lowlink.get(v).unwrap();
-            let idx_v = *indices.get(v).unwrap();
+            let low_v = *lowlink.get(v).expect("v inserted at strongconnect entry");
+            let idx_v = *indices.get(v).expect("v inserted at strongconnect entry");
             if low_v == idx_v {
                 loop {
                     if let Some(w) = stack.pop() {
@@ -1839,7 +1839,7 @@ impl SemanticAnalyzer {
         // Set expected return type for this function (resolve first)
         let resolved_return_type = if let Type::Struct(ref n, _) = func.return_type {
             if n == "Self" && self_type.is_some() {
-                self_type.clone().unwrap()
+                self_type.clone().expect("self_type is Some, checked in if condition")
             } else {
                 self.resolve_user_type(&func.return_type)
             }
@@ -2302,7 +2302,7 @@ impl SemanticAnalyzer {
                                 if let Some(simple_name) = rel_segments.last() {
                                     self.scopes
                                         .last_mut()
-                                        .unwrap()
+                                        .expect("scopes always non-empty")
                                         .add_alias(simple_name.to_string(), rel_full_name);
                                 }
                             }
@@ -2314,7 +2314,7 @@ impl SemanticAnalyzer {
                             let alias_name = item.clone();
                             self.scopes
                                 .last_mut()
-                                .unwrap()
+                                .expect("scopes always non-empty")
                                 .add_alias(alias_name, full_name);
                         }
                     }
@@ -2330,7 +2330,7 @@ impl SemanticAnalyzer {
                     };
                     self.scopes
                         .last_mut()
-                        .unwrap()
+                        .expect("scopes always non-empty")
                         .add_alias(alias_name, path.join("::"));
                 }
                 Ok(())
@@ -2501,8 +2501,7 @@ impl SemanticAnalyzer {
                         name: "Param::register".into(), expected: 1, found: args.len(),
                     }, None));
                 }
-                let t = self.check_expr(&mut args[0]).unwrap();
-                Some(Ok(t))
+                Some(self.check_expr(&mut args[0]))
             }
             "update_all" | "register_modules" => {
                 let n = if method == "update_all" { 1 } else { 1 };
@@ -2537,8 +2536,7 @@ impl SemanticAnalyzer {
                     }
                 }
                 if !is_valid_method_ref { let _ = self.check_expr(&mut args[0]); }
-                let arg1_type = self.check_expr(&mut args[1]).unwrap();
-                Some(Ok(arg1_type))
+                Some(self.check_expr(&mut args[1]))
             }
             "set_device" => {
                 if args.len() != 1 {
@@ -2866,7 +2864,7 @@ impl SemanticAnalyzer {
                                 if m.return_type == Type::Void {
                                     // set は Void を返すため、引数の最後の型を要素型として使う
                                     if m.args.len() >= 2 {
-                                        Box::new(m.args.last().unwrap().1.clone())
+                                        Box::new(m.args.last().expect("args.len() >= 2 checked above").1.clone())
                                     } else {
                                         return self.err(SemanticError::Generic(format!(
                                               "Struct {} does not support index assignment (no element type)", name
@@ -3337,11 +3335,11 @@ impl SemanticAnalyzer {
                         let first = self.resolve_symbol_name(&path[0]);
                         if self.enums.contains_key(&first) {
                             // This is an enum variant init, convert to EnumInit
-                            let variant_name = path.last().unwrap().clone();
+                            let variant_name = path.last().expect("path.len() >= 2 checked above").clone();
                             let mut resolved_args: Vec<Type> =
                                 args.iter().map(|a| self.resolve_user_type(a)).collect();
 
-                            let enum_def = self.enums.get(&first).unwrap().clone();
+                            let enum_def = self.enums.get(&first).expect("enum existence checked above").clone();
                             if resolved_args.is_empty() && !enum_def.generics.is_empty() {
                                 for _ in &enum_def.generics {
                                     resolved_args.push(Type::Undefined(self.get_next_undefined_id()));
@@ -3373,10 +3371,10 @@ impl SemanticAnalyzer {
                     // Need variant name from original Path
                     if let Type::Path(path, _) = type_node {
                         if path.len() >= 2 {
-                            let variant_name = path.last().unwrap().clone();
-                            
+                            let variant_name = path.last().expect("path.len() >= 2 checked above").clone();
+
                             let mut final_generics = generics.clone();
-                            let enum_def = self.enums.get(enum_name).unwrap().clone();
+                            let enum_def = self.enums.get(enum_name).expect("enum existence guaranteed by Type::Enum").clone();
                             if final_generics.is_empty() && !enum_def.generics.is_empty() {
                                 for _ in &enum_def.generics {
                                     final_generics.push(Type::Undefined(self.get_next_undefined_id()));
@@ -3780,7 +3778,7 @@ impl SemanticAnalyzer {
                         Some(subject_expr.span.clone()),
                     );
                 }
-                let enum_def = enum_def.unwrap().clone();
+                let enum_def = enum_def.expect("enum_def is Some, is_none() checked above").clone();
 
                 let mut return_type = Option::<Type>::None;
                 let mut seen_variants = HashSet::new();
@@ -3877,7 +3875,7 @@ impl SemanticAnalyzer {
                         Some(subject_expr.span.clone()),
                     );
                 }
-                let enum_def = enum_def.unwrap().clone();
+                let enum_def = enum_def.expect("enum_def is Some, is_none() checked above").clone();
 
                 // Then block with bindings
                 self.enter_scope();

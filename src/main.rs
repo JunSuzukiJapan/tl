@@ -171,7 +171,10 @@ fn run_compile_mode(
 
         // コード生成
         let context = InkwellContext::create();
-        let module_name = file.file_stem().unwrap().to_str().unwrap();
+        let module_name = file.file_stem()
+            .expect("source file has a stem")
+            .to_str()
+            .expect("source file stem is valid UTF-8");
         let mut codegen = CodeGenerator::new(&context, module_name);
 
         if let Err(e) = codegen.compile_module(&ast, "main") {
@@ -228,7 +231,7 @@ fn link_objects(
     let mut link_args: Vec<String> = generated_objects
         .iter()
         .chain(extra_objects.iter())
-        .map(|p| p.to_str().unwrap().to_string())
+        .map(|p| p.to_str().expect("object path is valid UTF-8").to_string())
         .collect();
 
     let output_exe = cli.output.clone().unwrap_or_else(|| PathBuf::from("a.out"));
