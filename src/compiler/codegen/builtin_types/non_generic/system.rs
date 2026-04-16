@@ -1,3 +1,4 @@
+use crate::compiler::error::TlError;
 use crate::compiler::codegen::type_manager::{CodeGenType, TypeManager};
 use crate::compiler::codegen::CodeGenerator;
 use crate::compiler::ast::Type;
@@ -44,7 +45,7 @@ fn compile_free_memory<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
     _target: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 { return Err("System::free_memory requires 1 argument (ptr)".into()); }
     
     let fn_val = codegen.module.get_function("tl_mem_free").ok_or("tl_mem_free not found")?;
@@ -66,7 +67,7 @@ fn compile_free_hashmap<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
     _target: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 { return Err("System::free_hashmap requires 1 argument (ptr)".into()); }
     
     let fn_val = codegen.module.get_function("tl_hashmap_free").ok_or("tl_hashmap_free not found")?;
@@ -88,7 +89,7 @@ fn compile_system_time<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
     _target: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if !args.is_empty() { return Err("System::time takes no arguments".into()); }
     let fn_val = codegen.module.get_function("tl_system_time").ok_or("tl_system_time not found")?;
     let call = codegen.builder.build_call(fn_val, &[], "sys_time").map_err(|e| e.to_string())?;
@@ -103,7 +104,7 @@ fn compile_system_sleep<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
     _target: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 { return Err("System::sleep requires 1 argument (seconds)".into()); }
     let fn_val = codegen.module.get_function("tl_system_sleep").ok_or("tl_system_sleep not found")?;
     // Arg should be f32
@@ -120,7 +121,7 @@ fn compile_system_exit<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
     _target: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 { return Err("System::exit requires 1 argument (code)".into()); }
     let fn_val = codegen.module.get_function("tl_system_exit").unwrap_or_else(|| {
          let void_ty = codegen.context.void_type();
@@ -150,7 +151,7 @@ fn compile_system_platform<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
     _target: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if !args.is_empty() { return Err("System::platform takes no arguments".into()); }
     let fn_val = codegen.module.get_function("tl_system_platform").ok_or("tl_system_platform not found")?;
     let call = codegen.builder.build_call(fn_val, &[], "sys_platform").map_err(|e| e.to_string())?;
@@ -166,7 +167,7 @@ fn compile_system_command<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
     _target: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 { return Err("System::command requires 1 argument (cmd)".into()); }
     let fn_val = codegen.module.get_function("tl_system_command").ok_or("tl_system_command not found")?;
     
@@ -175,7 +176,7 @@ fn compile_system_command<'ctx>(
         let struct_ty = Type::String("String".to_string());
         codegen.load_struct_i64_field(*cmd_val, &struct_ty, "ptr")?.into_int_value()
     } else {
-        return Err(format!("Expected String argument, got {:?}", cmd_ty));
+        return Err(format!("Expected String argument, got {:?}", cmd_ty).into());
     };
     let cmd_ptr = codegen.builder.build_int_to_ptr(
         cmd_ptr_val,
@@ -196,12 +197,12 @@ fn compile_simple_i64_call<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     fn_name: &str,
     debug_name: &str,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let fn_val = codegen.module.get_function(fn_name).ok_or_else(|| format!("{} not found", fn_name))?;
     let call = codegen.builder.build_call(fn_val, &[], debug_name).map_err(|e| e.to_string())?;
     let res = match call.try_as_basic_value() {
         inkwell::values::ValueKind::Basic(v) => v,
-        _ => return Err(format!("Invalid return from {}", debug_name)),
+        _ => return Err(format!("Invalid return from {}", debug_name).into()),
     };
     Ok((res, Type::I64))
 }
@@ -211,12 +212,12 @@ fn compile_simple_f64_call<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     fn_name: &str,
     debug_name: &str,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let fn_val = codegen.module.get_function(fn_name).ok_or_else(|| format!("{} not found", fn_name))?;
     let call = codegen.builder.build_call(fn_val, &[], debug_name).map_err(|e| e.to_string())?;
     let res = match call.try_as_basic_value() {
         inkwell::values::ValueKind::Basic(v) => v,
-        _ => return Err(format!("Invalid return from {}", debug_name)),
+        _ => return Err(format!("Invalid return from {}", debug_name).into()),
     };
     Ok((res, Type::F64))
 }
@@ -230,7 +231,7 @@ macro_rules! simple_sys_i64 {
             codegen: &mut CodeGenerator<'ctx>,
             args: Vec<(BasicValueEnum<'ctx>, Type)>,
             _target: Option<&Type>,
-        ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+        ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
             if !args.is_empty() { return Err(concat!("System::", $method, " takes no arguments").into()); }
             compile_simple_i64_call(codegen, $ffi, $method)
         }
@@ -242,7 +243,7 @@ macro_rules! simple_sys_f64 {
             codegen: &mut CodeGenerator<'ctx>,
             args: Vec<(BasicValueEnum<'ctx>, Type)>,
             _target: Option<&Type>,
-        ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+        ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
             if !args.is_empty() { return Err(concat!("System::", $method, " takes no arguments").into()); }
             compile_simple_f64_call(codegen, $ffi, $method)
         }
@@ -263,7 +264,7 @@ fn compile_metal_sync<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
     _target: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if !args.is_empty() { return Err("System::metal_sync takes no arguments".into()); }
     let fn_val = codegen.module.get_function("tl_metal_sync").ok_or("tl_metal_sync not found")?;
     codegen.builder.build_call(fn_val, &[], "metal_sync").map_err(|e| e.to_string())?;
@@ -276,7 +277,7 @@ fn compile_mem_report<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
     _target: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if !args.is_empty() { return Err("System::mem_report takes no arguments".into()); }
     let fn_val = codegen.module.get_function("tl_system_mem_report").ok_or("tl_system_mem_report not found")?;
     codegen.builder.build_call(fn_val, &[], "mem_report").map_err(|e| e.to_string())?;

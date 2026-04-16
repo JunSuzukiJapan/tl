@@ -1,3 +1,4 @@
+use crate::compiler::error::TlError;
 use crate::compiler::codegen::CodeGenerator;
 use crate::compiler::ast::Type;
 use inkwell::values::BasicValueEnum;
@@ -8,7 +9,7 @@ pub fn compile_backward<'ctx>(
     obj: BasicValueEnum<'ctx>,
     _obj_ty: Type,
     _args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let fn_val = codegen
         .module
         .get_function("tl_tensor_backward")
@@ -29,7 +30,7 @@ pub fn compile_enable_grad<'ctx>(
     obj: BasicValueEnum<'ctx>,
     obj_ty: Type,
     _args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let fn_val = codegen
         .module
         .get_function("tl_tensor_enable_grad")

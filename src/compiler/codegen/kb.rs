@@ -1,3 +1,4 @@
+use crate::compiler::error::TlError;
 use crate::compiler::ast::*;
 use crate::compiler::codegen::CodeGenerator;
 use std::collections::HashSet;
@@ -7,7 +8,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         &mut self,
         module: &Module,
         module_name: &str,
-    ) -> Result<Option<inkwell::values::FunctionValue<'ctx>>, String> {
+    ) -> Result<Option<inkwell::values::FunctionValue<'ctx>>, TlError> {
         let fn_name = if module_name.is_empty() || module_name == "main" {
             "_tl_init_kb".to_string()
         } else {
@@ -81,7 +82,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
     }
 
-    fn compile_fact(&self, rule: &Rule) -> Result<(), String> {
+    fn compile_fact(&self, rule: &Rule) -> Result<(), TlError> {
         let head = &rule.head;
         let relation_name = &head.predicate;
 
@@ -105,7 +106,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         Ok(())
     }
 
-    fn emit_fact_arg(&self, expr_kind: &ExprKind) -> Result<(), String> {
+    fn emit_fact_arg(&self, expr_kind: &ExprKind) -> Result<(), TlError> {
         match expr_kind {
             ExprKind::Symbol(name) | ExprKind::Variable(name) => {
                 let add_entity_fn = self.module.get_function("tl_kb_add_entity").unwrap();
@@ -146,12 +147,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let s_ptr = self.builder.build_global_string_ptr(val, "fact_str").map_err(|e| e.to_string())?;
                 self.builder.build_call(add_arg_fn, &[s_ptr.as_pointer_value().into()], "").map_err(|e| e.to_string())?;
             }
-            _ => return Err(format!("Unsupported expression in fact arg: {:?}", expr_kind)),
+            _ => return Err(format!("Unsupported expression in fact arg: {:?}", expr_kind).into()),
         }
         Ok(())
     }
 
-    fn compile_rule(&self, rule: &Rule, known_entities: &HashSet<String>) -> Result<(), String> {
+    fn compile_rule(&self, rule: &Rule, known_entities: &HashSet<String>) -> Result<(), TlError> {
         let mut local_vars: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
         let mut next_var_idx = 0;
 
@@ -219,7 +220,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         next_var_idx: &mut i64,
         known_entities: &HashSet<String>,
         is_head: bool,
-    ) -> Result<(), String> {
+    ) -> Result<(), TlError> {
         let suffix = if is_head { "head_arg" } else { "body_arg" };
 
         match expr_kind {
@@ -281,7 +282,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let v = self.context.i64_type().const_int(idx as u64, false);
                 self.builder.build_call(fn_val, &[v.into()], "").map_err(|e| e.to_string())?;
             }
-            _ => return Err(format!("Unsupported expression in rule arg: {:?}", expr_kind)),
+            _ => return Err(format!("Unsupported expression in rule arg: {:?}", expr_kind).into()),
         }
 
         Ok(())
@@ -339,7 +340,7 @@ fn lower_expr_to_simple(
     expr: &Expr,
     tmp_idx: &mut i64,
     out: &mut Vec<LogicLiteral>,
-) -> Result<Expr, String> {
+) -> Result<Expr, TlError> {
     if is_simple_logic_arg(expr) {
         return Ok(expr.clone());
     }
@@ -355,7 +356,7 @@ fn lower_expr_to_simple(
                 BinOp::Mul => "mul",
                 BinOp::Div => "div",
                 BinOp::Mod => "mod",
-                _ => return Err(format!("Unsupported operator in logic expression: {:?}", op)),
+                _ => return Err(format!("Unsupported operator in logic expression: {:?}", op).into()),
             };
             out.push(LogicLiteral::Pos(Atom {
                 predicate: pred.to_string(),
@@ -375,7 +376,7 @@ fn lower_expr_to_simple(
         _ => Err(format!(
             "Unsupported expression in logic arithmetic: {:?}",
             expr.inner
-        )),
+        ).into()),
     }
 }
 
@@ -383,7 +384,7 @@ fn lower_builtin_literal(
     atom: &Atom,
     negated: bool,
     tmp_idx: &mut i64,
-) -> Result<Vec<LogicLiteral>, String> {
+) -> Result<Vec<LogicLiteral>, TlError> {
     let mut out = Vec::new();
     if matches!(
         atom.predicate.as_str(),
@@ -393,7 +394,7 @@ fn lower_builtin_literal(
             return Err(format!(
                 "Builtin predicate {} requires three arguments",
                 atom.predicate
-            ));
+            ).into());
         }
         out.push(if negated {
             LogicLiteral::Neg(atom.clone())
@@ -405,7 +406,7 @@ fn lower_builtin_literal(
 
     if atom.predicate == "neg" {
         if atom.args.len() != 2 {
-            return Err("Builtin predicate neg requires two arguments".to_string());
+            return Err("Builtin predicate neg requires two arguments".to_string().into());
         }
         out.push(if negated {
             LogicLiteral::Neg(atom.clone())
@@ -417,10 +418,10 @@ fn lower_builtin_literal(
 
     if atom.predicate == "is" {
         if atom.args.len() != 2 {
-            return Err("is/2 requires two arguments".to_string());
+            return Err("is/2 requires two arguments".to_string().into());
         }
         if !is_simple_logic_arg(&atom.args[0]) {
-            return Err("Left side of is/2 must be a simple term".to_string());
+            return Err("Left side of is/2 must be a simple term".to_string().into());
         }
         let right = lower_expr_to_simple(&atom.args[1], tmp_idx, &mut out)?;
         out.push(if negated {
@@ -441,7 +442,7 @@ fn lower_builtin_literal(
         return Err(format!(
             "Builtin predicate {} requires two arguments",
             atom.predicate
-        ));
+        ).into());
     }
     let left = lower_expr_to_simple(&atom.args[0], tmp_idx, &mut out)?;
     let right = lower_expr_to_simple(&atom.args[1], tmp_idx, &mut out)?;
@@ -462,7 +463,7 @@ fn lower_builtin_literal(
 fn lower_rule_body(
     body: &[LogicLiteral],
     tmp_idx: &mut i64,
-) -> Result<Vec<LogicLiteral>, String> {
+) -> Result<Vec<LogicLiteral>, TlError> {
     let mut out = Vec::new();
     for lit in body {
         match lit {

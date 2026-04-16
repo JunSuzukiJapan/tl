@@ -1,3 +1,4 @@
+use crate::compiler::error::TlError;
 use crate::compiler::codegen::CodeGenerator;
 use crate::compiler::ast::Type;
 use inkwell::values::{BasicValueEnum, ValueKind};
@@ -9,7 +10,7 @@ fn compile_f32_unary<'ctx>(
     c: &mut CodeGenerator<'ctx>,
     obj: BasicValueEnum<'ctx>,
     method: &str,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let fn_name = format!("tl_f32_{}", method);
     let fn_val = c.module.get_function(&fn_name)
         .ok_or(format!("{} not found", fn_name))?;
@@ -17,7 +18,7 @@ fn compile_f32_unary<'ctx>(
         .map_err(|e| e.to_string())?;
     let res = match call.try_as_basic_value() {
         ValueKind::Basic(v) => v,
-        _ => return Err(format!("Invalid return from {}", fn_name)),
+        _ => return Err(format!("Invalid return from {}", fn_name).into()),
     };
     Ok((res, Type::F32))
 }
@@ -28,8 +29,8 @@ fn compile_f32_binary<'ctx>(
     obj: BasicValueEnum<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
     method: &str,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    if args.len() != 1 { return Err(format!("f32.{} requires 1 argument", method)); }
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
+    if args.len() != 1 { return Err(format!("f32.{} requires 1 argument", method).into()); }
     let fn_name = format!("tl_f32_{}", method);
     let fn_val = c.module.get_function(&fn_name)
         .ok_or(format!("{} not found", fn_name))?;
@@ -37,7 +38,7 @@ fn compile_f32_binary<'ctx>(
         .map_err(|e| e.to_string())?;
     let res = match call.try_as_basic_value() {
         ValueKind::Basic(v) => v,
-        _ => return Err(format!("Invalid return from {}", fn_name)),
+        _ => return Err(format!("Invalid return from {}", fn_name).into()),
     };
     Ok((res, Type::F32))
 }
@@ -45,7 +46,7 @@ fn compile_f32_binary<'ctx>(
 // F32 unary methods
 macro_rules! f32_unary {
     ($name:ident, $method:literal) => {
-        pub fn $name<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+        pub fn $name<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
             compile_f32_unary(c, o, $method)
         }
     };
@@ -87,7 +88,7 @@ f32_unary!(compile_f32_trunc, "trunc");
 // F32 binary methods
 macro_rules! f32_binary {
     ($name:ident, $method:literal) => {
-        pub fn $name<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+        pub fn $name<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
             compile_f32_binary(c, o, a, $method)
         }
     };
@@ -106,7 +107,7 @@ fn compile_f64_unary<'ctx>(
     c: &mut CodeGenerator<'ctx>,
     obj: BasicValueEnum<'ctx>,
     method: &str,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let fn_name = format!("tl_f64_{}", method);
     let fn_val = c.module.get_function(&fn_name)
         .ok_or(format!("{} not found", fn_name))?;
@@ -114,7 +115,7 @@ fn compile_f64_unary<'ctx>(
         .map_err(|e| e.to_string())?;
     let res = match call.try_as_basic_value() {
         ValueKind::Basic(v) => v,
-        _ => return Err(format!("Invalid return from {}", fn_name)),
+        _ => return Err(format!("Invalid return from {}", fn_name).into()),
     };
     Ok((res, Type::F64))
 }
@@ -124,8 +125,8 @@ fn compile_f64_binary<'ctx>(
     obj: BasicValueEnum<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
     method: &str,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    if args.len() != 1 { return Err(format!("f64.{} requires 1 argument", method)); }
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
+    if args.len() != 1 { return Err(format!("f64.{} requires 1 argument", method).into()); }
     let fn_name = format!("tl_f64_{}", method);
     let fn_val = c.module.get_function(&fn_name)
         .ok_or(format!("{} not found", fn_name))?;
@@ -133,14 +134,14 @@ fn compile_f64_binary<'ctx>(
         .map_err(|e| e.to_string())?;
     let res = match call.try_as_basic_value() {
         ValueKind::Basic(v) => v,
-        _ => return Err(format!("Invalid return from {}", fn_name)),
+        _ => return Err(format!("Invalid return from {}", fn_name).into()),
     };
     Ok((res, Type::F64))
 }
 
 macro_rules! f64_unary {
     ($name:ident, $method:literal) => {
-        pub fn $name<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+        pub fn $name<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
             compile_f64_unary(c, o, $method)
         }
     };
@@ -181,7 +182,7 @@ f64_unary!(compile_f64_trunc, "trunc");
 
 macro_rules! f64_binary {
     ($name:ident, $method:literal) => {
-        pub fn $name<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+        pub fn $name<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
             compile_f64_binary(c, o, a, $method)
         }
     };
@@ -200,7 +201,7 @@ fn compile_i64_unary<'ctx>(
     c: &mut CodeGenerator<'ctx>,
     obj: BasicValueEnum<'ctx>,
     method: &str,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let fn_name = format!("tl_i64_{}", method);
     let fn_val = c.module.get_function(&fn_name)
         .ok_or(format!("{} not found", fn_name))?;
@@ -208,7 +209,7 @@ fn compile_i64_unary<'ctx>(
         .map_err(|e| e.to_string())?;
     let res = match call.try_as_basic_value() {
         ValueKind::Basic(v) => v,
-        _ => return Err(format!("Invalid return from {}", fn_name)),
+        _ => return Err(format!("Invalid return from {}", fn_name).into()),
     };
     Ok((res, Type::I64))
 }
@@ -218,8 +219,8 @@ fn compile_i64_binary<'ctx>(
     obj: BasicValueEnum<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
     method: &str,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    if args.len() != 1 { return Err(format!("i64.{} requires 1 argument", method)); }
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
+    if args.len() != 1 { return Err(format!("i64.{} requires 1 argument", method).into()); }
     let fn_name = format!("tl_i64_{}", method);
     let fn_val = c.module.get_function(&fn_name)
         .ok_or(format!("{} not found", fn_name))?;
@@ -227,7 +228,7 @@ fn compile_i64_binary<'ctx>(
         .map_err(|e| e.to_string())?;
     let res = match call.try_as_basic_value() {
         ValueKind::Basic(v) => v,
-        _ => return Err(format!("Invalid return from {}", fn_name)),
+        _ => return Err(format!("Invalid return from {}", fn_name).into()),
     };
     Ok((res, Type::I64))
 }
@@ -236,7 +237,7 @@ fn compile_i64_bool_unary<'ctx>(
     c: &mut CodeGenerator<'ctx>,
     obj: BasicValueEnum<'ctx>,
     method: &str,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let fn_name = format!("tl_i64_{}", method);
     let fn_val = c.module.get_function(&fn_name)
         .ok_or(format!("{} not found", fn_name))?;
@@ -244,41 +245,41 @@ fn compile_i64_bool_unary<'ctx>(
         .map_err(|e| e.to_string())?;
     let res = match call.try_as_basic_value() {
         ValueKind::Basic(v) => v,
-        _ => return Err(format!("Invalid return from {}", fn_name)),
+        _ => return Err(format!("Invalid return from {}", fn_name).into()),
     };
     Ok((res, Type::Bool))
 }
 
-pub fn compile_i64_abs<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> { compile_i64_unary(c, o, "abs") }
-pub fn compile_i64_signum<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> { compile_i64_unary(c, o, "signum") }
-pub fn compile_i64_is_positive<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> { compile_i64_bool_unary(c, o, "is_positive") }
-pub fn compile_i64_is_negative<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> { compile_i64_bool_unary(c, o, "is_negative") }
-pub fn compile_i64_div_euclid<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> { compile_i64_binary(c, o, a, "div_euclid") }
-pub fn compile_i64_rem_euclid<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> { compile_i64_binary(c, o, a, "rem_euclid") }
-pub fn compile_i64_pow<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> { compile_i64_binary(c, o, a, "pow") }
+pub fn compile_i64_abs<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> { compile_i64_unary(c, o, "abs") }
+pub fn compile_i64_signum<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> { compile_i64_unary(c, o, "signum") }
+pub fn compile_i64_is_positive<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> { compile_i64_bool_unary(c, o, "is_positive") }
+pub fn compile_i64_is_negative<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> { compile_i64_bool_unary(c, o, "is_negative") }
+pub fn compile_i64_div_euclid<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> { compile_i64_binary(c, o, a, "div_euclid") }
+pub fn compile_i64_rem_euclid<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> { compile_i64_binary(c, o, a, "rem_euclid") }
+pub fn compile_i64_pow<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> { compile_i64_binary(c, o, a, "pow") }
 
 // get_offset, sumall — no-op / identity (return self)
-pub fn compile_i64_get_offset<'ctx>(_c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> { Ok((o, Type::I64)) }
-pub fn compile_i64_sumall<'ctx>(_c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> { Ok((o, Type::I64)) }
+pub fn compile_i64_get_offset<'ctx>(_c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> { Ok((o, Type::I64)) }
+pub fn compile_i64_sumall<'ctx>(_c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> { Ok((o, Type::I64)) }
 
 // ========== 型変換メソッド (Compiler-intrinsic) ==========
 
 /// i64.to_f64() -> f64
-pub fn compile_i64_to_f64<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+pub fn compile_i64_to_f64<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let res = c.builder.build_signed_int_to_float(o.into_int_value(), c.context.f64_type(), "i64_to_f64")
         .map_err(|e| e.to_string())?;
     Ok((res.into(), Type::F64))
 }
 
 /// i64.to_f32() -> f32
-pub fn compile_i64_to_f32<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+pub fn compile_i64_to_f32<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let res = c.builder.build_signed_int_to_float(o.into_int_value(), c.context.f32_type(), "i64_to_f32")
         .map_err(|e| e.to_string())?;
     Ok((res.into(), Type::F32))
 }
 
 /// i64.to_string() -> String (via FFI)
-pub fn compile_i64_to_string<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+pub fn compile_i64_to_string<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let fn_val = c.module.get_function("tl_string_from_int")
         .ok_or("tl_string_from_int not found")?;
     let call = c.builder.build_call(fn_val, &[o.into()], "i64_to_string")
@@ -291,7 +292,7 @@ pub fn compile_i64_to_string<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnu
 }
 
 /// i64.min(other: i64) -> i64
-pub fn compile_i64_min<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+pub fn compile_i64_min<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if a.len() != 1 { return Err("i64.min requires 1 argument".into()); }
     let lhs = o.into_int_value();
     let rhs = a[0].0.into_int_value();
@@ -303,7 +304,7 @@ pub fn compile_i64_min<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx
 }
 
 /// i64.max(other: i64) -> i64
-pub fn compile_i64_max<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+pub fn compile_i64_max<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if a.len() != 1 { return Err("i64.max requires 1 argument".into()); }
     let lhs = o.into_int_value();
     let rhs = a[0].0.into_int_value();
@@ -315,7 +316,7 @@ pub fn compile_i64_max<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx
 }
 
 /// i64.clamp(min: i64, max: i64) -> i64
-pub fn compile_i64_clamp<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+pub fn compile_i64_clamp<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if a.len() != 2 { return Err("i64.clamp requires 2 arguments".into()); }
     let val = o.into_int_value();
     let lo = a[0].0.into_int_value();
@@ -333,21 +334,21 @@ pub fn compile_i64_clamp<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'c
 }
 
 /// f32.to_f64() -> f64
-pub fn compile_f32_to_f64<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+pub fn compile_f32_to_f64<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let res = c.builder.build_float_ext(o.into_float_value(), c.context.f64_type(), "f32_to_f64")
         .map_err(|e| e.to_string())?;
     Ok((res.into(), Type::F64))
 }
 
 /// f32.to_i64() -> i64
-pub fn compile_f32_to_i64<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+pub fn compile_f32_to_i64<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let res = c.builder.build_float_to_signed_int(o.into_float_value(), c.context.i64_type(), "f32_to_i64")
         .map_err(|e| e.to_string())?;
     Ok((res.into(), Type::I64))
 }
 
 /// f32.to_string() -> String (via FFI)
-pub fn compile_f32_to_string<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+pub fn compile_f32_to_string<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let fn_val = c.module.get_function("tl_f32_to_string")
         .ok_or("tl_f32_to_string not found")?;
     let call = c.builder.build_call(fn_val, &[o.into()], "f32_to_string")
@@ -360,7 +361,7 @@ pub fn compile_f32_to_string<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnu
 }
 
 /// f32.min(other: f32) -> f32
-pub fn compile_f32_min<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+pub fn compile_f32_min<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if a.len() != 1 { return Err("f32.min requires 1 argument".into()); }
     let lhs = o.into_float_value();
     let rhs = a[0].0.into_float_value();
@@ -372,7 +373,7 @@ pub fn compile_f32_min<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx
 }
 
 /// f32.max(other: f32) -> f32
-pub fn compile_f32_max<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+pub fn compile_f32_max<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if a.len() != 1 { return Err("f32.max requires 1 argument".into()); }
     let lhs = o.into_float_value();
     let rhs = a[0].0.into_float_value();
@@ -384,7 +385,7 @@ pub fn compile_f32_max<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx
 }
 
 /// f32.clamp(min: f32, max: f32) -> f32
-pub fn compile_f32_clamp<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+pub fn compile_f32_clamp<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if a.len() != 2 { return Err("f32.clamp requires 2 arguments".into()); }
     let val = o.into_float_value();
     let lo = a[0].0.into_float_value();
@@ -401,21 +402,21 @@ pub fn compile_f32_clamp<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'c
 }
 
 /// f64.to_f32() -> f32
-pub fn compile_f64_to_f32<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+pub fn compile_f64_to_f32<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let res = c.builder.build_float_trunc(o.into_float_value(), c.context.f32_type(), "f64_to_f32")
         .map_err(|e| e.to_string())?;
     Ok((res.into(), Type::F32))
 }
 
 /// f64.to_i64() -> i64
-pub fn compile_f64_to_i64<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+pub fn compile_f64_to_i64<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let res = c.builder.build_float_to_signed_int(o.into_float_value(), c.context.i64_type(), "f64_to_i64")
         .map_err(|e| e.to_string())?;
     Ok((res.into(), Type::I64))
 }
 
 /// f64.to_string() -> String (via FFI)
-pub fn compile_f64_to_string<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+pub fn compile_f64_to_string<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let fn_val = c.module.get_function("tl_f64_to_string")
         .ok_or("tl_f64_to_string not found")?;
     let call = c.builder.build_call(fn_val, &[o.into()], "f64_to_string")
@@ -428,7 +429,7 @@ pub fn compile_f64_to_string<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnu
 }
 
 /// f64.min(other: f64) -> f64
-pub fn compile_f64_min<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+pub fn compile_f64_min<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if a.len() != 1 { return Err("f64.min requires 1 argument".into()); }
     let lhs = o.into_float_value();
     let rhs = a[0].0.into_float_value();
@@ -440,7 +441,7 @@ pub fn compile_f64_min<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx
 }
 
 /// f64.max(other: f64) -> f64
-pub fn compile_f64_max<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+pub fn compile_f64_max<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if a.len() != 1 { return Err("f64.max requires 1 argument".into()); }
     let lhs = o.into_float_value();
     let rhs = a[0].0.into_float_value();
@@ -452,7 +453,7 @@ pub fn compile_f64_max<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx
 }
 
 /// f64.clamp(min: f64, max: f64) -> f64
-pub fn compile_f64_clamp<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+pub fn compile_f64_clamp<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if a.len() != 2 { return Err("f64.clamp requires 2 arguments".into()); }
     let val = o.into_float_value();
     let lo = a[0].0.into_float_value();
@@ -475,7 +476,7 @@ fn compile_i32_unary<'ctx>(
     c: &mut CodeGenerator<'ctx>,
     obj: BasicValueEnum<'ctx>,
     method: &str,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let fn_name = format!("tl_i32_{}", method);
     let fn_val = c.module.get_function(&fn_name)
         .ok_or(format!("{} not found", fn_name))?;
@@ -483,7 +484,7 @@ fn compile_i32_unary<'ctx>(
         .map_err(|e| e.to_string())?;
     let res = match call.try_as_basic_value() {
         ValueKind::Basic(v) => v,
-        _ => return Err(format!("Invalid return from {}", fn_name)),
+        _ => return Err(format!("Invalid return from {}", fn_name).into()),
     };
     Ok((res, Type::I64)) // I32 methods return I64 in TL
 }
@@ -493,8 +494,8 @@ fn compile_i32_binary<'ctx>(
     obj: BasicValueEnum<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
     method: &str,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-    if args.len() != 1 { return Err(format!("i32.{} requires 1 argument", method)); }
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
+    if args.len() != 1 { return Err(format!("i32.{} requires 1 argument", method).into()); }
     let fn_name = format!("tl_i32_{}", method);
     let fn_val = c.module.get_function(&fn_name)
         .ok_or(format!("{} not found", fn_name))?;
@@ -502,7 +503,7 @@ fn compile_i32_binary<'ctx>(
         .map_err(|e| e.to_string())?;
     let res = match call.try_as_basic_value() {
         ValueKind::Basic(v) => v,
-        _ => return Err(format!("Invalid return from {}", fn_name)),
+        _ => return Err(format!("Invalid return from {}", fn_name).into()),
     };
     Ok((res, Type::I64))
 }
@@ -511,7 +512,7 @@ fn compile_i32_bool_unary<'ctx>(
     c: &mut CodeGenerator<'ctx>,
     obj: BasicValueEnum<'ctx>,
     method: &str,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let fn_name = format!("tl_i32_{}", method);
     let fn_val = c.module.get_function(&fn_name)
         .ok_or(format!("{} not found", fn_name))?;
@@ -519,37 +520,37 @@ fn compile_i32_bool_unary<'ctx>(
         .map_err(|e| e.to_string())?;
     let res = match call.try_as_basic_value() {
         ValueKind::Basic(v) => v,
-        _ => return Err(format!("Invalid return from {}", fn_name)),
+        _ => return Err(format!("Invalid return from {}", fn_name).into()),
     };
     Ok((res, Type::Bool))
 }
 
-pub fn compile_i32_abs<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> { compile_i32_unary(c, o, "abs") }
-pub fn compile_i32_signum<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> { compile_i32_unary(c, o, "signum") }
-pub fn compile_i32_is_positive<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> { compile_i32_bool_unary(c, o, "is_positive") }
-pub fn compile_i32_is_negative<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> { compile_i32_bool_unary(c, o, "is_negative") }
-pub fn compile_i32_div_euclid<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> { compile_i32_binary(c, o, a, "div_euclid") }
-pub fn compile_i32_rem_euclid<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> { compile_i32_binary(c, o, a, "rem_euclid") }
-pub fn compile_i32_pow<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> { compile_i32_binary(c, o, a, "pow") }
-pub fn compile_i32_get_offset<'ctx>(_c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> { Ok((o, Type::I64)) }
-pub fn compile_i32_sumall<'ctx>(_c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> { Ok((o, Type::I64)) }
+pub fn compile_i32_abs<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> { compile_i32_unary(c, o, "abs") }
+pub fn compile_i32_signum<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> { compile_i32_unary(c, o, "signum") }
+pub fn compile_i32_is_positive<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> { compile_i32_bool_unary(c, o, "is_positive") }
+pub fn compile_i32_is_negative<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> { compile_i32_bool_unary(c, o, "is_negative") }
+pub fn compile_i32_div_euclid<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> { compile_i32_binary(c, o, a, "div_euclid") }
+pub fn compile_i32_rem_euclid<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> { compile_i32_binary(c, o, a, "rem_euclid") }
+pub fn compile_i32_pow<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> { compile_i32_binary(c, o, a, "pow") }
+pub fn compile_i32_get_offset<'ctx>(_c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> { Ok((o, Type::I64)) }
+pub fn compile_i32_sumall<'ctx>(_c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> { Ok((o, Type::I64)) }
 
 /// i32.to_f64() -> f64
-pub fn compile_i32_to_f64<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+pub fn compile_i32_to_f64<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let res = c.builder.build_signed_int_to_float(o.into_int_value(), c.context.f64_type(), "i32_to_f64")
         .map_err(|e| e.to_string())?;
     Ok((res.into(), Type::F64))
 }
 
 /// i32.to_f32() -> f32
-pub fn compile_i32_to_f32<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+pub fn compile_i32_to_f32<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let res = c.builder.build_signed_int_to_float(o.into_int_value(), c.context.f32_type(), "i32_to_f32")
         .map_err(|e| e.to_string())?;
     Ok((res.into(), Type::F32))
 }
 
 /// i32.to_string() -> String (via FFI, reuses i64 path since i32 is stored as i64)
-pub fn compile_i32_to_string<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+pub fn compile_i32_to_string<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let fn_val = c.module.get_function("tl_string_from_int")
         .ok_or("tl_string_from_int not found")?;
     let call = c.builder.build_call(fn_val, &[o.into()], "i32_to_string")
@@ -562,7 +563,7 @@ pub fn compile_i32_to_string<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnu
 }
 
 /// i32.min(other: i32) -> i32
-pub fn compile_i32_min<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+pub fn compile_i32_min<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if a.len() != 1 { return Err("i32.min requires 1 argument".into()); }
     let lhs = o.into_int_value();
     let rhs = a[0].0.into_int_value();
@@ -574,7 +575,7 @@ pub fn compile_i32_min<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx
 }
 
 /// i32.max(other: i32) -> i32
-pub fn compile_i32_max<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+pub fn compile_i32_max<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if a.len() != 1 { return Err("i32.max requires 1 argument".into()); }
     let lhs = o.into_int_value();
     let rhs = a[0].0.into_int_value();
@@ -586,7 +587,7 @@ pub fn compile_i32_max<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx
 }
 
 /// i32.clamp(min: i32, max: i32) -> i32
-pub fn compile_i32_clamp<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+pub fn compile_i32_clamp<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if a.len() != 2 { return Err("i32.clamp requires 2 arguments".into()); }
     let val = o.into_int_value();
     let lo = a[0].0.into_int_value();
@@ -605,7 +606,7 @@ pub fn compile_i32_clamp<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'c
 // ========== Phase C: 数値型定数・判定メソッド ==========
 
 /// f64.is_nan() -> bool — LLVM fcmp uno で NaN 判定
-pub fn compile_f64_is_nan<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+pub fn compile_f64_is_nan<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let val = o.into_float_value();
     // fcmp uno (unordered): val != val is true iff val is NaN
     let res = c.builder.build_float_compare(inkwell::FloatPredicate::UNO, val, val, "is_nan")
@@ -614,7 +615,7 @@ pub fn compile_f64_is_nan<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'
 }
 
 /// f64.is_inf() -> bool — |val| == infinity
-pub fn compile_f64_is_inf<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+pub fn compile_f64_is_inf<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let val = o.into_float_value();
     let abs_val = c.builder.build_float_neg(val, "neg_tmp").map_err(|e| e.to_string())?;
     let is_neg = c.builder.build_float_compare(inkwell::FloatPredicate::OLT, val, c.context.f64_type().const_float(0.0), "is_neg")
@@ -628,7 +629,7 @@ pub fn compile_f64_is_inf<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'
 }
 
 /// f32.is_nan() -> bool
-pub fn compile_f32_is_nan<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+pub fn compile_f32_is_nan<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let val = o.into_float_value();
     let res = c.builder.build_float_compare(inkwell::FloatPredicate::UNO, val, val, "is_nan")
         .map_err(|e| e.to_string())?;
@@ -636,7 +637,7 @@ pub fn compile_f32_is_nan<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'
 }
 
 /// f32.is_inf() -> bool
-pub fn compile_f32_is_inf<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+pub fn compile_f32_is_inf<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, _t: Type, _a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let val = o.into_float_value();
     let abs_val = c.builder.build_float_neg(val, "neg_tmp").map_err(|e| e.to_string())?;
     let is_neg = c.builder.build_float_compare(inkwell::FloatPredicate::OLT, val, c.context.f32_type().const_float(0.0), "is_neg")
@@ -650,73 +651,73 @@ pub fn compile_f32_is_inf<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'
 }
 
 /// F64::nan() -> f64
-pub fn compile_f64_nan<'ctx>(c: &mut CodeGenerator<'ctx>, _a: Vec<(BasicValueEnum<'ctx>, Type)>, _hint: Option<&Type>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+pub fn compile_f64_nan<'ctx>(c: &mut CodeGenerator<'ctx>, _a: Vec<(BasicValueEnum<'ctx>, Type)>, _hint: Option<&Type>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let val = c.context.f64_type().const_float(f64::NAN);
     Ok((val.into(), Type::F64))
 }
 
 /// F64::infinity() -> f64
-pub fn compile_f64_infinity<'ctx>(c: &mut CodeGenerator<'ctx>, _a: Vec<(BasicValueEnum<'ctx>, Type)>, _hint: Option<&Type>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+pub fn compile_f64_infinity<'ctx>(c: &mut CodeGenerator<'ctx>, _a: Vec<(BasicValueEnum<'ctx>, Type)>, _hint: Option<&Type>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let val = c.context.f64_type().const_float(f64::INFINITY);
     Ok((val.into(), Type::F64))
 }
 
 /// F64::max_value() -> f64
-pub fn compile_f64_max_value<'ctx>(c: &mut CodeGenerator<'ctx>, _a: Vec<(BasicValueEnum<'ctx>, Type)>, _hint: Option<&Type>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+pub fn compile_f64_max_value<'ctx>(c: &mut CodeGenerator<'ctx>, _a: Vec<(BasicValueEnum<'ctx>, Type)>, _hint: Option<&Type>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let val = c.context.f64_type().const_float(f64::MAX);
     Ok((val.into(), Type::F64))
 }
 
 /// F64::min_value() -> f64
-pub fn compile_f64_min_value<'ctx>(c: &mut CodeGenerator<'ctx>, _a: Vec<(BasicValueEnum<'ctx>, Type)>, _hint: Option<&Type>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+pub fn compile_f64_min_value<'ctx>(c: &mut CodeGenerator<'ctx>, _a: Vec<(BasicValueEnum<'ctx>, Type)>, _hint: Option<&Type>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let val = c.context.f64_type().const_float(f64::MIN);
     Ok((val.into(), Type::F64))
 }
 
 /// I64::max_value() -> i64
-pub fn compile_i64_max_value<'ctx>(c: &mut CodeGenerator<'ctx>, _a: Vec<(BasicValueEnum<'ctx>, Type)>, _hint: Option<&Type>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+pub fn compile_i64_max_value<'ctx>(c: &mut CodeGenerator<'ctx>, _a: Vec<(BasicValueEnum<'ctx>, Type)>, _hint: Option<&Type>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let val = c.context.i64_type().const_int(i64::MAX as u64, false);
     Ok((val.into(), Type::I64))
 }
 
 /// I64::min_value() -> i64
-pub fn compile_i64_min_value<'ctx>(c: &mut CodeGenerator<'ctx>, _a: Vec<(BasicValueEnum<'ctx>, Type)>, _hint: Option<&Type>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+pub fn compile_i64_min_value<'ctx>(c: &mut CodeGenerator<'ctx>, _a: Vec<(BasicValueEnum<'ctx>, Type)>, _hint: Option<&Type>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let val = c.context.i64_type().const_int(i64::MIN as u64, true);
     Ok((val.into(), Type::I64))
 }
 
 /// I32::max_value() -> i32
-pub fn compile_i32_max_value<'ctx>(c: &mut CodeGenerator<'ctx>, _a: Vec<(BasicValueEnum<'ctx>, Type)>, _hint: Option<&Type>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+pub fn compile_i32_max_value<'ctx>(c: &mut CodeGenerator<'ctx>, _a: Vec<(BasicValueEnum<'ctx>, Type)>, _hint: Option<&Type>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let val = c.context.i32_type().const_int(i32::MAX as u64, false);
     Ok((val.into(), Type::I32))
 }
 
 /// I32::min_value() -> i32
-pub fn compile_i32_min_value<'ctx>(c: &mut CodeGenerator<'ctx>, _a: Vec<(BasicValueEnum<'ctx>, Type)>, _hint: Option<&Type>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+pub fn compile_i32_min_value<'ctx>(c: &mut CodeGenerator<'ctx>, _a: Vec<(BasicValueEnum<'ctx>, Type)>, _hint: Option<&Type>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let val = c.context.i32_type().const_int(i32::MIN as u64, true);
     Ok((val.into(), Type::I32))
 }
 
 /// F32::nan() -> f32
-pub fn compile_f32_nan<'ctx>(c: &mut CodeGenerator<'ctx>, _a: Vec<(BasicValueEnum<'ctx>, Type)>, _hint: Option<&Type>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+pub fn compile_f32_nan<'ctx>(c: &mut CodeGenerator<'ctx>, _a: Vec<(BasicValueEnum<'ctx>, Type)>, _hint: Option<&Type>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let val = c.context.f32_type().const_float(f64::NAN);
     Ok((val.into(), Type::F32))
 }
 
 /// F32::infinity() -> f32
-pub fn compile_f32_infinity<'ctx>(c: &mut CodeGenerator<'ctx>, _a: Vec<(BasicValueEnum<'ctx>, Type)>, _hint: Option<&Type>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+pub fn compile_f32_infinity<'ctx>(c: &mut CodeGenerator<'ctx>, _a: Vec<(BasicValueEnum<'ctx>, Type)>, _hint: Option<&Type>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let val = c.context.f32_type().const_float(f64::INFINITY);
     Ok((val.into(), Type::F32))
 }
 
 /// F32::max_value() -> f32
-pub fn compile_f32_max_value<'ctx>(c: &mut CodeGenerator<'ctx>, _a: Vec<(BasicValueEnum<'ctx>, Type)>, _hint: Option<&Type>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+pub fn compile_f32_max_value<'ctx>(c: &mut CodeGenerator<'ctx>, _a: Vec<(BasicValueEnum<'ctx>, Type)>, _hint: Option<&Type>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let val = c.context.f32_type().const_float(f32::MAX as f64);
     Ok((val.into(), Type::F32))
 }
 
 /// F32::min_value() -> f32
-pub fn compile_f32_min_value<'ctx>(c: &mut CodeGenerator<'ctx>, _a: Vec<(BasicValueEnum<'ctx>, Type)>, _hint: Option<&Type>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+pub fn compile_f32_min_value<'ctx>(c: &mut CodeGenerator<'ctx>, _a: Vec<(BasicValueEnum<'ctx>, Type)>, _hint: Option<&Type>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let val = c.context.f32_type().const_float(f32::MIN as f64);
     Ok((val.into(), Type::F32))
 }

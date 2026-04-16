@@ -2,6 +2,7 @@
 //!
 //! Tensor 操作のコンパイル関数群。
 //! compile_tensor_get, compile_tensor_backward, compile_tensor_sum 等。
+use crate::compiler::error::TlError;
 
 use inkwell::values::*;
 
@@ -14,7 +15,7 @@ pub(super) fn compile_tensor_get<'ctx>(
     obj_val: BasicValueEnum<'ctx>,
     _obj_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     // args: index1, index2, ...
     if args.is_empty() {
         return Err("get requires at least 1 argument (index...)".into());
@@ -53,7 +54,7 @@ pub(super) fn compile_tensor_get<'ctx>(
                 .builder
                 .build_int_z_extend(idx_val.into_int_value(), i64_type, "idx_ext")
                 .map_err(|e| e.to_string())?,
-            _ => return Err(format!("Index {} must be integer", i)),
+            _ => return Err(format!("Index {} must be integer", i).into()),
         };
 
         let ptr = unsafe {
@@ -115,7 +116,7 @@ pub(super) fn compile_tensor_backward<'ctx>(
     obj_val: BasicValueEnum<'ctx>,
     _obj_ty: Type,
     _args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let fn_val = codegen.get_fn("tl_tensor_backward")?;
     codegen
         .builder
@@ -133,7 +134,7 @@ pub(super) fn compile_tensor_clone<'ctx>(
     obj_val: BasicValueEnum<'ctx>,
     obj_ty: Type,
     _args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let fn_val = codegen.get_fn("tl_tensor_clone")?;
     let call = codegen
         .builder
@@ -151,7 +152,7 @@ pub(super) fn compile_tensor_detach<'ctx>(
     obj_val: BasicValueEnum<'ctx>,
     obj_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let fn_val = codegen.get_fn("tl_tensor_detach")?;
     // Optional arg: req_grad (bool). Default to false.
     let req_grad = if !args.is_empty() {
@@ -177,7 +178,7 @@ pub(super) fn compile_tensor_grad<'ctx>(
     obj_val: BasicValueEnum<'ctx>,
     obj_ty: Type,
     _args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let fn_val = codegen.get_fn("tl_tensor_grad")?;
     let call = codegen
         .builder
@@ -195,7 +196,7 @@ pub(super) fn compile_tensor_contiguous<'ctx>(
     obj_val: BasicValueEnum<'ctx>,
     obj_ty: Type,
     _args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let fn_val = codegen.get_fn("tl_tensor_contiguous")?;
     let call = codegen
         .builder
@@ -216,7 +217,7 @@ pub(super) fn compile_tensor_save<'ctx>(
     obj_val: BasicValueEnum<'ctx>,
     _obj_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 {
         return Err("save requires 1 argument (path)".into());
     }
@@ -239,7 +240,7 @@ pub(super) fn compile_tensor_sum<'ctx>(
     obj_val: BasicValueEnum<'ctx>,
     _obj_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.is_empty() {
         // Standard sum
         let fn_val = codegen
@@ -304,7 +305,7 @@ pub(super) fn compile_tensor_slice2<'ctx>(
     obj_val: BasicValueEnum<'ctx>,
     obj_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let i64_ty = codegen.context.i64_type();
 
     let dim = i64_ty.const_int(0, false);
@@ -333,7 +334,7 @@ pub(super) fn compile_tensor_slice3<'ctx>(
     obj_val: BasicValueEnum<'ctx>,
     obj_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let i64_ty = codegen.context.i64_type();
 
     let dim = args[0].0;
@@ -362,7 +363,7 @@ pub(super) fn compile_tensor_to<'ctx>(
     obj_val: BasicValueEnum<'ctx>,
     obj_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 {
         return Err("to/to_device requires 1 argument (device name string)".into());
     }
@@ -398,9 +399,9 @@ pub(super) fn compile_tensor_assign_op<'ctx>(
     op: &str, // "add" | "sub" | "mul" | "div"
     obj_val: BasicValueEnum<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 {
-        return Err(format!("{}_assign requires 1 argument", op));
+        return Err(format!("{}_assign requires 1 argument", op).into());
     }
     let (rhs_val, rhs_ty) = args[0].clone();
 
@@ -433,7 +434,7 @@ pub(super) fn compile_tensor_assign_op<'ctx>(
                     "int_to_f32",
                 )
                 .map_err(|e| e.to_string())?,
-            _ => return Err(format!("{}_assign scalar: unsupported type {:?}", op, rhs_ty)),
+            _ => return Err(format!("{}_assign scalar: unsupported type {:?}", op, rhs_ty).into()),
         };
         let ffi_name = format!("tl_tensor_{}_assign_scalar_f32", op);
         let fn_val = codegen
@@ -448,7 +449,7 @@ pub(super) fn compile_tensor_assign_op<'ctx>(
         return Err(format!(
             "{}_assign requires Tensor or scalar argument, got {:?}",
             op, rhs_ty
-        ));
+        ).into());
     }
 
     Ok((
@@ -462,7 +463,7 @@ pub(super) fn compile_tensor_add_assign<'ctx>(
     obj_val: BasicValueEnum<'ctx>,
     _obj_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     compile_tensor_assign_op(codegen, "add", obj_val, args)
 }
 
@@ -471,7 +472,7 @@ pub(super) fn compile_tensor_sub_assign<'ctx>(
     obj_val: BasicValueEnum<'ctx>,
     _obj_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     compile_tensor_assign_op(codegen, "sub", obj_val, args)
 }
 
@@ -480,7 +481,7 @@ pub(super) fn compile_tensor_mul_assign<'ctx>(
     obj_val: BasicValueEnum<'ctx>,
     _obj_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     compile_tensor_assign_op(codegen, "mul", obj_val, args)
 }
 
@@ -489,7 +490,7 @@ pub(super) fn compile_tensor_div_assign<'ctx>(
     obj_val: BasicValueEnum<'ctx>,
     _obj_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     compile_tensor_assign_op(codegen, "div", obj_val, args)
 }
 
@@ -498,7 +499,7 @@ pub(super) fn compile_tensor_pow<'ctx>(
     obj_val: BasicValueEnum<'ctx>,
     obj_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 {
         return Err("pow requires 1 argument (exponent)".into());
     }
@@ -542,7 +543,7 @@ pub(super) fn compile_tensor_pow<'ctx>(
                 return Err(format!(
                     "pow exponent must be Tensor or Number, got {:?}",
                     exp_ty
-                ))
+                ).into())
             }
         };
 
@@ -570,7 +571,7 @@ pub(super) fn compile_tensor_transpose<'ctx>(
     obj_val: BasicValueEnum<'ctx>,
     obj_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     // Prepends receiver to args and calls standard transpose
     let mut new_args = Vec::with_capacity(args.len() + 1);
     new_args.push((obj_val, obj_ty));
@@ -581,7 +582,7 @@ pub(super) fn compile_tensor_transpose<'ctx>(
 pub(super) fn compile_transpose<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     // transpose(tensor, d0, d1)
     if args.len() != 3 {
         return Err("transpose requires 3 arguments: tensor, dim0, dim1".into());
@@ -594,7 +595,7 @@ pub(super) fn compile_transpose<'ctx>(
         || matches!(t_ty, Type::Struct(name, _) if name == "Tensor");
         
     if !is_tensor {
-        return Err(format!("First argument to transpose must be a tensor. Found: {:?}", t_ty));
+        return Err(format!("First argument to transpose must be a tensor. Found: {:?}", t_ty).into());
     }
     let transpose_fn = codegen
         .module
@@ -612,7 +613,7 @@ pub(super) fn compile_transpose<'ctx>(
             } else if t_val.is_struct_value() {
                 codegen.builder.build_extract_value(t_val.into_struct_value(), 0, "tensor_handle").map_err(|e| e.to_string())?.into_int_value()
             } else {
-                return Err(format!("Unexpected value kind for Struct Tensor: {:?}", t_val));
+                return Err(format!("Unexpected value kind for Struct Tensor: {:?}", t_val).into());
             };
             
             // Cast i64 handle to Pointer
@@ -678,7 +679,7 @@ pub(super) fn compile_tensor_reshape_uneval<'ctx>(
     obj: &Expr,
     _method: &str,
     args: &[Expr],
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 {
         return Err("reshape method requires exactly 1 argument (shape array)".into());
     }

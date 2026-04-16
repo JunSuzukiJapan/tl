@@ -1,3 +1,4 @@
+use crate::compiler::error::TlError;
 use super::CodeGenerator;
 use crate::compiler::ast::*;
 
@@ -121,7 +122,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         dst: inkwell::values::PointerValue<'ctx>,
         src: inkwell::values::PointerValue<'ctx>,
         ty: &Type,
-    ) -> Result<(), String> {
+    ) -> Result<(), TlError> {
         match ty {
             Type::Struct(name, generics) => {
                 // FIX: Check if name is already mangled (exists in struct_defs) before re-mangling
@@ -173,7 +174,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             self.monomorphize_struct(name, generics)
                                 .map_err(|e| format!("On-demand monomorphization failed for {}<{:?}>: {}", name, generics, e))?
                         } else {
-                            return Err(format!("LLVM struct type {} not found (also tried base {})", effective_mangled_name, base_name));
+                            return Err(format!("LLVM struct type {} not found (also tried base {})", effective_mangled_name, base_name).into());
                         }
                     };
                     
@@ -209,10 +210,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                         
                         return Ok(());
                     }
-                    return Err(format!("LLVM enum type {} not found", effective_mangled_name));
+                    return Err(format!("LLVM enum type {} not found", effective_mangled_name).into());
                 }
                 
-                Err(format!("Type {} not found in struct_defs or enum_defs ({})", name, effective_mangled_name))
+                Err(format!("Type {} not found in struct_defs or enum_defs ({})", name, effective_mangled_name).into())
             }
             Type::Enum(name, generics) => {
                 let mangled_name = if generics.is_empty() {
@@ -224,7 +225,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let enum_llvm_ty = if let Some(ty) = self.enum_types.get(&mangled_name) {
                      *ty
                 } else {
-                     return Err(format!("LLVM enum type {} not found for copy", mangled_name));
+                     return Err(format!("LLVM enum type {} not found for copy", mangled_name).into());
                 };
 
                 let size = enum_llvm_ty.size_of().ok_or_else(|| "type has no size".to_string())?;
@@ -264,7 +265,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             _ => Err(format!(
                 "emit_struct_copy called on non-struct type: {:?}",
                 ty
-            )),
+            ).into()),
         }
     }
     
@@ -276,7 +277,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         src: inkwell::values::PointerValue<'ctx>,
         struct_def: &crate::compiler::ast::StructDef,
         st_llvm_ty: inkwell::types::StructType<'ctx>,
-    ) -> Result<(), String> {
+    ) -> Result<(), TlError> {
         for (i, (field_name, field_ty)) in struct_def.fields.iter().enumerate() {
             let src_field_ptr = self
                 .builder
@@ -342,7 +343,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         &mut self,
         val: BasicValueEnum<'ctx>,
         ty: &Type,
-    ) -> Result<(), String> {
+    ) -> Result<(), TlError> {
         match ty {
             Type::Tensor(inner, _) | Type::TensorShaped(inner, _) | Type::GradTensor(inner, _) => {
                 let is_qtensor = matches!(&**inner, Type::I8 | Type::U8);
@@ -582,7 +583,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         val: BasicValueEnum<'ctx>,
         ty: &Type,
         mode: u8,
-    ) -> Result<(), String> {
+    ) -> Result<(), TlError> {
         if mode == super::CLEANUP_NONE {
              return Ok(());
         }
@@ -805,7 +806,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
             Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::GradTensor(_, _) => {
                 if !val.is_pointer_value() {
-                    return Err(format!("Tensor value is not pointer: {:?}", val));
+                    return Err(format!("Tensor value is not pointer: {:?}", val).into());
                 }
                 let ptr = val.into_pointer_value();
 
@@ -971,7 +972,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 let should_free_val = match call.try_as_basic_value() {
                     inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
-                    _ => return Err("tl_ptr_dec_ref returned void/invalid".to_string()),
+                    _ => return Err("tl_ptr_dec_ref returned void/invalid".to_string().into()),
                 };
                     
                 let should_free = self.builder.build_int_compare(
@@ -1207,7 +1208,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         &self,
         val: BasicValueEnum<'ctx>,
         ty: &Type,
-    ) -> Result<(), String> {
+    ) -> Result<(), TlError> {
         match ty {
             Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::GradTensor(_, _) => {
                 // Check if pointer
@@ -1474,7 +1475,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         Ok(())
     }
 
-    pub(crate) fn compile_stmt(&mut self, stmt: &Stmt) -> Result<(), String> {
+    pub(crate) fn compile_stmt(&mut self, stmt: &Stmt) -> Result<(), TlError> {
         self.current_time += 1;
         let prev_span = self.current_span.clone();
         self.current_span = Some(stmt.span.clone());
@@ -1494,7 +1495,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         result
     }
 
-    pub(crate) fn compile_stmt_inner(&mut self, stmt: &Stmt) -> Result<(), String> {
+    pub(crate) fn compile_stmt_inner(&mut self, stmt: &Stmt) -> Result<(), TlError> {
         match &stmt.inner {
             StmtKind::Use { .. } => Ok(()),
             StmtKind::TensorDecl {
@@ -1644,8 +1645,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 if !free_indices.is_empty() {
                     let clauses: Vec<ComprehensionClause> = Vec::new();
                     return self
-                        .compile_tensor_equation(name, &free_indices, &reduction_indices, &clauses, Some(value))
-                        .map_err(|e| e.to_string());
+                        .compile_tensor_equation(name, &free_indices, &reduction_indices, &clauses, Some(value));
                 }
 
                 let is_slot_backed = false;
@@ -2070,7 +2070,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                          "Internal compiler error: Assign to {:?} expected PointerValue but got {:?}. \
                                           This usually means SRET detection failed for the method call.",
                                          lhs_type, val_ir
-                                     ));
+                                     ).into());
                                  }
                                  let old_val = self.builder.build_load(load_type, lhs_ptr, "old").map_err(|e| e.to_string())?.into_pointer_value();
                                  let null_ptr = load_type.const_null();
@@ -2186,10 +2186,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 let mangled_name = gen_type.mangled_name_or_name().unwrap_or("");
                                 return self.emit_struct_set(inner_val, &mangled_name, &type_args, indices, val_ir);
                            } else {
-                                return Err(format!("Invalid assignment target inner type: {:?}", inner_ty));
+                                return Err(format!("Invalid assignment target inner type: {:?}", inner_ty).into());
                           }
                      }
-                     return Err(format!("Invalid assignment target (not IndexAccess): {:?}", lhs));
+                     return Err(format!("Invalid assignment target (not IndexAccess): {:?}", lhs).into());
                 } else {
                      return Err("Invalid assignment LValue".into());
                 }
@@ -2287,7 +2287,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                     .map_err(|e| e.to_string())?;
                                 match len_call.try_as_basic_value() {
                                     inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
-                                    _ => return Err(format!("Invalid {} return", len_fn_name)),
+                                    _ => return Err(format!("Invalid {} return", len_fn_name).into()),
                                 }
                             }
                             _ => {
@@ -2531,12 +2531,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                                         (v, Type::Void)
                                     }
                                 }
-                                _ => return Err(format!("Invalid {} return", get_fn_name)),
+                                _ => return Err(format!("Invalid {} return", get_fn_name).into()),
                             }
                             } // end else (non-Vec)
                         }
 
-                        _ => return Err(format!("Unsupported for-loop iterator type: {:?}", iter_ty)),
+                        _ => return Err(format!("Unsupported for-loop iterator type: {:?}", iter_ty).into()),
                     }
                 } else {
                     // Range iteration: loop var is the index
@@ -2858,7 +2858,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         rhs_type: Type,
         op: BinOp,
         scalar_is_rhs: bool,
-    ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
         let (scalar_val, tensor_val, tensor_ty) = if scalar_is_rhs {
             (rhs, lhs, lhs_type)
         } else {
@@ -2999,7 +2999,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         lhs: BasicValueEnum<'ctx>,
         rhs: BasicValueEnum<'ctx>,
         op: BinOp,
-    ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
         match op {
             BinOp::Add => {
                 let concat_fn = self
@@ -3052,7 +3052,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         rhs: BasicValueEnum<'ctx>,
         rhs_type: Type,
         op: BinOp,
-    ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
         match (&lhs_type, &rhs_type) {
             // String Concatenation
             (Type::String(_), Type::String(_)) if op == BinOp::Add => {
@@ -3578,7 +3578,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 Err(format!(
                     "Type mismatch in BinOp {:?}: {:?} vs {:?}",
                     op, lhs_type, rhs_type
-                ))
+                ).into())
             }
         }
     }
@@ -3589,7 +3589,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         dst_ptr: inkwell::values::PointerValue<'ctx>,
         inner_ty: &Type,
         size: usize,
-    ) -> Result<(), String> {
+    ) -> Result<(), TlError> {
         let llvm_arr_ty = self.get_llvm_type(&Type::Array(Box::new(inner_ty.clone()), size)).map_err(|e| e.to_string())?;
         for i in 0..size {
              let src_elem = self.builder.build_struct_gep(llvm_arr_ty, src_ptr, i as u32, "src_elem").map_err(|e| e.to_string())?;
@@ -3619,7 +3619,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         &mut self,
         val: inkwell::values::BasicValueEnum<'ctx>,
         ty: &Type,
-    ) -> Result<inkwell::values::BasicValueEnum<'ctx>, String> {
+    ) -> Result<inkwell::values::BasicValueEnum<'ctx>, TlError> {
         match ty {
             Type::Array(inner, size) => {
                  let current_block = self.current_block()?;
@@ -3650,7 +3650,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 let new_ptr = match call.try_as_basic_value() {
                     inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
-                    _ => return Err("tl_tensor_acquire returned void/invalid".to_string()),
+                    _ => return Err("tl_tensor_acquire returned void/invalid".to_string().into()),
                 };
 
                 // Cast back to tensor pointer type (struct ptr)
@@ -3936,7 +3936,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         &mut self,
         val: BasicValueEnum<'ctx>,
         enum_def: &EnumDef,
-    ) -> Result<BasicValueEnum<'ctx>, String> {
+    ) -> Result<BasicValueEnum<'ctx>, TlError> {
         let name = &enum_def.name;
         let enum_ty = *self
             .enum_types
@@ -4105,7 +4105,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         Ok(new_ptr.into())
     }
     // Helper to compile LValue address
-    fn compile_lvalue_addr(&mut self, lvalue: &LValue) -> Result<(Option<inkwell::values::PointerValue<'ctx>>, Type, u8, Option<String>), String> {
+    fn compile_lvalue_addr(&mut self, lvalue: &LValue) -> Result<(Option<inkwell::values::PointerValue<'ctx>>, Type, u8, Option<String>), TlError> {
         match lvalue {
             LValue::Variable(name) => {
                 for scope in self.variables.iter().rev() {
@@ -4113,7 +4113,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         return Ok((Some(v.into_pointer_value()), t.clone(), *mode, Some(name.clone())));
                     }
                 }
-                Err(format!("Variable {} not found", name))
+                Err(format!("Variable {} not found", name).into())
             }
             LValue::FieldAccess(inner, field) => {
                 let (base_ptr_opt, raw_base_ty, _, base_name) = self.compile_lvalue_addr(inner)?;
@@ -4172,7 +4172,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                              };
                              Ok((Some(field_ptr), field_ty.clone(), field_cleanup, base_name))
                         }
-                        None => Err(format!("LLVM type not found for {}", name))
+                        None => Err(format!("LLVM type not found for {}", name).into())
                     }
                 } else {
                     Err("Field access only on Struct".into())
@@ -4233,7 +4233,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
     }
 
-    fn compile_expr_from_lvalue(&mut self, lvalue: &LValue) -> Result<(inkwell::values::BasicValueEnum<'ctx>, Type), String> {
+    fn compile_expr_from_lvalue(&mut self, lvalue: &LValue) -> Result<(inkwell::values::BasicValueEnum<'ctx>, Type), TlError> {
         match lvalue {
              LValue::Variable(_name) => {
                  let res = self.compile_lvalue_addr(lvalue)?;
@@ -4294,7 +4294,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
     }
 
-    fn emit_tensor_set(&mut self, tensor_val: inkwell::values::BasicValueEnum<'ctx>, indices: &[Expr], val: inkwell::values::BasicValueEnum<'ctx>, val_ty: Type) -> Result<(), String> {
+    fn emit_tensor_set(&mut self, tensor_val: inkwell::values::BasicValueEnum<'ctx>, indices: &[Expr], val: inkwell::values::BasicValueEnum<'ctx>, val_ty: Type) -> Result<(), TlError> {
          let set_fn = self.module.get_function("tl_tensor_set_f32_md").ok_or("tl_tensor_set_f32_md not found")?;
          let i64_ty = self.context.i64_type();
          let idx_arr_ty = i64_ty.array_type(indices.len() as u32);
@@ -4327,7 +4327,7 @@ impl<'ctx> CodeGenerator<'ctx> {
          Ok(())
     }
 
-    fn emit_struct_set(&mut self, struct_val: inkwell::values::BasicValueEnum<'ctx>, struct_name: &str, generics: &[Type], indices: &[Expr], val: inkwell::values::BasicValueEnum<'ctx>) -> Result<(), String> {
+    fn emit_struct_set(&mut self, struct_val: inkwell::values::BasicValueEnum<'ctx>, struct_name: &str, generics: &[Type], indices: &[Expr], val: inkwell::values::BasicValueEnum<'ctx>) -> Result<(), TlError> {
          // Struct index assignment: index_mut を優先し、なければ set にフォールバック
          if indices.len() != 1 { return Err("Struct set supports 1 index".into()); }
          let (idx_val, _) = self.compile_expr(&indices[0])?;
@@ -4381,14 +4381,14 @@ impl<'ctx> CodeGenerator<'ctx> {
          // Fallback: try to find method via TypeManager
          if let Some(type_info) = self.type_manager.get_type(&mangled_name) {
               if type_info.has_instance_method("set") {
-                  return Err(format!("Struct set method found but instance method call not yet implemented for {}", mangled_name));
+                  return Err(format!("Struct set method found but instance method call not yet implemented for {}", mangled_name).into());
               }
          }
          
-         Err(format!("Struct set/index_mut method not found for type '{}' (looked for fn '{}', base='{}', type_args={:?})", mangled_name, fn_name, base_name, type_args))
+         Err(format!("Struct set/index_mut method not found for type '{}' (looked for fn '{}', base='{}', type_args={:?})", mangled_name, fn_name, base_name, type_args).into())
     }
 
-    fn build_float_cast_val(&self, val: inkwell::values::BasicValueEnum<'ctx>, from: &Type, to: inkwell::types::FloatType<'ctx>) -> Result<inkwell::values::FloatValue<'ctx>, String> {
+    fn build_float_cast_val(&self, val: inkwell::values::BasicValueEnum<'ctx>, from: &Type, to: inkwell::types::FloatType<'ctx>) -> Result<inkwell::values::FloatValue<'ctx>, TlError> {
          match from {
              Type::F32 => Ok(val.into_float_value()),
              Type::I64 => Ok(self.builder.build_signed_int_to_float(val.into_int_value(), to, "").map_err(|e| e.to_string())?),
@@ -4397,7 +4397,7 @@ impl<'ctx> CodeGenerator<'ctx> {
          }
     }
 
-    fn append_bb(&self, name: &str) -> Result<inkwell::basic_block::BasicBlock<'ctx>, String> {
+    fn append_bb(&self, name: &str) -> Result<inkwell::basic_block::BasicBlock<'ctx>, TlError> {
          Ok(self.context.append_basic_block(self.current_function()?, name))
     }
 

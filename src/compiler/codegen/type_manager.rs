@@ -304,7 +304,7 @@ mod tests {
         _val: BasicValueEnum<'ctx>,
         _ty: Type,
         _args: Vec<(BasicValueEnum<'ctx>, Type)>,
-    ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
         Err("Mock method".into())
     }
 

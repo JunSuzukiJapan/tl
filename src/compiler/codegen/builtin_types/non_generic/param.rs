@@ -1,3 +1,4 @@
+use crate::compiler::error::TlError;
 use crate::compiler::codegen::type_manager::{CodeGenType, TypeManager};
 use crate::compiler::codegen::CodeGenerator;
 use crate::compiler::ast::{Type};
@@ -25,7 +26,7 @@ fn compile_param_save<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
     _target: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 2 {
         return Err("Param::save requires 2 arguments".into());
     }
@@ -62,7 +63,7 @@ fn traverse_and_save<'ctx>(
     ty: Type,
     prefix: String,
     map_ptr: BasicValueEnum<'ctx>,
-) -> Result<(), String> {
+) -> Result<(), TlError> {
     match ty {
         Type::Tensor(_, _) => {
             // Insert into map
@@ -102,7 +103,7 @@ fn traverse_and_save<'ctx>(
                     // But usually passed by pointer.
                     // Or if Type::Struct is treated as value by inkwell?
                     // In TL, structs are passed by pointer in LLVM IR mostly.
-                    return Err(format!("Expected pointer for struct {}, got {:?}", name, val));
+                    return Err(format!("Expected pointer for struct {}, got {:?}", name, val).into());
                 }
                 let ptr = val.into_pointer_value();
 
@@ -136,7 +137,7 @@ fn traverse_and_save<'ctx>(
                      }
                 }
             } else {
-                return Err(format!("Struct definition for {} not found", name));
+                return Err(format!("Struct definition for {} not found", name).into());
             }
         }
         _ => {
@@ -165,7 +166,7 @@ fn compile_param_load<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
     _target: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     
     if args.len() == 1 {
         // load(path) -> Tensor
@@ -208,7 +209,7 @@ fn traverse_and_load<'ctx>(
     ty: Type,
     prefix: String,
     map_ptr: BasicValueEnum<'ctx>,
-) -> Result<(), String> {
+) -> Result<(), TlError> {
     match ty {
         Type::Tensor(_, _) => {
             // key = prefix
@@ -247,7 +248,7 @@ fn traverse_and_load<'ctx>(
                 }
 
                 if !val.is_pointer_value() {
-                    return Err(format!("Expected pointer for struct {}, got {:?}", name, val));
+                    return Err(format!("Expected pointer for struct {}, got {:?}", name, val).into());
                 }
                 let ptr = val.into_pointer_value();
                 let struct_llvm_type = *codegen.struct_types.get(&name).ok_or(format!("LLVM type for {} not found", name))?;

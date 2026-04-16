@@ -1,3 +1,4 @@
+use crate::compiler::error::TlError;
 use crate::compiler::codegen::type_manager::{CodeGenType, TypeManager};
 use crate::compiler::codegen::CodeGenerator;
 use crate::compiler::ast::Type;
@@ -67,7 +68,7 @@ pub fn register_regex_types(manager: &mut TypeManager) {
 fn extract_regex_id<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     obj: BasicValueEnum<'ctx>,
-) -> Result<inkwell::values::IntValue<'ctx>, String> {
+) -> Result<inkwell::values::IntValue<'ctx>, TlError> {
     // Assuming `obj` is a pointer to the Regex struct which has a single i64 field.
     let struct_ty = codegen.context.struct_type(&[
         codegen.context.i64_type().into()
@@ -86,7 +87,7 @@ pub fn compile_regex_new<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
     _hint: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let fn_val = codegen.module.get_function("tl_regex_new")
         .ok_or("tl_regex_new not found")?;
         
@@ -119,7 +120,7 @@ pub fn compile_regex_is_valid<'ctx>(
     obj: BasicValueEnum<'ctx>,
     _obj_ty: Type,
     _args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let id_val = extract_regex_id(codegen, obj)?;
     let zero = codegen.context.i64_type().const_zero();
     
@@ -138,7 +139,7 @@ pub fn compile_regex_is_match<'ctx>(
     obj: BasicValueEnum<'ctx>,
     _obj_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let id_val = extract_regex_id(codegen, obj)?;
     
     let fn_val = codegen.module.get_function("tl_regex_is_match")
@@ -160,7 +161,7 @@ pub fn compile_regex_replace<'ctx>(
     obj: BasicValueEnum<'ctx>,
     _obj_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let id_val = extract_regex_id(codegen, obj)?;
     
     let fn_val = codegen.module.get_function("tl_regex_replace")
@@ -184,7 +185,7 @@ pub fn compile_regex_release<'ctx>(
     obj: BasicValueEnum<'ctx>,
     _obj_ty: Type,
     _args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let id_val = extract_regex_id(codegen, obj)?;
     
     let fn_val = codegen.module.get_function("tl_regex_release")

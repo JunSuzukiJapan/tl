@@ -1,3 +1,4 @@
+use crate::compiler::error::TlError;
 use crate::compiler::codegen::type_manager::{CodeGenType, TypeManager};
 use crate::compiler::codegen::CodeGenerator;
 use crate::compiler::ast::Type;
@@ -160,7 +161,7 @@ fn compile_kv_cache_update<'ctx>(
     instance_val: BasicValueEnum<'ctx>,
     _instance_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 3 { return Err("KVCache::update requires 3 arguments".into()); }
     
     // Convert instance (ptr) to ptr
@@ -171,7 +172,7 @@ fn compile_kv_cache_update<'ctx>(
     let (v_val, v_ty) = &args[2];
 
     // Helper to extract tensor pointer
-    let mut get_tensor_ptr = |val: BasicValueEnum<'ctx>, ty: &Type| -> Result<inkwell::values::BasicMetadataValueEnum<'ctx>, String> {
+    let mut get_tensor_ptr = |val: BasicValueEnum<'ctx>, ty: &Type| -> Result<inkwell::values::BasicMetadataValueEnum<'ctx>, TlError> {
         let ptr_val = if let Type::Struct(name, _) = ty {
             if name == "Tensor" {
                  let h = codegen.load_struct_i64_field(val, ty, "handle")?;
@@ -186,7 +187,7 @@ fn compile_kv_cache_update<'ctx>(
                  return Err("Expected Tensor pointer".into());
              }
         } else {
-             return Err(format!("Expected Tensor argument, got {:?}", ty));
+             return Err(format!("Expected Tensor argument, got {:?}", ty).into());
         };
         Ok(ptr_val.into())
     };
@@ -204,7 +205,7 @@ fn compile_tokenizer_new<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
     _target_type: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 {
         return Err("Tokenizer::new requires 1 argument".into());
     }
@@ -216,7 +217,7 @@ fn compile_tokenizer_new<'ctx>(
              codegen.load_struct_i64_field(*path_val, path_ty, "ptr")?
                 .into_int_value()
         },
-        _ => return Err(format!("Tokenizer::new expects String argument, got {:?}", path_ty)),
+        _ => return Err(format!("Tokenizer::new expects String argument, got {:?}", path_ty).into()),
     };
 
     let path_ptr_val = codegen.builder.build_int_to_ptr(path_ptr, codegen.context.ptr_type(inkwell::AddressSpace::default()), "path_str_ptr").map_err(|e| e.to_string())?;
@@ -266,7 +267,7 @@ fn compile_tokenizer_encode<'ctx>(
     instance_val: BasicValueEnum<'ctx>,
     instance_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 { return Err("Tokenizer::encode requires 1 argument".into()); }
     let handle = codegen.load_struct_i64_field(instance_val, &instance_ty, "handle")?;
     let (prompt_val, prompt_ty) = &args[0];
@@ -292,7 +293,7 @@ fn compile_tokenizer_encode_chat<'ctx>(
     instance_val: BasicValueEnum<'ctx>,
     instance_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 { return Err("Tokenizer::encode_chat requires 1 argument".into()); }
     let handle = codegen.load_struct_i64_field(instance_val, &instance_ty, "handle")?;
     let (prompt_val, prompt_ty) = &args[0];
@@ -316,7 +317,7 @@ fn compile_tokenizer_encode_chat_zephyr<'ctx>(
     instance_val: BasicValueEnum<'ctx>,
     instance_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 { return Err("Tokenizer::encode_chat_zephyr requires 1 argument".into()); }
     let handle = codegen.load_struct_i64_field(instance_val, &instance_ty, "handle")?;
     let (prompt_val, prompt_ty) = &args[0];
@@ -340,7 +341,7 @@ fn compile_tokenizer_decode<'ctx>(
     instance_val: BasicValueEnum<'ctx>,
     instance_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 { return Err("Tokenizer::decode requires 1 argument".into()); }
     let handle = codegen.load_struct_i64_field(instance_val, &instance_ty, "handle")?;
     let (ids_val, _) = args[0];
@@ -367,7 +368,7 @@ fn compile_kv_cache_new<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
     _target_type: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 {
         return Err("KVCache::new requires 1 argument".into());
     }
@@ -398,7 +399,7 @@ fn compile_kv_cache_free<'ctx>(
     instance_val: BasicValueEnum<'ctx>,
     _instance_ty: Type,
     _args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     // KVCache.free(self) -> self is ptr
     // tl_kvcache_free(ptr)
     if !instance_val.is_pointer_value() {
@@ -415,7 +416,7 @@ fn compile_kv_cache_get_k<'ctx>(
     instance_val: BasicValueEnum<'ctx>,
     _instance_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 { return Err("KVCache::get_k requires 1 argument".into()); }
     let (layer_val, _) = args[0];
     
@@ -432,7 +433,7 @@ fn compile_kv_cache_get_v<'ctx>(
     instance_val: BasicValueEnum<'ctx>,
     _instance_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 { return Err("KVCache::get_v requires 1 argument".into()); }
     let (layer_val, _) = args[0];
     
@@ -448,7 +449,7 @@ fn compile_kv_cache_clear<'ctx>(
     instance_val: BasicValueEnum<'ctx>,
     _instance_ty: Type,
     _args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if !instance_val.is_pointer_value() {
          return Err("Instance not pointer in clear".into());
     }
@@ -462,7 +463,7 @@ fn compile_kv_cache_len<'ctx>(
     instance_val: BasicValueEnum<'ctx>,
     _instance_ty: Type,
     _args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if !instance_val.is_pointer_value() {
          return Err("Instance not pointer in len".into());
     }
@@ -481,7 +482,7 @@ fn compile_kv_cache_resize<'ctx>(
     instance_val: BasicValueEnum<'ctx>,
     _instance_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if !instance_val.is_pointer_value() {
          return Err("Instance not pointer in resize".into());
     }

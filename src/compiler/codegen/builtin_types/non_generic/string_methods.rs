@@ -1,3 +1,4 @@
+use crate::compiler::error::TlError;
 use crate::compiler::codegen::CodeGenerator;
 use crate::compiler::ast::Type;
 use inkwell::values::{BasicValueEnum, ValueKind};
@@ -8,7 +9,7 @@ pub fn compile_print<'ctx>(
     obj: BasicValueEnum<'ctx>,
     _obj_ty: Type,
     _args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let fn_val = codegen
         .module
         .get_function("tl_print_string")
@@ -29,7 +30,7 @@ pub fn compile_display<'ctx>(
     obj: BasicValueEnum<'ctx>,
     _obj_ty: Type,
     _args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let fn_val = codegen
         .module
         .get_function("tl_display_string")
@@ -51,7 +52,7 @@ pub fn compile_len<'ctx>(
     obj: BasicValueEnum<'ctx>,
     _obj_ty: Type,
     _args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let str_struct_ty = codegen.context.struct_type(&[
         codegen.context.ptr_type(inkwell::AddressSpace::default()).into(),
         codegen.context.i64_type().into(),
@@ -70,7 +71,7 @@ pub fn compile_contains<'ctx>(
     obj: BasicValueEnum<'ctx>,
     _obj_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 { return Err("String.contains requires 1 argument".into()); }
     let fn_val = codegen.module.get_function("tl_string_contains")
         .ok_or("tl_string_contains not found")?;
@@ -89,7 +90,7 @@ pub fn compile_concat<'ctx>(
     obj: BasicValueEnum<'ctx>,
     _obj_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 { return Err("String.concat requires 1 argument".into()); }
     let fn_val = codegen.module.get_function("tl_string_concat")
         .ok_or("tl_string_concat not found")?;
@@ -108,7 +109,7 @@ pub fn compile_char_at<'ctx>(
     obj: BasicValueEnum<'ctx>,
     _obj_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 { return Err("String.char_at requires 1 argument".into()); }
     let fn_val = codegen.module.get_function("tl_string_char_at")
         .ok_or("tl_string_char_at not found")?;
@@ -127,7 +128,7 @@ pub fn compile_to_i64<'ctx>(
     obj: BasicValueEnum<'ctx>,
     _obj_ty: Type,
     _args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let fn_val = codegen.module.get_function("tl_string_to_i64")
         .ok_or("tl_string_to_i64 not found")?;
     let call = codegen.builder.build_call(fn_val, &[obj.into()], "to_i64_res")
@@ -145,7 +146,7 @@ pub fn compile_trim<'ctx>(
     obj: BasicValueEnum<'ctx>,
     _obj_ty: Type,
     _args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let fn_val = codegen.module.get_function("tl_string_trim")
         .ok_or("tl_string_trim not found")?;
     let call = codegen.builder.build_call(fn_val, &[obj.into()], "trim_res")
@@ -163,7 +164,7 @@ pub fn compile_starts_with<'ctx>(
     obj: BasicValueEnum<'ctx>,
     _obj_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 { return Err("String.starts_with requires 1 argument".into()); }
     let fn_val = codegen.module.get_function("tl_string_starts_with")
         .ok_or("tl_string_starts_with not found")?;
@@ -182,7 +183,7 @@ pub fn compile_ends_with<'ctx>(
     obj: BasicValueEnum<'ctx>,
     _obj_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 { return Err("String.ends_with requires 1 argument".into()); }
     let fn_val = codegen.module.get_function("tl_string_ends_with")
         .ok_or("tl_string_ends_with not found")?;
@@ -201,7 +202,7 @@ pub fn compile_replace<'ctx>(
     obj: BasicValueEnum<'ctx>,
     _obj_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 2 { return Err("String.replace requires 2 arguments".into()); }
     let fn_val = codegen.module.get_function("tl_string_replace")
         .ok_or("tl_string_replace not found")?;
@@ -220,7 +221,7 @@ pub fn compile_substring<'ctx>(
     obj: BasicValueEnum<'ctx>,
     _obj_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 2 { return Err("String.substring requires 2 arguments".into()); }
     let fn_val = codegen.module.get_function("tl_string_substring")
         .ok_or("tl_string_substring not found")?;
@@ -239,7 +240,7 @@ pub fn compile_is_empty<'ctx>(
     obj: BasicValueEnum<'ctx>,
     _obj_ty: Type,
     _args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let fn_val = codegen.module.get_function("tl_string_is_empty")
         .ok_or("tl_string_is_empty not found")?;
     let call = codegen.builder.build_call(fn_val, &[obj.into()], "is_empty_res")
@@ -257,7 +258,7 @@ pub fn compile_to_uppercase<'ctx>(
     obj: BasicValueEnum<'ctx>,
     _obj_ty: Type,
     _args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let fn_val = codegen.module.get_function("tl_string_to_uppercase")
         .ok_or("tl_string_to_uppercase not found")?;
     let call = codegen.builder.build_call(fn_val, &[obj.into()], "to_upper_res")
@@ -275,7 +276,7 @@ pub fn compile_to_lowercase<'ctx>(
     obj: BasicValueEnum<'ctx>,
     _obj_ty: Type,
     _args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let fn_val = codegen.module.get_function("tl_string_to_lowercase")
         .ok_or("tl_string_to_lowercase not found")?;
     let call = codegen.builder.build_call(fn_val, &[obj.into()], "to_lower_res")
@@ -293,7 +294,7 @@ pub fn compile_index_of<'ctx>(
     obj: BasicValueEnum<'ctx>,
     _obj_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 { return Err("String.index_of requires 1 argument".into()); }
     let fn_val = codegen.module.get_function("tl_string_index_of")
         .ok_or("tl_string_index_of not found")?;
@@ -312,7 +313,7 @@ pub fn compile_split<'ctx>(
     obj: BasicValueEnum<'ctx>,
     _obj_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 { return Err("String.split requires 1 argument".into()); }
     let fn_val = codegen.module.get_function("tl_string_split")
         .ok_or("tl_string_split not found")?;
@@ -331,7 +332,7 @@ pub fn compile_to_f64<'ctx>(
     obj: BasicValueEnum<'ctx>,
     _obj_ty: Type,
     _args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let fn_val = codegen.module.get_function("tl_string_to_f64")
         .ok_or("tl_string_to_f64 not found")?;
     let call = codegen.builder.build_call(fn_val, &[obj.into()], "to_f64_res")
@@ -349,7 +350,7 @@ pub fn compile_repeat<'ctx>(
     obj: BasicValueEnum<'ctx>,
     _obj_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 { return Err("String.repeat requires 1 argument".into()); }
     let fn_val = codegen.module.get_function("tl_string_repeat")
         .ok_or("tl_string_repeat not found")?;
@@ -368,7 +369,7 @@ pub fn compile_chars<'ctx>(
     obj: BasicValueEnum<'ctx>,
     _obj_ty: Type,
     _args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let fn_val = codegen.module.get_function("tl_string_chars")
         .ok_or("tl_string_chars not found")?;
     let call = codegen.builder.build_call(fn_val, &[obj.into()], "chars_res")
@@ -385,7 +386,7 @@ pub fn compile_from_chars<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
     _hint: Option<&Type>
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 { return Err("String::from_chars requires 1 argument".into()); }
     let fn_val = codegen.module.get_function("tl_string_from_chars")
         .ok_or("tl_string_from_chars not found")?;
@@ -404,7 +405,7 @@ pub fn compile_to_bytes<'ctx>(
     obj: BasicValueEnum<'ctx>,
     _obj_ty: Type,
     _args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let fn_val = codegen.module.get_function("tl_string_to_bytes")
         .ok_or("tl_string_to_bytes not found")?;
     let call = codegen.builder.build_call(fn_val, &[obj.into()], "to_bytes_res")
@@ -421,7 +422,7 @@ pub fn compile_from_utf8<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
     _hint: Option<&Type>
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 { return Err("String::from_utf8 requires 1 argument".into()); }
     let fn_val = codegen.module.get_function("tl_string_from_utf8")
         .ok_or("tl_string_from_utf8 not found")?;

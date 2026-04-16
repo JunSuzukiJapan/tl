@@ -1,3 +1,4 @@
+use crate::compiler::error::TlError;
 use crate::compiler::codegen::CodeGenerator;
 use crate::compiler::ast::Type;
 use inkwell::values::BasicValueEnum;
@@ -8,7 +9,7 @@ pub fn compile_print<'ctx>(
     obj: BasicValueEnum<'ctx>,
     _obj_ty: Type,
     _args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let fn_val = codegen
         .module
         .get_function("tl_tensor_print")
@@ -29,7 +30,7 @@ pub fn compile_debug_ptr<'ctx>(
     obj: BasicValueEnum<'ctx>,
     _obj_ty: Type,
     _args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let fn_val = codegen
         .module
         .get_function("tl_metal_debug_tensor")
@@ -55,7 +56,7 @@ pub fn compile_display<'ctx>(
     obj: BasicValueEnum<'ctx>,
     _obj_ty: Type,
     _args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let fn_val = codegen
         .module
         .get_function("tl_tensor_display")
@@ -76,7 +77,7 @@ pub fn compile_slice2<'ctx>(
     obj: BasicValueEnum<'ctx>,
     obj_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let fn_val = codegen
         .module
         .get_function("tl_tensor_slice")
@@ -103,7 +104,7 @@ pub fn compile_slice3<'ctx>(
     obj: BasicValueEnum<'ctx>,
     obj_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let fn_val = codegen
         .module
         .get_function("tl_tensor_slice")
@@ -130,7 +131,7 @@ pub fn compile_slice4<'ctx>(
     obj: BasicValueEnum<'ctx>,
     obj_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let fn_val = codegen
         .module
         .get_function("tl_tensor_slice")

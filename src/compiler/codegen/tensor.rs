@@ -1,3 +1,4 @@
+use crate::compiler::error::TlError;
 use super::expr::cast_value_to_i64;
 use super::CodeGenerator;
 use crate::compiler::ast::*;
@@ -14,7 +15,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         reduction_indices: &[String],
         clauses: &[ComprehensionClause],
         body: Option<&Expr>,
-    ) -> Result<(), String> {
+    ) -> Result<(), TlError> {
         let i64_type = self.context.i64_type();
         let f32_type = self.context.f32_type();
 
@@ -89,7 +90,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         for idx in indices {
             if !bound_vars.contains(idx) {
                 if !index_bounds.contains_key(idx) {
-                    return Err(format!("Implicit bound not found for index {}", idx));
+                    return Err(format!("Implicit bound not found for index {}", idx).into());
                 }
                 let limit = *index_bounds.get(idx).unwrap();
                 loop_ranges.insert(idx.clone(), (i64_type.const_int(0, false), limit));
@@ -104,7 +105,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 if !index_bounds.contains_key(idx) {
                     // Try to infer from explicit intersection analysis from stmt.rs
                     // If not found in index_bounds (which comes from body traversal), it's an error.
-                     return Err(format!("Implicit bound not found for reduction index {}", idx));
+                     return Err(format!("Implicit bound not found for reduction index {}", idx).into());
                 }
                 let limit = *index_bounds.get(idx).unwrap();
                 loop_ranges.insert(idx.clone(), (i64_type.const_int(0, false), limit));
@@ -334,7 +335,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let c_bool = if let Type::Bool = c_ty {
                     c_val.into_int_value()
                 } else {
-                    return Err(format!("Condition must be bool, found {:?}", c_ty));
+                    return Err(format!("Condition must be bool, found {:?}", c_ty).into());
                 };
                 final_cond = match final_cond {
                     None => Some(c_bool),
@@ -414,7 +415,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .map_err(|e| e.to_string())?;
                 vec![f_val.into()]
             }
-            _ => return Err(format!("Unsupported body type: {:?}", rhs_ty)),
+            _ => return Err(format!("Unsupported body type: {:?}", rhs_ty).into()),
         };
 
         // Store Elements (Accumulate or Overwrite)
@@ -588,7 +589,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         &mut self,
         expr: &Expr,
         _expected_dims: usize,
-    ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
         let (val, ty) = self.compile_expr(expr)?;
 
         match ty {
@@ -634,7 +635,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 Ok((tensor_ptr, Type::Tensor(Box::new(Type::F32), 0)))
             }
-            _ => Err(format!("Cannot convert {:?} to Tensor", ty)),
+            _ => Err(format!("Cannot convert {:?} to Tensor", ty).into()),
         }
     }
 
@@ -643,7 +644,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         &mut self,
         _lhs_indices: &[String],
         _value: &Expr,
-    ) -> Result<Option<inkwell::values::PointerValue<'ctx>>, String> {
+    ) -> Result<Option<inkwell::values::PointerValue<'ctx>>, TlError> {
         Ok(None)
     }
 
@@ -651,7 +652,7 @@ impl<'ctx> CodeGenerator<'ctx> {
     pub(crate) fn lookup_variable_ptr(
         &self,
         name: &str,
-    ) -> Result<inkwell::values::PointerValue<'ctx>, String> {
+    ) -> Result<inkwell::values::PointerValue<'ctx>, TlError> {
         for scope in self.variables.iter().rev() {
             if let Some((val, Type::Tensor(_, _), _)) = scope.get(name) {
                 if val.is_pointer_value() {
@@ -665,7 +666,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
             }
         }
-        Err(format!("Variable {} not found or not a tensor", name))
+        Err(format!("Variable {} not found or not a tensor", name).into())
     }
 
     fn build_loop_start(
@@ -683,7 +684,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             PhiValue<'ctx>,
             PointerValue<'ctx>,
         ),
-        String,
+        TlError,
     > {
         let i64_type = self.context.i64_type();
 

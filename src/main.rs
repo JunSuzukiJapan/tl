@@ -175,11 +175,7 @@ fn run_compile_mode(
         let mut codegen = CodeGenerator::new(&context, module_name);
 
         if let Err(e) = codegen.compile_module(&ast, "main") {
-            let tl_err = TlError::Codegen {
-                kind: tl_lang::compiler::error::CodegenErrorKind::Generic(e),
-                span: None,
-            }
-            .with_file(file.to_str().unwrap_or("unknown"));
+            let tl_err = e.with_file(file.to_str().unwrap_or("unknown"));
             print_tl_error_with_source(&tl_err, &source, file.to_str());
             std::process::exit(1);
         }
@@ -322,11 +318,7 @@ fn run_interpret_mode(
     let mut codegen = CodeGenerator::new(&context, "main");
 
     if let Err(e) = codegen.compile_module(&combined_module, "main") {
-        let tl_err = TlError::Codegen {
-            kind: tl_lang::compiler::error::CodegenErrorKind::Generic(e),
-            span: None,
-        };
-        print_tl_error_with_source(&tl_err, &combined_source, None);
+        print_tl_error_with_source(&e, &combined_source, None);
         std::process::exit(1);
     }
 

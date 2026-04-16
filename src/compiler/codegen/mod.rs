@@ -1,3 +1,4 @@
+use crate::compiler::error::TlError;
 use crate::compiler::ast::*;
 
 
@@ -158,24 +159,24 @@ impl<'ctx> CodeGenerator<'ctx> {
     // --- Error-safe LLVM helpers ---
 
     /// 現在のビルダーが挿入中の基本ブロックを取得する
-    pub(crate) fn current_block(&self) -> Result<inkwell::basic_block::BasicBlock<'ctx>, String> {
+    pub(crate) fn current_block(&self) -> Result<inkwell::basic_block::BasicBlock<'ctx>, TlError> {
         self.builder
             .get_insert_block()
-            .ok_or_else(|| "no current basic block".to_string())
+            .ok_or_else(|| "no current basic block".into())
     }
 
     /// 現在の基本ブロックが属する関数を取得する
-    pub(crate) fn current_function(&self) -> Result<inkwell::values::FunctionValue<'ctx>, String> {
+    pub(crate) fn current_function(&self) -> Result<inkwell::values::FunctionValue<'ctx>, TlError> {
         self.current_block()?
             .get_parent()
-            .ok_or_else(|| "current block has no parent function".to_string())
+            .ok_or_else(|| "current block has no parent function".into())
     }
 
     /// モジュールから関数を名前で取得する
-    pub(crate) fn get_fn(&self, name: &str) -> Result<inkwell::values::FunctionValue<'ctx>, String> {
+    pub(crate) fn get_fn(&self, name: &str) -> Result<inkwell::values::FunctionValue<'ctx>, TlError> {
         self.module
             .get_function(name)
-            .ok_or_else(|| format!("function '{}' not found in module", name))
+            .ok_or_else(|| format!("function '{}' not found in module", name).into())
     }
 
     fn register_builtin_return_types(&mut self) {
@@ -203,7 +204,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         self.module.print_to_stderr();
     }
 
-    pub fn jit_execute(&self, function_name: &str) -> Result<u64, String> {
+    pub fn jit_execute(&self, function_name: &str) -> Result<u64, TlError> {
         unsafe {
             let function = self
                 .execution_engine
@@ -215,7 +216,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
     }
 
-    pub fn emit_object_file(&self, path: &std::path::Path) -> Result<(), String> {
+    pub fn emit_object_file(&self, path: &std::path::Path) -> Result<(), TlError> {
         use inkwell::targets::{
             CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine,
         };
@@ -234,14 +235,14 @@ impl<'ctx> CodeGenerator<'ctx> {
                 RelocMode::Default,
                 CodeModel::Default,
             )
-            .ok_or("Failed to create target machine")?;
+            .ok_or_else(|| TlError::from("Failed to create target machine"))?;
 
         target_machine
             .write_to_file(&self.module, FileType::Object, path)
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string().into())
     }
 
-    pub fn emit_assembly_file(&self, path: &std::path::Path) -> Result<(), String> {
+    pub fn emit_assembly_file(&self, path: &std::path::Path) -> Result<(), TlError> {
         use inkwell::targets::{
             CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine,
         };
@@ -260,17 +261,17 @@ impl<'ctx> CodeGenerator<'ctx> {
                 RelocMode::Default,
                 CodeModel::Default,
             )
-            .ok_or("Failed to create target machine")?;
+            .ok_or_else(|| TlError::from("Failed to create target machine"))?;
 
         target_machine
             .write_to_file(&self.module, FileType::Assembly, path)
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string().into())
     }
 
-    pub fn emit_llvm_file(&self, path: &std::path::Path) -> Result<(), String> {
+    pub fn emit_llvm_file(&self, path: &std::path::Path) -> Result<(), TlError> {
         self.module
             .print_to_file(path)
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string().into())
     }
 
     pub(crate) fn push_temp_scope(&mut self) {
@@ -278,7 +279,7 @@ impl<'ctx> CodeGenerator<'ctx> {
     }
 
     #[allow(dead_code)]
-    pub(crate) fn pop_temp_scope(&mut self) -> Result<(), String> {
+    pub(crate) fn pop_temp_scope(&mut self) -> Result<(), TlError> {
         let temps = self.temporaries.pop().expect("Temporary stack underflow");
         for (val, ty, cleanup) in temps {
             if cleanup != CLEANUP_NONE {
@@ -354,7 +355,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         &self,
         call_site_value: inkwell::values::CallSiteValue<'ctx>,
         context_msg: &str,
-    ) -> Result<BasicValueEnum<'ctx>, String> {
+    ) -> Result<BasicValueEnum<'ctx>, TlError> {
         let (file, line, col) = if let Some(span) = &self.current_span {
             (span.file.as_deref(), span.line as u32, span.column as u32)
         } else {
@@ -370,7 +371,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         file: Option<&str>,
         line: u32,
         col: u32,
-    ) -> Result<BasicValueEnum<'ctx>, String> {
+    ) -> Result<BasicValueEnum<'ctx>, TlError> {
         let basic_value = match call_site_value.try_as_basic_value() {
             inkwell::values::ValueKind::Basic(v) => v,
             _ => return Err("Call returned void".into()),
@@ -622,7 +623,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
     }
 
-    pub(crate) fn emit_trace_mem(&self, tag: &str) -> Result<(), String> {
+    pub(crate) fn emit_trace_mem(&self, tag: &str) -> Result<(), TlError> {
         let f = match self.module.get_function("tl_trace_mem") {
             Some(f) => f,
             None => return Ok(()),
@@ -663,7 +664,7 @@ impl<'ctx> CodeGenerator<'ctx> {
     }
 
     #[allow(dead_code)]
-    pub(crate) fn emit_log_alloc(&self, ptr: inkwell::values::BasicValueEnum<'ctx>, size: inkwell::values::IntValue<'ctx>) -> Result<(), String> {
+    pub(crate) fn emit_log_alloc(&self, ptr: inkwell::values::BasicValueEnum<'ctx>, size: inkwell::values::IntValue<'ctx>) -> Result<(), TlError> {
         // tl_log_alloc(ptr, size, file, line)
         let f_name = "tl_log_alloc";
         let f = if let Some(f) = self.module.get_function(f_name) {
@@ -720,7 +721,7 @@ impl<'ctx> CodeGenerator<'ctx> {
     }
 
 /*
-    pub(crate) fn emit_log_free(&self, ptr: inkwell::values::BasicValueEnum<'ctx>) -> Result<(), String> {
+    pub(crate) fn emit_log_free(&self, ptr: inkwell::values::BasicValueEnum<'ctx>) -> Result<(), TlError> {
         // tl_log_free(ptr, file, line)
         let f_name = "tl_log_free";
         let f = if let Some(f) = self.module.get_function(f_name) {
@@ -795,7 +796,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
     /// Null out a variable (Move Semantics) so it won't be double-freed
     #[allow(dead_code)]
-    pub(crate) fn null_out_variable(&self, name: &str) -> Result<(), String> {
+    pub(crate) fn null_out_variable(&self, name: &str) -> Result<(), TlError> {
         for scope in self.variables.iter().rev() {
             if let Some((val, ty, _should_free)) = scope.get(name) {
                 // Only for types that would be freed recursively
@@ -828,7 +829,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
     }
 
-    fn compile_struct_defs(&mut self, structs: &[StructDef]) -> Result<(), String> {
+    fn compile_struct_defs(&mut self, structs: &[StructDef]) -> Result<(), TlError> {
         // Pass 1: Opaque
         for s in structs {
             if !s.generics.is_empty() {
@@ -897,7 +898,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         } else {
                              // If definition not found yet, assume pointer (safe default for forward decls?)
                              // But compiler should have all defs in Pass 1.
-                             return Err(format!("Struct definition {} not found during compilation", name));
+                             return Err(format!("Struct definition {} not found during compilation", name).into());
                         };
 
                         // ZST Strategy V3.2: Even ZSTs are treated as Pointers (NULL).
@@ -916,7 +917,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                     .into()
                             }
                         } else {
-                            return Err(format!("Struct type {} not found", name));
+                            return Err(format!("Struct type {} not found", name).into());
                         }
                         */
                     }
@@ -944,7 +945,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         return Err(format!(
                             "Unsupported field type in struct {}: {:?}",
                             s.name, field_type
-                        ))
+                        ).into())
                     }
                 };
                 field_types.push(llvm_type);
@@ -956,7 +957,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         Ok(())
     }
 
-    fn compile_enum_defs(&mut self, enums: &[EnumDef]) -> Result<(), String> {
+    fn compile_enum_defs(&mut self, enums: &[EnumDef]) -> Result<(), TlError> {
         // Pass 1: Opaque
         for e in enums {
             if !e.generics.is_empty() {
@@ -1074,7 +1075,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             return Err(format!(
                                 "Unsupported type in enum variant {}: {:?}",
                                 v.name, ty
-                            ))
+                            ).into())
                         }
                     };
                     field_types.push(field_llvm_ty);
@@ -1168,7 +1169,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         false
     }
 
-    fn compile_impl_blocks(&mut self, impls: &[ImplBlock]) -> Result<(), String> {
+    fn compile_impl_blocks(&mut self, impls: &[ImplBlock]) -> Result<(), TlError> {
         // Pass 1: Declare all methods (Prototypes) and register return types
         for imp in impls {
             // Check if generic impl
@@ -1571,14 +1572,14 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 if !function.verify(true) {
                     function.print_to_stderr();
-                    return Err(format!("Invalid generated method {}", mangled_name));
+                    return Err(format!("Invalid generated method {}", mangled_name).into());
                 }
             }
         }
         Ok(())
     }
 
-    pub fn compile_module(&mut self, ast_module: &Module, module_name: &str) -> Result<(), String> {
+    pub fn compile_module(&mut self, ast_module: &Module, module_name: &str) -> Result<(), TlError> {
 
 
         // Generate Logic KB initialization function
@@ -1699,7 +1700,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Apply LLVM optimizations
         if let Err(e) = self.module.verify() {
             self.module.print_to_stderr();
-            return Err(format!("Module verification failed: {}", e.to_string()));
+            return Err(format!("Module verification failed: {}", e).into());
         }
 
         self.apply_optimizations();
@@ -1735,7 +1736,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         false
     }
 
-    pub(crate) fn compile_fn_proto(&mut self, func: &FunctionDef) -> Result<FunctionValue<'ctx>, String> {
+    pub(crate) fn compile_fn_proto(&mut self, func: &FunctionDef) -> Result<FunctionValue<'ctx>, TlError> {
         if func.name.contains("Vec") && func.name.contains("K") {
             panic!("COMPILE_FN_PROTO_CALLED_FOR_{}!!", func.name);
         }
@@ -1806,7 +1807,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         Ok(val)
     }
 
-    pub(crate) fn compile_fn(&mut self, func: &FunctionDef, extra_stmts: &[Stmt]) -> Result<(), String> {
+    pub(crate) fn compile_fn(&mut self, func: &FunctionDef, extra_stmts: &[Stmt]) -> Result<(), TlError> {
         let old_ret_type = self.current_fn_return_type.clone();
         self.current_fn_return_type = Some(func.return_type.clone());
 
@@ -1897,7 +1898,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 inkwell::values::BasicValueEnum::ArrayValue(a) => {
                     self.builder.build_store(alloca, a).map_err(|e| e.to_string())?
                 }
-                _ => return Err(format!("Unsupported arg type: {:?}", arg)),
+                _ => return Err(format!("Unsupported arg type: {:?}", arg).into()),
             };
 
             // Insert into current scope with should_free=FALSE
@@ -2170,7 +2171,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             log::error!("=== LLVM VERIFICATION FAILED FOR: {} ===", func.name);
             // function.verify(true) should print the error to stderr
             function.print_to_stderr();
-            return Err(format!("Invalid generated function {}", func.name));
+            return Err(format!("Invalid generated function {}", func.name).into());
         }
 
         self.current_fn_return_type = old_ret_type;
@@ -2182,7 +2183,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Manual pass management requires exact matching of inkwell/LLVM versioned methods.
     }
 
-    fn compile_relation_wrappers(&mut self, relations: &[RelationDecl]) -> Result<(), String> {
+    fn compile_relation_wrappers(&mut self, relations: &[RelationDecl]) -> Result<(), TlError> {
         if relations.is_empty() {
             return Ok(());
         }
@@ -2326,7 +2327,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .try_as_basic_value()
                 {
                     ValueKind::Basic(v) => v,
-                    _ => return Err("Expected value from tl_query".to_string()),
+                    _ => return Err("Expected value from tl_query".to_string().into()),
                 };
 
                 // Free args_tensor (it was created for this call)
@@ -2357,13 +2358,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .try_as_basic_value()
                 {
                     ValueKind::Basic(v) => v,
-                    _ => return Err("Expected value from tl_query".to_string()),
+                    _ => return Err("Expected value from tl_query".to_string().into()),
                 };
                 self.builder.build_return(Some(&result_tensor)).map_err(|e| e.to_string())?;
             }
 
             if !function.verify(true) {
-                return Err(format!("Invalid generated relation wrapper {}", func_name));
+                return Err(format!("Invalid generated relation wrapper {}", func_name).into());
             }
         }
         Ok(())

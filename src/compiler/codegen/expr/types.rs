@@ -3,6 +3,7 @@
 //! TL コンパイラ codegen で使われるメソッド・組み込み関数の型エイリアス、
 //! enum（BuiltinFn / InstanceMethod / StaticMethod）、および
 //! 各マネージャー構造体（BuiltinManager / InstanceMethodManager / StaticMethodManager）を定義する。
+use crate::compiler::error::TlError;
 
 use std::collections::HashMap;
 
@@ -17,13 +18,13 @@ use crate::compiler::codegen::CodeGenerator;
 pub type BuiltinFnEval = for<'a, 'ctx> fn(
     &'a mut CodeGenerator<'ctx>,
     Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String>;
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError>;
 
 /// 引数を未評価（AST ノードのまま）で受け取る組み込み関数の fn ポインタ型。
 pub type BuiltinFnUneval = for<'a, 'ctx> fn(
     &'a mut CodeGenerator<'ctx>,
     &[Expr],
-) -> Result<(BasicValueEnum<'ctx>, Type), String>;
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError>;
 
 /// インスタンスメソッド（引数評価済み）の fn ポインタ型。
 pub type InstanceMethodEval = for<'a, 'ctx> fn(
@@ -31,7 +32,7 @@ pub type InstanceMethodEval = for<'a, 'ctx> fn(
     BasicValueEnum<'ctx>, // レシーバ値
     Type,                 // レシーバ型
     Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String>;
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError>;
 
 /// インスタンスメソッド（引数未評価）の fn ポインタ型。
 pub type InstanceMethodUneval = for<'a, 'ctx> fn(
@@ -39,21 +40,21 @@ pub type InstanceMethodUneval = for<'a, 'ctx> fn(
     &Expr,   // レシーバ式
     &str,    // メソッド名
     &[Expr], // 引数
-) -> Result<(BasicValueEnum<'ctx>, Type), String>;
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError>;
 
 /// 静的メソッド（引数評価済み）の fn ポインタ型。
 pub type StaticMethodEval = for<'a, 'ctx> fn(
     &'a mut CodeGenerator<'ctx>,
     Vec<(BasicValueEnum<'ctx>, Type)>,
     Option<&Type>, // 型ヒント
-) -> Result<(BasicValueEnum<'ctx>, Type), String>;
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError>;
 
 /// 静的メソッド（引数未評価）の fn ポインタ型。
 pub type StaticMethodUneval = for<'a, 'ctx> fn(
     &'a mut CodeGenerator<'ctx>,
     &[Expr],       // 引数
     Option<&Type>, // 型ヒント
-) -> Result<(BasicValueEnum<'ctx>, Type), String>;
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError>;
 
 // ── enum ──────────────────────────────────────────────────────────────────────
 

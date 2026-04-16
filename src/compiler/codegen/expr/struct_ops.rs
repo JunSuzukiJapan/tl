@@ -2,6 +2,7 @@
 //!
 //! 構造体の初期化・アロケーション。
 //! compile_struct_init, compile_struct_alloc。
+use crate::compiler::error::TlError;
 
 use inkwell::values::*;
 
@@ -15,7 +16,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         name: &str,
         generics: &[Type],
         fields: &[(String, Expr)],
-    ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
         // Early detection: If `name` is already a mangled name that exists in struct_types,
         // use it directly and ignore generics (avoids double-mangling)
         if !generics.is_empty() && mangle_has_args(name) {
@@ -41,7 +42,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                      if let Some(t) = self.struct_types.get(&mangled_name) {
                          *t
                      } else {
-                         return Err(format!("Struct type {} not found after monomorphization", mangled_name));
+                         return Err(format!("Struct type {} not found after monomorphization", mangled_name).into());
                      }
                  } else {
                      // Recovery for double-mangled names (e.g. HashMap_i64_i64 -> HashMap)
@@ -68,7 +69,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                  .ok_or(format!("Struct type {} not found (tried {} and {})", name, mangled_name, base_mangled))?
                          }
                      } else {
-                         return Err(format!("Monomorphization failed for {} with generics {:?}", name, generics));
+                         return Err(format!("Monomorphization failed for {} with generics {:?}", name, generics).into());
                      }
                  }
              };
@@ -147,7 +148,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         struct_type: &inkwell::types::StructType<'ctx>,
         struct_def: &crate::compiler::ast::StructDef,
         fields: &[(String, Expr)],
-    ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
         let name = &struct_def.name; // Use resolved name
 
 

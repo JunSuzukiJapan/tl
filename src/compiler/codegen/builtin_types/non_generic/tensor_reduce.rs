@@ -1,3 +1,4 @@
+use crate::compiler::error::TlError;
 use crate::compiler::codegen::CodeGenerator;
 use crate::compiler::ast::Type;
 use inkwell::values::BasicValueEnum;
@@ -10,7 +11,7 @@ fn compile_tensor_reduce_op<'ctx>(
     obj_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
     op_name: &str,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let fn_name = format!("tl_tensor_{}", op_name);
     let fn_val = codegen
         .module
@@ -32,28 +33,28 @@ fn compile_tensor_reduce_op<'ctx>(
 }
 
 // ---- softmax(dim) -> Tensor ----
-pub fn compile_softmax<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+pub fn compile_softmax<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     compile_tensor_reduce_op(c, o, t, a, "softmax")
 }
 
 // ---- log_softmax(dim) -> Tensor ----
-pub fn compile_log_softmax<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+pub fn compile_log_softmax<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     compile_tensor_reduce_op(c, o, t, a, "log_softmax")
 }
 
 // ---- matmul(other) -> Tensor ----
-pub fn compile_matmul<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+pub fn compile_matmul<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     compile_tensor_reduce_op(c, o, t, a, "matmul")
 }
 
 // ---- cross_entropy(target) -> Tensor ----
-pub fn compile_cross_entropy<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+pub fn compile_cross_entropy<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     compile_tensor_reduce_op(c, o, t, a, "cross_entropy")
 }
 
 // ---- pow(exp) -> Tensor ----
 // FFI: tl_tensor_pow(ptr, ptr) for tensor, tl_tensor_pow_scalar(ptr, f32) for scalar
-pub fn compile_pow<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+pub fn compile_pow<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if a.len() != 1 { return Err("pow requires 1 argument".into()); }
     let (arg_val, arg_ty) = &a[0];
     
@@ -99,32 +100,32 @@ pub fn compile_pow<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, t
             let res = c.check_tensor_result(call, "pow_error")?;
             Ok((res, t))
         }
-        _ => Err(format!("pow: unsupported argument type {:?}", arg_ty)),
+        _ => Err(format!("pow: unsupported argument type {:?}", arg_ty).into()),
     }
 }
 
 
 // ---- sum_dim(dim, keepdim) -> Tensor ----
-pub fn compile_sum_dim<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+pub fn compile_sum_dim<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     compile_tensor_reduce_op(c, o, t, a, "sum_dim")
 }
 
 // ---- mean_dim(dim, keepdim) -> Tensor ----
-pub fn compile_mean_dim<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+pub fn compile_mean_dim<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     compile_tensor_reduce_op(c, o, t, a, "mean_dim")
 }
 
 // ---- max_dim(dim) -> Tensor ----
-pub fn compile_max_dim<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+pub fn compile_max_dim<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     compile_tensor_reduce_op(c, o, t, a, "max_dim")
 }
 
 // ---- min_dim(dim) -> Tensor ----
-pub fn compile_min_dim<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+pub fn compile_min_dim<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     compile_tensor_reduce_op(c, o, t, a, "min_dim")
 }
 
 // ---- mod(divisor) -> Tensor ----
-pub fn compile_mod<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+pub fn compile_mod<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     compile_tensor_reduce_op(c, o, t, a, "mod")
 }

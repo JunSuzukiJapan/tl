@@ -1,3 +1,4 @@
+use crate::compiler::error::TlError;
 pub mod types;
 mod tensor_methods;
 mod builtin_fns;
@@ -58,12 +59,12 @@ fn compile_system_method<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     fn_name: &str,
     ret_type: Type,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let fn_val = codegen.module.get_function(fn_name).ok_or(format!("{} not found", fn_name))?;
     let call = codegen.builder.build_call(fn_val, &[], "sys_call").map_err(|e| e.to_string())?;
     let res = match call.try_as_basic_value() {
         inkwell::values::ValueKind::Basic(v) => v,
-        _ => return Err(format!("Invalid return from {}", fn_name)),
+        _ => return Err(format!("Invalid return from {}", fn_name).into()),
     };
     Ok((res, ret_type))
 }
@@ -72,7 +73,7 @@ pub fn compile_system_memory_mb<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
     _target: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if !args.is_empty() { return Err("System::memory_mb takes no arguments".into()); }
     compile_system_method(codegen, "tl_get_memory_mb", Type::I64)
 }
@@ -81,7 +82,7 @@ pub fn compile_system_metal_pool_bytes<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
     _target: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if !args.is_empty() { return Err("System::metal_pool_bytes takes no arguments".into()); }
     compile_system_method(codegen, "tl_get_metal_pool_bytes", Type::I64)
 }
@@ -90,7 +91,7 @@ pub fn compile_system_metal_pool_mb<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
     _target: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if !args.is_empty() { return Err("System::metal_pool_mb takes no arguments".into()); }
     compile_system_method(codegen, "tl_get_metal_pool_mb", Type::I64)
 }
@@ -99,7 +100,7 @@ pub fn compile_system_metal_pool_count<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
     _target: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if !args.is_empty() { return Err("System::metal_pool_count takes no arguments".into()); }
     compile_system_method(codegen, "tl_get_metal_pool_count", Type::I64)
 }
@@ -108,7 +109,7 @@ pub fn compile_system_metal_sync<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
     _target: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if !args.is_empty() { return Err("System::metal_sync takes no arguments".into()); }
     compile_system_method(codegen, "tl_metal_synchronize", Type::Void)
 }
@@ -117,7 +118,7 @@ pub fn compile_system_pool_count<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
     _target: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if !args.is_empty() { return Err("System::pool_count takes no arguments".into()); }
     compile_system_method(codegen, "tl_get_pool_count", Type::I64)
 }
@@ -126,7 +127,7 @@ pub fn compile_system_refcount_count<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
     _target: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if !args.is_empty() { return Err("System::refcount_count takes no arguments".into()); }
     compile_system_method(codegen, "tl_get_refcount_count", Type::I64)
 }
@@ -135,7 +136,7 @@ pub fn compile_system_scope_depth<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
     _target: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if !args.is_empty() { return Err("System::scope_depth takes no arguments".into()); }
     compile_system_method(codegen, "tl_get_scope_depth", Type::I64)
 }
@@ -145,7 +146,7 @@ pub fn compile_path_exists<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
     _target: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 { return Err("Path::exists requires 1 argument".into()); }
     let fn_val = codegen.module.get_function("tl_path_exists").ok_or("tl_path_exists not found")?;
     let call = codegen.builder.build_call(fn_val, &[args[0].0.into()], "path_exists").map_err(|e| e.to_string())?;
@@ -173,12 +174,12 @@ impl<'ctx> CodeGenerator<'ctx> {
         obj_val: BasicValueEnum<'ctx>,
         obj_ty: &Type,
         field_name: &str,
-    ) -> Result<BasicValueEnum<'ctx>, String> {
+    ) -> Result<BasicValueEnum<'ctx>, TlError> {
         let struct_name = match obj_ty {
             Type::Struct(name, _) => name.clone(),
 
             Type::String(_) => "String".to_string(),
-            _ => return Err(format!("Expected struct type for field {} (got {:?})", field_name, obj_ty)),
+            _ => return Err(format!("Expected struct type for field {} (got {:?})", field_name, obj_ty).into()),
         };
 
         let simple_struct_name = struct_name.as_str();
@@ -302,7 +303,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         &self,
         val: BasicValueEnum<'ctx>,
         ty: &Type,
-    ) -> Result<(), String> {
+    ) -> Result<(), TlError> {
         // Only register tensors
         if !matches!(ty, Type::Tensor(_, _)) {
             return Ok(());
@@ -339,7 +340,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         struct_ptr: inkwell::values::BasicValueEnum<'ctx>,
         struct_name: &str,
         prefix: String,
-    ) -> Result<(), String> {
+    ) -> Result<(), TlError> {
         // Extract simple name from module path (e.g., "mnist_common::Linear" -> "Linear")
         let simple_name = struct_name;
 
@@ -411,7 +412,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         struct_ptr: inkwell::values::BasicValueEnum<'ctx>,
         struct_name: &str,
         prefix: String,
-    ) -> Result<(), String> {
+    ) -> Result<(), TlError> {
         // Extract simple name from module path
         let simple_name = struct_name;
 
@@ -486,7 +487,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         struct_ptr: inkwell::values::BasicValueEnum<'ctx>,
         struct_name: &str,
         prefix: String,
-    ) -> Result<(), String> {
+    ) -> Result<(), TlError> {
         let simple_name = struct_name;
 
         let def = self
@@ -560,7 +561,7 @@ impl<'ctx> CodeGenerator<'ctx> {
     }
 
 
-    fn emit_retain(&mut self, val: BasicValueEnum<'ctx>, ty: &Type) -> Result<(), String> {
+    fn emit_retain(&mut self, val: BasicValueEnum<'ctx>, ty: &Type) -> Result<(), TlError> {
         self.emit_recursive_retain(val, ty)?;
         Ok(())
     }
@@ -585,7 +586,7 @@ impl<'ctx> CodeGenerator<'ctx> {
     pub(crate) fn compile_expr(
         &mut self,
         expr: &Expr,
-    ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
         self.current_time += 1;
         let prev_span = self.current_span.clone();
         self.current_span = Some(expr.span.clone());
@@ -606,7 +607,7 @@ impl<'ctx> CodeGenerator<'ctx> {
     pub(crate) fn compile_expr_inner(
         &mut self,
         expr: &Expr,
-    ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
         match &expr.inner {
             ExprKind::Block(stmts) => {
                 self.enter_scope();
@@ -682,7 +683,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     (Type::I64, "MIN") => Ok((self.context.i64_type().const_int(std::i64::MIN as u64, true).into(), Type::I64)),
                     (Type::I32, "MAX") => Ok((self.context.i32_type().const_int(std::i32::MAX as u64, true).into(), Type::I32)),
                     (Type::I32, "MIN") => Ok((self.context.i32_type().const_int(std::i32::MIN as u64, true).into(), Type::I32)),
-                    _ => Err(format!("Unsupported static constant access: {}::{}", ty.get_base_name(), method_or_const))
+                    _ => Err(format!("Unsupported static constant access: {}::{}", ty.get_base_name(), method_or_const).into())
                 }
             }
             ExprKind::StringLiteral(s) => self.compile_string_literal(s),
@@ -733,8 +734,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                 } else if let Some(def) = self.enum_defs.get(&base_name) {
                     def.clone()
                 } else {
-                    return Err(format!("Enum def {} not found (tried: {}, {}, {})", 
-                        enum_name, mangled_name, base_name, enum_name));
+                    return Err(format!("Enum def {} not found (tried: {}, {}, {})",
+                        enum_name, mangled_name, base_name, enum_name).into());
                 };
                 
                 // If the found enum_def is still generic, monomorphize with inferred or default types
@@ -742,14 +743,14 @@ impl<'ctx> CodeGenerator<'ctx> {
                     let actual_generics = inferred_generics.clone();
                     // Generate generic array logic removed. Assuming AOT provides concrete types.
                     if actual_generics.is_empty() {
-                         return Err(format!("codegen error: Enum {}::{} lacks generic parameters and type inference could not resolve them. AOT is missing generics.", base_name, variant_name));
+                         return Err(format!("codegen error: Enum {}::{} lacks generic parameters and type inference could not resolve them. AOT is missing generics.", base_name, variant_name).into());
                     }
 
                     if actual_generics.is_empty() {
                         // NOTE: If generic arguments are completely missing, they may have failed to propagate during AST substitution.
                         // See semantics.rs `StmtKind::Return` for correct resolution propagation.
                         eprintln!("Codegen ERROR EnumInit: base_name={}, variant={}, original_generics.len()={}", base_name, variant_name, original_generics.len()); 
-                        return Err(format!("Enum {}::{} lacks generic parameters and type inference could not resolve them. Implicit fallback is strictly prohibited.", base_name, variant_name));
+                        return Err(format!("Enum {}::{} lacks generic parameters and type inference could not resolve them. Implicit fallback is strictly prohibited.", base_name, variant_name).into());
                     };
                     let actual_mangled = self.mangle_type_name(&base_name, &actual_generics);
                     
@@ -835,7 +836,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let variant_def = &enum_def.variants[variant_idx];
                 
                 // Helper to compile field storage
-                let _compile_fields = |fields_def: &Vec<Type>, exprs: &Vec<Expr>, field_names: Option<&Vec<String>>| -> Result<(), String> {
+                let _compile_fields = |fields_def: &Vec<Type>, exprs: &Vec<Expr>, field_names: Option<&Vec<String>>| -> Result<(), TlError> {
                     let payload_ptr_raw = self
                         .builder
                         .build_struct_gep(enum_ty, alloca, 1, "payload_ptr_raw")
@@ -883,7 +884,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                              // Wait, payload closure arg needs adjustment.
                              // Actually, let's handle struct/tuple separately in the match below to avoid closure complexity.
                              // Placeholder to compile
-                             return Err("Struct variant not supported in closure helper".to_string());
+                             return Err("Struct variant not supported in closure helper".to_string().into());
                         } else {
                              // Tuple variant: by index
                              &exprs[idx]
@@ -1094,7 +1095,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             self.builder.build_store(f_ptr, stored_val).map_err(|e| e.to_string())?;
                         }
                      },
-                     _ => return Err(format!("Mismatch between variant definition {:?} and init payload {:?}", variant_def.kind, payload)),
+                     _ => return Err(format!("Mismatch between variant definition {:?} and init payload {:?}", variant_def.kind, payload).into()),
                 }
 
                 // Return the monomorphized type so downstream processing (like MethodCall) 
@@ -1125,10 +1126,10 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
 
             ExprKind::Wildcard => {
-                Err("ExprKind::Wildcard should only appear in logic rules".to_string())
+                Err("ExprKind::Wildcard should only appear in logic rules".to_string().into())
             }
             ExprKind::Range(_, _) => {
-                Err("ExprKind::Range should only appear in For loops".to_string())
+                Err("ExprKind::Range should only appear in For loops".to_string().into())
             }
 
             ExprKind::TypeOf(_inner_expr, opt_ty) => {
@@ -1293,7 +1294,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                              let new_ptr = self.builder.build_int_to_ptr(i, self.context.ptr_type(inkwell::AddressSpace::default()), "cast_int_ptr").map_err(|e| e.to_string())?;
                              Ok((new_ptr.into(), target_type.clone()))
                         } else {
-                             return Err(format!("Invalid value kind for Ptr cast: {:?}", val));
+                             return Err(format!("Invalid value kind for Ptr cast: {:?}", val).into());
                         }
                     }
                     // Integer Casts
@@ -1419,7 +1420,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                             Ok((res, target_type.clone()))
                         }
-                        _ => Err(format!("Unsupported tensor cast target: {:?}", inner_dst)),
+                        _ => Err(format!("Unsupported tensor cast target: {:?}", inner_dst).into()),
                     },
                     (Type::Struct(struct_name, _), Type::TraitObject(trait_name)) => {
                         let obj = self.emit_trait_object_upcast(val, struct_name, trait_name)?;
@@ -1459,7 +1460,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         Err(format!(
                             "Unsupported cast from {:?} to {:?}",
                             source_type, target_type
-                        ))
+                        ).into())
                     }
                 }
             }
@@ -1473,7 +1474,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let (ok_ty, err_ty) = if let Type::Enum(_, generics) = &ty {
                     (generics[0].clone(), generics[1].clone())
                 } else {
-                    return Err(format!("Try operator on non-Result type in codegen: {:?} (should be caught by semantics)", ty));
+                    return Err(format!("Try operator on non-Result type in codegen: {:?} (should be caught by semantics)", ty).into());
                 };
 
                 let ptr = val.into_pointer_value();
@@ -1498,7 +1499,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                      
                      *self.enum_types.get(&mangled).ok_or(format!("Enum type {} not found", mangled))?
                 } else {
-                     return Err("Try on non-Enum type".to_string());
+                     return Err("Try on non-Enum type".to_string().into());
                 };
                 
                 let tag_ptr = self.builder.build_struct_gep(struct_ty, ptr, 0, "tag_ptr").map_err(|e| e.to_string())?;
@@ -1554,7 +1555,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let func_ok_ty = if let Type::Enum(_, generics) = &func_ret_ty {
                     generics[0].clone()
                 } else {
-                     return Err(format!("Function return type mismatch (expected Result, got {:?})", func_ret_ty));
+                     return Err(format!("Function return type mismatch (expected Result, got {:?})", func_ret_ty).into());
                 };
                 
                 // We use compile_expr with EnumInit to construct the return value
@@ -1699,7 +1700,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .map_err(|e| e.to_string())?;
                     let env_ptr = match raw_env.try_as_basic_value() {
                         inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
-                        _ => return Err("malloc returned no value".to_string()),
+                        _ => return Err("malloc returned no value".to_string().into()),
                     };
 
                     // Store captured values into env struct
@@ -1889,7 +1890,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         // If it has struct_defs entry, treat it as struct
                         (name.clone(), args.clone())
                     }
-                    _ => return Err(format!("Field access on non-struct type {:?}", obj_ty)),
+                    _ => return Err(format!("Field access on non-struct type {:?}", obj_ty).into()),
                 };
 
 
@@ -1919,8 +1920,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                     if let Some(def) = self.struct_defs.get(&underscore_base) {
                         (def, true)
                     } else {
-                        return Err(format!("Struct definition for {} not found (checked {}, {}, {})", 
-                            base_name, simple_struct_name, base_name, underscore_base));
+                        return Err(format!("Struct definition for {} not found (checked {}, {}, {})",
+                            base_name, simple_struct_name, base_name, underscore_base).into());
                     }
                 };
 
@@ -1984,7 +1985,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 t
                             }
                             Err(_) => {
-                                return Err(format!("Failed to monomorphize struct {} for FieldAccess", base_name));
+                                return Err(format!("Failed to monomorphize struct {} for FieldAccess", base_name).into());
                             }
                         }
                     } else {
@@ -2000,8 +2001,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                                     .map_err(|e| format!("Failed to monomorphize {} for FieldAccess: {}", underscore_base, e))?
                             }
                         } else {
-                            return Err(format!("LLVM struct type for {} not found (tried {}, {}, {})", 
-                                base_name, simple_struct_name, base_name, underscore_base));
+                            return Err(format!("LLVM struct type for {} not found (tried {}, {}, {})",
+                                base_name, simple_struct_name, base_name, underscore_base).into());
                         }
                     }
                 };
@@ -2097,7 +2098,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                           Ok((val, ty))
                      }
                 } else {
-                     Err(format!("Variable {} not found in scopes", name))
+                     Err(format!("Variable {} not found in scopes", name).into())
                 }
             }
             ExprKind::StructInit(ty, fields) => {
@@ -2138,7 +2139,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                              let size_val = enum_struct_type.size_of().ok_or(format!("Enum type {} has no size", lookup_name))?;
                              return Ok((size_val.into(), Type::I64));
                          } else {
-                             return Err(format!("Enum type {} not found in enum_types for sizeof", lookup_name));
+                             return Err(format!("Enum type {} not found in enum_types for sizeof", lookup_name).into());
                          }
                      }
                      
@@ -2178,7 +2179,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     Type::Tensor(_, _) => "Tensor".to_string(),
                     Type::GradTensor(_, _) => "GradTensor".to_string(),
                     Type::Path(segments, _) => segments.last().cloned().unwrap_or("Unknown".to_string()),
-                    _ => return Err(format!("Cannot call static method on type {:?}", type_ty)),
+                    _ => return Err(format!("Cannot call static method on type {:?}", type_ty).into()),
                 };
                 let res = self.compile_static_method_call(&struct_name, method_name, args, &flat_type_ty)?;
                 self.add_temp(res.0, res.1.clone());
@@ -2323,7 +2324,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                         "f2i",
                                     )
                                     .map_err(|e| e.to_string())?,
-                                _ => return Err(format!("Invalid index type {:?}", ty)),
+                                _ => return Err(format!("Invalid index type {:?}", ty).into()),
                             };
                             let idx_val = inkwell::values::BasicValueEnum::IntValue(idx_val);
 
@@ -2423,7 +2424,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                         "f2i",
                                     )
                                     .map_err(|e| e.to_string())?,
-                                _ => return Err(format!("Invalid index type {:?}", ty)),
+                                _ => return Err(format!("Invalid index type {:?}", ty).into()),
                             };
                             let idx_val = inkwell::values::BasicValueEnum::IntValue(idx_val);
 
@@ -2616,7 +2617,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         | Type::Enum(_, _) | Type::Tuple(_) | Type::Ptr(_) | Type::Void
                         | Type::Usize | Type::Entity | Type::Char(_) | Type::Array(_, _)
                         | Type::TensorShaped(_, _) | Type::GradTensor(_, _)
-                        | Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::SpecializedType { .. } | Type::Never | Type::Undefined(_) | Type::Range => Err(format!("Negation not supported for type {:?}", ty)), Type::TraitObject(_) => Err("Negation not supported for TraitObject".into()),
+                        | Type::Path(_, _) | Type::Fn(_, _) | Type::I8 | Type::I16 | Type::U16 | Type::U32 | Type::U64 | Type::F16 | Type::BF16 | Type::TypeVar(_) | Type::SpecializedType { .. } | Type::Never | Type::Undefined(_) | Type::Range => Err(format!("Negation not supported for type {:?}", ty).into()), Type::TraitObject(_) => Err("Negation not supported for TraitObject".into()),
                     },
 
                     UnOp::Not => {
@@ -3074,7 +3075,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
     // Refactored helper to allow calling from recovery path
 
-    pub fn compile_string_literal(&self, s: &str) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    pub fn compile_string_literal(&self, s: &str) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
         let s_null_term = format!("{}\0", s);
         let str_val = self
             .builder
@@ -3099,7 +3100,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         Ok((ptr, Type::String("String".to_string())))
     }
 
-    fn compile_tuple(&mut self, elements: &[Expr]) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    fn compile_tuple(&mut self, elements: &[Expr]) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
         let mut vals = Vec::new();
         let mut types = Vec::new();
         let mut llvm_types = Vec::new();
@@ -3226,12 +3227,12 @@ impl<'ctx> CodeGenerator<'ctx> {
         &mut self,
         expr: &Expr,
         idx: usize,
-    ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
         let (tuple_val, tuple_ty) = self.compile_expr(expr)?;
 
         let element_types = match tuple_ty {
             Type::Tuple(ts) => ts,
-            _ => return Err(format!("Expected tuple type, found {:?}", tuple_ty)),
+            _ => return Err(format!("Expected tuple type, found {:?}", tuple_ty).into()),
         };
 
         if idx >= element_types.len() {
@@ -3239,7 +3240,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 "Tuple index {} out of bounds (len {})",
                 idx,
                 element_types.len()
-            ));
+            ).into());
         }
         let field_ty = element_types[idx].clone();
 
@@ -3281,7 +3282,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         &mut self,
         name: &str,
         args: &[Expr],
-    ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
         // Extract simple name from module path
         let simple_name = name;
 
@@ -3302,7 +3303,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 name,
                 struct_def.fields.len(),
                 args.len()
-            ));
+            ).into());
         }
 
         // 1. Heap Allocation
@@ -3416,7 +3417,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         method: &str,
         args: &[Expr],
         target_type: &Type,
-    ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
         // Normalize target_type to resolve Path types to Struct/Enum
         let normalized_target = self.normalize_type(target_type);
         let target_type = normalized_target.clone();
@@ -3672,7 +3673,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     // Use type args from target_type if available
                     let default_generics = match target_type {
                         Type::Struct(_, args) | Type::Enum(_, args) if !args.is_empty() => args.clone(),
-                        _ => return Err(format!("Enum {} lacks generic parameters in compile_static_method_call. Implicit fallback is strictly prohibited.", struct_name)),
+                        _ => return Err(format!("Enum {} lacks generic parameters in compile_static_method_call. Implicit fallback is strictly prohibited.", struct_name).into()),
                     };
                     let mangled = self.mangle_type_name(struct_name, &default_generics);
                     if let Some(specialized) = self.enum_defs.get(&mangled) {
@@ -3758,7 +3759,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let struct_ptr = path_val.into_pointer_value();
                 struct_ptr
             } else {
-                return Err(format!("Map::load expects String argument, got {:?}", path_ty));
+                return Err(format!("Map::load expects String argument, got {:?}", path_ty).into());
             };
             
             let fn_val = self
@@ -3821,7 +3822,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             return Err(format!(
                 "Static method {}::{} not found (checked {}, {}, and {})",
                 struct_name, method, mangled_name, stdlib_name, method
-            ));
+            ).into());
         };
 
         // 3. Generic Fallback: Compile Args & Handle SRET
@@ -3945,7 +3946,7 @@ impl<'ctx> CodeGenerator<'ctx> {
     fn compile_tensor_literal(
         &mut self,
         elements: &[Expr],
-    ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
         // 1. Calculate shape and total elements
         fn count_elements(exprs: &[Expr]) -> (usize, Vec<usize>) {
             if exprs.is_empty() {
@@ -4033,7 +4034,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             inkwell::values::ValueKind::Basic(inkwell::values::BasicValueEnum::PointerValue(v)) => {
                 v
             }
-            _ => return Err("Invalid tl_alloc_tmp return".to_string()),
+            _ => return Err("Invalid tl_alloc_tmp return".to_string().into()),
         };
 
         // 5. Store elements into buffer
@@ -4059,7 +4060,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             "i_to_f32",
                         )
                         .map_err(|e| e.to_string())?,
-                    _ => return Err(format!("Cannot cast {:?} to F32", ty)),
+                    _ => return Err(format!("Cannot cast {:?} to F32", ty).into()),
                 };
 
                 let ptr = unsafe {
@@ -4084,7 +4085,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .builder
                         .build_int_z_extend(val.into_int_value(), i64_type, "zext")
                         .map_err(|e| e.to_string())?,
-                    _ => return Err(format!("Cannot cast {:?} to I64", ty)),
+                    _ => return Err(format!("Cannot cast {:?} to I64", ty).into()),
                 };
 
                 let ptr = unsafe {
@@ -4200,9 +4201,9 @@ impl<'ctx> CodeGenerator<'ctx> {
     fn compile_tensor_const_literal(
         &mut self,
         elements: &[Expr],
-    ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
         // Optimized path for constant tensor literals - static extraction
-        fn flatten_const(exprs: &[Expr]) -> Result<(Vec<f64>, Vec<usize>, bool), String> {
+        fn flatten_const(exprs: &[Expr]) -> Result<(Vec<f64>, Vec<usize>, bool), TlError> {
             if exprs.is_empty() {
                 return Ok((vec![], vec![0], false));
             }
@@ -4477,7 +4478,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         &mut self,
         subject_expr: &Expr,
         arms: &[(Pattern, Expr)],
-    ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
         let (subject_val, raw_subject_ty) = self.compile_expr(subject_expr)?;
         let subject_ty = raw_subject_ty.flatten_specialized();
         let (enum_name, raw_generic_args) = match &subject_ty {
@@ -4490,7 +4491,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     return Err("Match on empty path".into());
                 }
             }
-            _ => return Err(format!("Match on non-enum: {:?}", subject_ty)),
+            _ => return Err(format!("Match on non-enum: {:?}", subject_ty).into()),
         };
         
         let generic_args: Vec<Type> = raw_generic_args;
@@ -4698,7 +4699,7 @@ impl<'ctx> CodeGenerator<'ctx> {
     fn compile_match_arm_body(
         &mut self,
         body: &Expr,
-    ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
         if let ExprKind::Block(stmts) = &body.inner {
             self.enter_scope();
             let mut last_val = None;
@@ -4735,7 +4736,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         val: BasicValueEnum<'ctx>,
         ty: &Type,
         is_lvalue: bool,
-    ) -> Result<BasicValueEnum<'ctx>, String> {
+    ) -> Result<BasicValueEnum<'ctx>, TlError> {
 
         let is_ref_type = matches!(
             ty,
@@ -4779,7 +4780,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         variant_idx: usize,
         bindings: &crate::compiler::ast::EnumPatternBindings,
         generic_args: &[Type],
-    ) -> Result<(), String> {
+    ) -> Result<(), TlError> {
         let variant_def = &enum_def.variants[variant_idx];
 
         // Build substitution map for concrete types
@@ -4875,7 +4876,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             },
             (crate::compiler::ast::VariantKind::Tuple(types), crate::compiler::ast::EnumPatternBindings::Tuple(vars)) => {
                 if types.len() != vars.len() {
-                    return Err(format!("Tuple pattern length mismatch: expected {}, found {}", types.len(), vars.len()));
+                    return Err(format!("Tuple pattern length mismatch: expected {}, found {}", types.len(), vars.len()).into());
                 }
                 
                 for (i, bind_name) in vars.iter().enumerate() {
@@ -5016,7 +5017,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             },
             (crate::compiler::ast::VariantKind::Tuple(types), crate::compiler::ast::EnumPatternBindings::Tuple(vars)) => {
                 if types.len() != vars.len() {
-                    return Err(format!("Tuple pattern length mismatch: expected {}, found {}", types.len(), vars.len()));
+                    return Err(format!("Tuple pattern length mismatch: expected {}, found {}", types.len(), vars.len()).into());
                 }
                 
                 for (i, bind_name) in vars.iter().enumerate() {
@@ -5111,7 +5112,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         function: FunctionValue<'ctx>,
         name: &str,
         llvm_ty: &inkwell::types::BasicTypeEnum<'ctx>,
-    ) -> Result<inkwell::values::PointerValue<'ctx>, String> {
+    ) -> Result<inkwell::values::PointerValue<'ctx>, TlError> {
         let builder = self.context.create_builder();
         let entry = function.get_first_basic_block().ok_or_else(|| "function has no entry block".to_string())?;
         match entry.get_first_instruction() {
@@ -5126,7 +5127,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         function: FunctionValue<'ctx>,
         name: &str,
         ty: &Type,
-    ) -> Result<inkwell::values::PointerValue<'ctx>, String> {
+    ) -> Result<inkwell::values::PointerValue<'ctx>, TlError> {
         let builder = self.context.create_builder();
         if ty == &Type::Void {
         }
@@ -5156,7 +5157,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         &mut self,
         expr: &Expr,
         bounds: &mut HashMap<String, inkwell::values::IntValue<'ctx>>,
-    ) -> Result<(), String> {
+    ) -> Result<(), TlError> {
         match &expr.inner {
             ExprKind::IndexAccess(target, indices) => {
                 // Target should be ExprKind::Ident for variable access
@@ -5237,7 +5238,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         obj: &Expr,
         method: &str,
         args: &[Expr],
-    ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
         let (val, ty) = self.compile_method_call_inner(obj, method, args)?;
         self.add_temp(val, ty.clone());
         Ok((val, ty))
@@ -5248,7 +5249,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         obj: &Expr,
         method: &str,
         args: &[Expr],
-    ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
         // === Vec/Option/Result closure methods ===
         // Detect BEFORE compile_expr(obj) so we have full AST access to the closure.
         // The element type comes from the closure argument's type annotation,
@@ -5491,7 +5492,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
         }
         
-        // === Channel.try_recv() -> Result<T, String> ===
+        // === Channel.try_recv() -> Result<T, TlError> ===
         if method == "try_recv" && args.len() == 0 {
             if let Type::Struct(name, type_args) = &obj_ty {
                 if mangle_base_name(name) == "Channel" {
@@ -5613,7 +5614,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     // Wait, `try_recv` usually returns Option<T> in TL?
                     // Oh, TL standard Option has tag 0 for Some, 1 for None. Let's make it Option<T> !!
 
-        // === Thread.join() -> Result<T, String> ===
+        // === Thread.join() -> Result<T, TlError> ===
         if method == "join" && args.len() == 0 {
             let is_thread = match &obj_ty {
                 Type::Struct(name, _) => {
@@ -5818,7 +5819,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         obj_ty: Type,
         method: &str,
         args: &[Expr],
-    ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
 
 
         // Try TypeManager first
@@ -6000,7 +6001,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             return Err(format!(
                 "Method {} not found in struct {} (checked {} and {})",
                 method, struct_name, mangled_name, stdlib_name
-            ));
+            ).into());
         };
 
         // Get return type (for SRET check)
@@ -6081,7 +6082,7 @@ impl<'ctx> CodeGenerator<'ctx> {
              // 1. Get Struct/Enum Type and Size from CodeGen struct_types map
              let (struct_name, generics) = match &ret_ty {
                  Type::Struct(n, g) | Type::Enum(n, g) => (n, g),
-                 _ => return Err(format!("SRET used on non-aggregate type: {:?}", ret_ty)),
+                 _ => return Err(format!("SRET used on non-aggregate type: {:?}", ret_ty).into()),
              };
              
              let mangled_name = if generics.is_empty() {
@@ -6172,7 +6173,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         &mut self,
         name: &str,
         args: &[Expr],
-    ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
         let function = self
             .module
             .get_function(name)
@@ -6425,7 +6426,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         method: &str,
         closure_args: &[(String, Option<Type>)],
         closure_body: &[Stmt],
-    ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
         let i64_type = self.context.i64_type();
         let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
 
@@ -6469,7 +6470,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .map_err(|e| e.to_string())?;
                 let buf_ptr = match raw_buf.try_as_basic_value() {
                     inkwell::values::ValueKind::Basic(v) => v,
-                    _ => return Err("malloc returned no value".to_string()),
+                    _ => return Err("malloc returned no value".to_string().into()),
                 };
 
                 // Set fields: ptr, cap, len
@@ -6569,7 +6570,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .map_err(|e| e.to_string())?;
                 let buf_ptr = match raw_buf.try_as_basic_value() {
                     inkwell::values::ValueKind::Basic(v) => v,
-                    _ => return Err("malloc returned no value".to_string()),
+                    _ => return Err("malloc returned no value".to_string().into()),
                 };
 
                 let f0 = self.builder.build_struct_gep(vec_struct_ty, result_ptr, 0, "f0").map_err(|e| e.to_string())?;
@@ -6846,7 +6847,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let final_acc = self.builder.build_load(elem_llvm_ty, acc_alloca, "final_acc").map_err(|e| e.to_string())?;
                 Ok((final_acc, elem_ty.clone()))
             }
-            _ => Err(format!("Unknown Vec closure method: {}", method)),
+            _ => Err(format!("Unknown Vec closure method: {}", method).into()),
         }
     }
 
@@ -6856,7 +6857,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         vec_val: BasicValueEnum<'ctx>,
         vec_ty: &Type,
         args: &[Expr],
-    ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
         let i64_type = self.context.i64_type();
         let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
         let string_type_tl = Type::String("String".to_string());
@@ -6987,7 +6988,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 .map_err(|e| e.to_string())?;
             match str_result.try_as_basic_value() {
                 inkwell::values::ValueKind::Basic(v) => v,
-                _ => return Err(format!("{} returned void", fn_name)),
+                _ => return Err(format!("{} returned void", fn_name).into()),
             }
         } else {
             elem_val
@@ -7019,7 +7020,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         vec_ty: &Type,
         method: &str,
         args: &[Expr],
-    ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
         let i64_type = self.context.i64_type();
         let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
 
@@ -7303,7 +7304,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             return Ok((res_ptr.into(), out_vec_ty));
         }
 
-        Err(format!("Unknown built-in method {}", method))
+        Err(format!("Unknown built-in method {}", method).into())
     }
 
 
@@ -7318,7 +7319,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         method: &str,
         closure_args: &[(String, Option<Type>)],
         closure_body: &[Stmt],
-    ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
         let i32_type = self.context.i32_type();
         let i64_type = self.context.i64_type();
         let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
@@ -7570,7 +7571,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         method: &str,
         closure_args: &[(String, Option<Type>)],
         closure_body: &[Stmt],
-    ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
         let i32_type = self.context.i32_type();
         let i64_type = self.context.i64_type();
         let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
@@ -7798,7 +7799,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 Ok((phi.as_basic_value(), elem_ty.clone()))
             }
-            _ => Err(format!("Unknown Result closure method: {}", method)),
+            _ => Err(format!("Unknown Result closure method: {}", method).into()),
         }
     }
 
@@ -7807,7 +7808,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         &mut self,
         name: &str,
         args: &[Expr],
-    ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
         let (val, ty) = self.compile_fn_call_dps(name, args, None)?;
         
         let mode = match &ty {
@@ -7824,7 +7825,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         name: &str,
         args: &[Expr],
         dest: Option<BasicValueEnum<'ctx>>,
-    ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+    ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
         // 0. Check if it's a relation query
         let simple_name = name;
 
@@ -7901,7 +7902,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 } else {
                     let result = match call_val.try_as_basic_value() {
                         inkwell::values::ValueKind::Basic(v) => v,
-                        _ => return Err("Closure call returned no value".to_string()),
+                        _ => return Err("Closure call returned no value".to_string().into()),
                     };
                     return Ok((result, *ret_ty));
                 }
@@ -7930,7 +7931,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Intrinsic: tl_core_hash<T>(val: T) -> i64
         if name.starts_with("tl_core_hash") {
             if args.len() != 1 {
-                return Err("tl_core_hash expects exactly 1 argument".to_string());
+                return Err("tl_core_hash expects exactly 1 argument".to_string().into());
             }
             let (val, ty) = self.compile_expr(&args[0])?;
             let i64_type = self.context.i64_type();
@@ -7952,7 +7953,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                      let call = self.builder.build_call(fn_val, &[val.into()], "hash_call").map_err(|e| e.to_string())?;
                      match call.try_as_basic_value() {
                         inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
-                        _ => return Err("tl_hash_string did not return a value".to_string()),
+                        _ => return Err("tl_hash_string did not return a value".to_string().into()),
                      }
                 },
                 Type::Struct(_, _) | Type::Enum(_, _) | Type::Tensor(_, _) | Type::Tuple(_) | Type::SpecializedType { .. } => {
@@ -7961,10 +7962,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                     } else {
                          // Fallback for immediate structs (very small ones potentially? not standard in TL currently)
                          // Return 0 to be safe/lazy, or error?
-                         return Err(format!("Hashing immediate struct/value type not supported: {:?}", ty));
+                         return Err(format!("Hashing immediate struct/value type not supported: {:?}", ty).into());
                     }
                 },
-                _ => return Err(format!("Unsupported type for hash: {:?}", ty)),
+                _ => return Err(format!("Unsupported type for hash: {:?}", ty).into()),
             };
             
             return Ok((res.into(), Type::I64));
@@ -7973,7 +7974,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Intrinsic: __builtin_unsafe_to_i64
         if name.starts_with("__builtin_unsafe_to_i64") {
             if args.len() != 1 {
-                return Err("__builtin_unsafe_to_i64 expects exactly 1 argument".to_string());
+                return Err("__builtin_unsafe_to_i64 expects exactly 1 argument".to_string().into());
             }
             let (val, ty) = self.compile_expr(&args[0])?;
             
@@ -7996,7 +7997,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     let as_i32 = self.builder.build_bit_cast(f, i32_type, "f32cast").map_err(|e| e.to_string())?.into_int_value();
                     self.builder.build_int_z_extend(as_i32, i64_type, "zext").map_err(|e| e.to_string())?.into()
                 }
-                _ => return Err(format!("Unsupported type for unsafe_to_i64: {:?}", ty)),
+                _ => return Err(format!("Unsupported type for unsafe_to_i64: {:?}", ty).into()),
             };
             return Ok((res, Type::I64));
         }
@@ -8004,7 +8005,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Intrinsic: __builtin_unsafe_from_i64(val: i64, marker: PhantomData<T>) -> T
         if name.starts_with("__builtin_unsafe_from_i64") {
             if args.len() != 2 {
-                return Err("__builtin_unsafe_from_i64 expects 2 arguments (val, marker)".to_string());
+                return Err("__builtin_unsafe_from_i64 expects 2 arguments (val, marker)".to_string().into());
             }
             let (val, _val_ty) = self.compile_expr(&args[0])?;
             let (_, marker_ty) = self.compile_expr(&args[1])?;
@@ -8027,13 +8028,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                             _ => Type::Struct(suffix.to_string(), vec![]),
                         }
                     } else {
-                         return Err(format!("Arg 2 must be PhantomData<T> (specialized or generic), got {:?}", marker_ty));
+                         return Err(format!("Arg 2 must be PhantomData<T> (specialized or generic), got {:?}", marker_ty).into());
                     }
                 } else {
-                    return Err(format!("Arg 2 must be PhantomData<T>, got {:?}", marker_ty));
+                    return Err(format!("Arg 2 must be PhantomData<T>, got {:?}", marker_ty).into());
                 }
             } else {
-                return Err(format!("Arg 2 must be Struct PhantomData, got {:?}", marker_ty));
+                return Err(format!("Arg 2 must be Struct PhantomData, got {:?}", marker_ty).into());
             };
 
             // Cast i64 to T
@@ -8047,7 +8048,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     } else if val.is_pointer_value() {
                         val // Identity if already ptr? But arg 0 should be i64.
                     } else {
-                         return Err("Input must be int or ptr".to_string());
+                         return Err("Input must be int or ptr".to_string().into());
                     }
                 },
                 Type::Bool => {
@@ -8066,7 +8067,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                      let i32_val = self.builder.build_int_truncate(val.into_int_value(), self.context.i32_type(), "trunc_f32").map_err(|e| e.to_string())?;
                      self.builder.build_bit_cast(i32_val, self.context.f32_type(), "bitcast").map_err(|e| e.to_string())?.into()
                 },
-                _ => return Err(format!("Unsupported target type for from_i64: {:?}", target_type)),
+                _ => return Err(format!("Unsupported target type for from_i64: {:?}", target_type).into()),
             };
             
             return Ok((res, target_type));
@@ -8075,7 +8076,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Intrinsic: __builtin_is_ref(marker: PhantomData<T>) -> bool
         if name.starts_with("__builtin_is_ref") {
             if args.len() != 1 {
-                return Err("__builtin_is_ref expects 1 argument (marker)".to_string());
+                return Err("__builtin_is_ref expects 1 argument (marker)".to_string().into());
             }
             let (_, marker_ty) = self.compile_expr(&args[0])?;
             
@@ -8098,13 +8099,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                         }
                     } else {
                          // PhantomData generic unspecialized with no args? Should not happen in monomorphized code
-                         return Err(format!("Arg 1 must be PhantomData<T> (specialized or generic), got {:?}", marker_ty));
+                         return Err(format!("Arg 1 must be PhantomData<T> (specialized or generic), got {:?}", marker_ty).into());
                     }
                 } else {
-                    return Err(format!("Arg 1 must be PhantomData<T>, got {:?}", marker_ty));
+                    return Err(format!("Arg 1 must be PhantomData<T>, got {:?}", marker_ty).into());
                 }
             } else {
-                return Err(format!("Arg 1 must be Struct PhantomData, got {:?}", marker_ty));
+                return Err(format!("Arg 1 must be Struct PhantomData, got {:?}", marker_ty).into());
             };
 
             let is_ref = match target_type {
@@ -8164,7 +8165,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             return Err(format!(
                 "Function {} not found (resolved: {})",
                 name, resolved_name
-            ));
+            ).into());
         };
 
         let ret_type = if let Some(ret) = self.method_return_types.get(&resolved_name) {
@@ -8259,7 +8260,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         } else {
         }
         if self.builder.get_insert_block().is_none() {
-            return Err(format!("INTERNAL ERROR: Builder has no insert block when calling {}", final_resolved_name));
+            return Err(format!("INTERNAL ERROR: Builder has no insert block when calling {}", final_resolved_name).into());
         }
 
         for (_i, _arg) in compiled_args_vals.iter().enumerate() {
@@ -8343,7 +8344,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         variant_idx: usize,
         enum_def: &crate::compiler::ast::EnumDef,
         target_type: &crate::compiler::ast::Type,
-    ) -> Result<(inkwell::values::BasicValueEnum<'ctx>, crate::compiler::ast::Type), String> {
+    ) -> Result<(inkwell::values::BasicValueEnum<'ctx>, crate::compiler::ast::Type), TlError> {
         use crate::compiler::ast::{Type, VariantKind};
         
         let variant_def = &enum_def.variants[variant_idx];
@@ -8354,7 +8355,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             VariantKind::Array(_, size) => *size,
         };
         if args.len() != field_count {
-            return Err(format!("Enum variant {}::{} expects {} args, got {}", enum_name, variant_name, field_count, args.len()));
+            return Err(format!("Enum variant {}::{} expects {} args, got {}", enum_name, variant_name, field_count, args.len()).into());
         }
         
         // Use enum_def.name (monomorphized name like "Option<i64>") instead of enum_name (might be base name "Option")
@@ -8468,7 +8469,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         _elem_ty: &Type,
         method: &str,
         closure_expr: &crate::compiler::ast::Expr,
-    ) -> Result<(inkwell::values::BasicValueEnum<'ctx>, Type), String> {
+    ) -> Result<(inkwell::values::BasicValueEnum<'ctx>, Type), TlError> {
         // Compile closure to {fn_ptr, env_ptr} using compile_expr
         let (closure_val, closure_ty) = self.compile_expr(closure_expr)?;
 

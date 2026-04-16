@@ -2,6 +2,7 @@
 //!
 //! メソッドレジストリ: register_all_methods, emit_trait_object_upcast 等。
 //! CodeGenerator にインスタンスメソッド・静的メソッドを登録する。
+use crate::compiler::error::TlError;
 
 use super::tensor_methods::*;
 use super::builtin_fns::*;
@@ -15,14 +16,14 @@ impl<'ctx> CodeGenerator<'ctx> {
         val: inkwell::values::BasicValueEnum<'ctx>,
         struct_name: &str,
         trait_name: &str,
-    ) -> Result<inkwell::values::BasicValueEnum<'ctx>, String> {
+    ) -> Result<inkwell::values::BasicValueEnum<'ctx>, TlError> {
         let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
         let fat_ptr_type = self.context.struct_type(&[ptr_type.into(), ptr_type.into()], false);
 
         let data_ptr = if val.is_pointer_value() {
             self.builder.build_pointer_cast(val.into_pointer_value(), ptr_type, "trait_data_cast").map_err(|e| e.to_string())?
         } else {
-            return Err("Expected pointer value for upcast".to_string());
+            return Err("Expected pointer value for upcast".to_string().into());
         };
 
         let vtable_name = format!("vtable_{}_for_{}", trait_name, struct_name);

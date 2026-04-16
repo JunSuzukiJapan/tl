@@ -1,3 +1,4 @@
+use crate::compiler::error::TlError;
 use crate::compiler::codegen::type_manager::{CodeGenType, TypeManager};
 use crate::compiler::codegen::CodeGenerator;
 use crate::compiler::ast::Type;
@@ -52,7 +53,7 @@ pub fn register_io_types(manager: &mut TypeManager) {
         Type::Bool
     );
 
-    // File::read_binary(path: String) -> Result<Vec<u8>, String>
+    // File::read_binary(path: String) -> Result<Vec<u8>, TlError>
     file.register_evaluated_static_method(
         "read_binary",
         compile_file_read_binary,
@@ -200,7 +201,7 @@ fn compile_file_write<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
     _target: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 2 {
         return Err("File::write requires 2 arguments".into());
     }
@@ -208,7 +209,7 @@ fn compile_file_write<'ctx>(
     let (path_val, path_ty) = &args[0];
     let (content_val, content_ty) = &args[1];
 
-    let extract_ptr = |codegen: &mut CodeGenerator<'ctx>, val: BasicValueEnum<'ctx>, ty: &Type| -> Result<inkwell::values::BasicMetadataValueEnum<'ctx>, String> {
+    let extract_ptr = |codegen: &mut CodeGenerator<'ctx>, val: BasicValueEnum<'ctx>, ty: &Type| -> Result<inkwell::values::BasicMetadataValueEnum<'ctx>, TlError> {
         if matches!(ty, Type::String(_)) {
              let struct_ty = Type::String("String".to_string());
              let ptr_int = codegen.load_struct_i64_field(val, &struct_ty, "ptr")?;
@@ -219,7 +220,7 @@ fn compile_file_write<'ctx>(
              ).map_err(|e| e.to_string())?;
              Ok(ptr.into())
         } else {
-             return Err(format!("Expected String argument, got {:?}", ty));
+             return Err(format!("Expected String argument, got {:?}", ty).into());
         }
     };
 
@@ -258,7 +259,7 @@ fn compile_env_get<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
     _target: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 { return Err("Env::get requires 1 argument".into()); }
     let fn_val = codegen.module.get_function("tl_env_get").ok_or("tl_env_get not found")?;
     let call = codegen.builder.build_call(fn_val, &[args[0].0.into()], "env_get").map_err(|e| e.to_string())?;
@@ -276,7 +277,7 @@ pub fn compile_path_new<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
     _target: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 { return Err("Path::new requires 1 argument".into()); }
     // 1. Convert String (i8*) to PathBuf
     let tl_path_new = codegen.module.get_function("tl_path_new").ok_or("tl_path_new not found")?;
@@ -310,12 +311,12 @@ pub fn compile_env_set<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
     _target: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 2 { return Err("Env::set requires 2 arguments".into()); }
     let fn_val = codegen.module.get_function("tl_env_set").ok_or("tl_env_set not found (runtime)")?;
 
     // helper to extract string ptr
-    let mut extract_ptr = |v: BasicValueEnum<'ctx>, t: &Type| -> Result<inkwell::values::BasicMetadataValueEnum<'ctx>, String> {
+    let mut extract_ptr = |v: BasicValueEnum<'ctx>, t: &Type| -> Result<inkwell::values::BasicMetadataValueEnum<'ctx>, TlError> {
          if matches!(t, Type::String(_)) {
               let v_struct = codegen.load_struct_i64_field(v, t, "ptr")?;
               let ptr = codegen.builder.build_int_to_ptr(v_struct.into_int_value(), codegen.context.ptr_type(inkwell::AddressSpace::default()), "str_ptr").map_err(|e| e.to_string())?;
@@ -336,7 +337,7 @@ pub fn compile_http_download<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
     _target: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     // Reuse compile_file_download or same logic
     compile_file_download(codegen, args, _target)
 }
@@ -345,7 +346,7 @@ pub fn compile_http_get<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
     _target: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
      if args.len() != 1 { return Err("Http::get requires 1 argument".into()); }
     let fn_val = codegen.module.get_function("tl_http_get").ok_or("tl_http_get not found")?;
     let call = codegen.builder.build_call(fn_val, &[args[0].0.into()], "http_get").map_err(|e| e.to_string())?;
@@ -360,7 +361,7 @@ pub fn compile_path_exists<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
     _target: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 { return Err("Path::exists requires 1 argument".into()); }
     
     // 1. Convert String (i8*) to PathBuf
@@ -370,10 +371,10 @@ pub fn compile_path_exists<'ctx>(
     
     let path_ptr_val = if matches!(path_ty, Type::String(_)) {
         if !path_val.is_pointer_value() {
-            return Err(format!("File::open path must be a pointer, got {:?}", path_val));
+            return Err(format!("File::open path must be a pointer, got {:?}", path_val).into());
         }
         if !path_val.is_pointer_value() {
-            return Err(format!("File::open path must be a pointer, got {:?}", path_val));
+            return Err(format!("File::open path must be a pointer, got {:?}", path_val).into());
         }
         let ptr = path_val.into_pointer_value();
         // Just cast pointer to int to pass through
@@ -417,18 +418,18 @@ pub fn compile_file_open<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
     _target: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 2 { return Err("File::open requires 2 arguments".into()); }
     let fn_val = codegen.module.get_function("tl_file_open").ok_or("tl_file_open not found")?;
     
     // Helper to extract char* from String
-    let extract_ptr = |codegen: &mut CodeGenerator<'ctx>, val: BasicValueEnum<'ctx>, ty: &Type| -> Result<inkwell::values::BasicMetadataValueEnum<'ctx>, String> {
+    let extract_ptr = |codegen: &mut CodeGenerator<'ctx>, val: BasicValueEnum<'ctx>, ty: &Type| -> Result<inkwell::values::BasicMetadataValueEnum<'ctx>, TlError> {
         let ptr_int_val = if matches!(ty, Type::String(_)) {
              let struct_ty = Type::String("String".to_string());
              let v = codegen.load_struct_i64_field(val, &struct_ty, "ptr")?;
              v.into_int_value()
         } else {
-             return Err(format!("Expected String argument, got {:?}", ty));
+             return Err(format!("Expected String argument, got {:?}", ty).into());
         };
         let ptr = codegen.builder.build_int_to_ptr(
             ptr_int_val,
@@ -458,7 +459,7 @@ pub fn compile_file_exists<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
     _target: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 { return Err("File::exists requires 1 argument".into()); }
     let fn_val = codegen.module.get_function("tl_file_exists_i64").ok_or("tl_file_exists_i64 not found")?;
     
@@ -469,7 +470,7 @@ pub fn compile_file_exists<'ctx>(
          let v = codegen.load_struct_i64_field(*path_val, &struct_ty, "ptr")?;
          v.into_int_value()
     } else {
-         return Err(format!("Expected String argument, got {:?}", path_ty));
+         return Err(format!("Expected String argument, got {:?}", path_ty).into());
     };
     let path_ptr = codegen.builder.build_int_to_ptr(
         ptr_int_val,
@@ -490,7 +491,7 @@ pub fn compile_file_read_static<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
     _target: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 { return Err("File::read requires 1 argument".into()); }
     
     let (path_val, path_ty) = &args[0];
@@ -499,7 +500,7 @@ pub fn compile_file_read_static<'ctx>(
          let v = codegen.load_struct_i64_field(*path_val, &struct_ty, "ptr")?;
          v.into_int_value()
     } else {
-         return Err(format!("Expected String argument, got {:?}", path_ty));
+         return Err(format!("Expected String argument, got {:?}", path_ty).into());
     };
 
     let path_ptr = codegen.builder.build_int_to_ptr(
@@ -521,16 +522,16 @@ pub fn compile_file_download<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
     _target: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 2 { return Err("File::download requires 2 arguments".into()); }
     
-    let extract_ptr = |codegen: &mut CodeGenerator<'ctx>, val: BasicValueEnum<'ctx>, ty: &Type| -> Result<inkwell::values::BasicMetadataValueEnum<'ctx>, String> {
+    let extract_ptr = |codegen: &mut CodeGenerator<'ctx>, val: BasicValueEnum<'ctx>, ty: &Type| -> Result<inkwell::values::BasicMetadataValueEnum<'ctx>, TlError> {
         let ptr_int_val = if matches!(ty, Type::String(_)) {
              let struct_ty = Type::String("String".to_string());
              let v = codegen.load_struct_i64_field(val, &struct_ty, "ptr")?;
              v.into_int_value()
         } else {
-             return Err(format!("Expected String argument, got {:?}", ty));
+             return Err(format!("Expected String argument, got {:?}", ty).into());
         };
         let ptr = codegen.builder.build_int_to_ptr(
             ptr_int_val,
@@ -561,7 +562,7 @@ pub fn compile_file_read_binary<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
     _target: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 { return Err("File::read_binary requires 1 argument".into()); }
     
     // Extract char* from String struct (same pattern as compile_file_read_static)
@@ -571,7 +572,7 @@ pub fn compile_file_read_binary<'ctx>(
         let v = codegen.load_struct_i64_field(*path_val, &struct_ty, "ptr")?;
         v.into_int_value()
     } else {
-        return Err(format!("Expected String argument, got {:?}", path_ty));
+        return Err(format!("Expected String argument, got {:?}", path_ty).into());
     };
     let path_ptr = codegen.builder.build_int_to_ptr(
         path_ptr_val,
@@ -658,7 +659,7 @@ pub fn compile_file_read_string<'ctx>(
     instance_val: BasicValueEnum<'ctx>,
     _instance_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if !args.is_empty() { return Err("File::read_string takes no arguments".into()); }
     let fn_val = codegen.module.get_function("tl_file_read_string").ok_or("tl_file_read_string not found")?;
     let call = codegen.builder.build_call(fn_val, &[instance_val.into()], "file_read_str").map_err(|e| e.to_string())?;
@@ -674,7 +675,7 @@ pub fn compile_file_write_string<'ctx>(
     instance_val: BasicValueEnum<'ctx>,
     _instance_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 {
         return Err("File::write_string requires 1 argument".into());
     }
@@ -696,7 +697,7 @@ pub fn compile_file_close<'ctx>(
     instance_val: BasicValueEnum<'ctx>,
     _instance_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if !args.is_empty() { return Err("File::close takes no arguments".into()); }
     let fn_val = codegen.module.get_function("tl_file_close").ok_or("tl_file_close not found")?;
     codegen.builder.build_call(fn_val, &[instance_val.into()], "file_close").map_err(|e| e.to_string())?;
@@ -710,9 +711,9 @@ pub fn compile_file_append<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
     _target: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 2 { return Err("File::append requires 2 arguments".into()); }
-    let extract_ptr = |codegen: &mut CodeGenerator<'ctx>, val: BasicValueEnum<'ctx>, ty: &Type| -> Result<inkwell::values::BasicMetadataValueEnum<'ctx>, String> {
+    let extract_ptr = |codegen: &mut CodeGenerator<'ctx>, val: BasicValueEnum<'ctx>, ty: &Type| -> Result<inkwell::values::BasicMetadataValueEnum<'ctx>, TlError> {
         let ptr_int_val = if matches!(ty, Type::String(_)) {
             let struct_ty = Type::String("String".to_string());
             codegen.load_struct_i64_field(val, &struct_ty, "ptr")?.into_int_value()
@@ -740,7 +741,7 @@ pub fn compile_file_delete<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
     _target: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 { return Err("File::delete requires 1 argument".into()); }
     let fn_val = codegen.module.get_function("tl_file_delete").ok_or("tl_file_delete not found")?;
     let (path_val, path_ty) = &args[0];
@@ -761,7 +762,7 @@ pub fn compile_file_create_dir<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
     _target: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 { return Err("File::create_dir requires 1 argument".into()); }
     let fn_val = codegen.module.get_function("tl_file_create_dir").ok_or("tl_file_create_dir not found")?;
     let (path_val, path_ty) = &args[0];
@@ -782,7 +783,7 @@ pub fn compile_file_list_dir<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
     _target: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 { return Err("File::list_dir requires 1 argument".into()); }
     let fn_val = codegen.module.get_function("tl_file_list_dir").ok_or("tl_file_list_dir not found")?;
     let (path_val, path_ty) = &args[0];
@@ -817,7 +818,7 @@ fn compile_path_instance_method<'ctx>(
     instance_val: BasicValueEnum<'ctx>,
     fn_name: &str,
     res_name: &str,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let fn_val = codegen.module.get_function(fn_name).ok_or(format!("{} not found", fn_name))?;
     
     let ptr = codegen.builder.build_ptr_to_int(instance_val.into_pointer_value(), codegen.context.i64_type(), "path_ptr_int").unwrap();
@@ -836,7 +837,7 @@ pub fn compile_path_parent<'ctx>(
     instance_val: BasicValueEnum<'ctx>,
     _instance_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if !args.is_empty() { return Err("Path.parent takes no arguments".into()); }
     compile_path_instance_method(codegen, instance_val, "tl_path_parent", "path_parent_str")
 }
@@ -846,7 +847,7 @@ pub fn compile_path_file_name<'ctx>(
     instance_val: BasicValueEnum<'ctx>,
     _instance_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if !args.is_empty() { return Err("Path.file_name takes no arguments".into()); }
     compile_path_instance_method(codegen, instance_val, "tl_path_file_name", "path_filename_str")
 }
@@ -856,7 +857,7 @@ pub fn compile_path_extension<'ctx>(
     instance_val: BasicValueEnum<'ctx>,
     _instance_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if !args.is_empty() { return Err("Path.extension takes no arguments".into()); }
     compile_path_instance_method(codegen, instance_val, "tl_path_extension", "path_ext_str")
 }
