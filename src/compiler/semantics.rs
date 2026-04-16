@@ -247,6 +247,9 @@ pub struct SemanticAnalyzer {
     trait_impls: HashMap<(String, String), TraitImplBlock>,
     /// 型名 → 実装済みtrait名のリスト
     type_traits: HashMap<String, Vec<String>>,
+    /// (trait名, 型名) → (関連型名 → 具象型)
+    /// 例: ("Future", "FooState") → {"Output": Type::I64}
+    assoc_types: HashMap<(String, String), HashMap<String, Type>>,
 }
 
 impl SemanticAnalyzer {
@@ -278,6 +281,21 @@ impl SemanticAnalyzer {
         None
     }
 
+    /// 型 `target_ty` が `trait_name` を実装している場合、関連型 `assoc_name` の具象型を返す。
+    /// 例: resolve_assoc_type(&FooState, "Future", "Output") → Some(Type::I64)
+    pub fn resolve_assoc_type(
+        &self,
+        target_ty: &Type,
+        trait_name: &str,
+        assoc_name: &str,
+    ) -> Option<Type> {
+        let type_name = target_ty.get_base_name();
+        self.assoc_types
+            .get(&(trait_name.to_string(), type_name))
+            .and_then(|map| map.get(assoc_name))
+            .cloned()
+    }
+
     pub fn new(_source: String) -> Self {
         let mut analyzer = SemanticAnalyzer {
             scopes: vec![Scope::new()], // Global scope
@@ -296,6 +314,7 @@ impl SemanticAnalyzer {
             traits: HashMap::new(),
             trait_impls: HashMap::new(),
             type_traits: HashMap::new(),
+            assoc_types: HashMap::new(),
         };
         // Register builtin types into TypeManager
         crate::compiler::codegen::builtin_types::non_generic::primitives::register_primitive_types(
@@ -1695,7 +1714,34 @@ impl SemanticAnalyzer {
         }
         let target_name = ti.target_type.get_base_name();
 
-        // 3. Verify method signatures match trait definition
+        // 3. Validate and register associated types
+        // 3a. すべての必須関連型が実装されているか確認
+        if ti.generics.is_empty() {
+            for required_assoc in &trait_def.associated_types {
+                let provided = ti.associated_types.iter().any(|(name, _)| name == required_assoc);
+                if !provided {
+                    return self.err(
+                        SemanticError::DuplicateDefinition(format!(
+                            "Associated type `{}` required by trait `{}` not provided for `{}`",
+                            required_assoc, ti.trait_name, target_name
+                        )),
+                        None,
+                    );
+                }
+            }
+        }
+        // 3b. 関連型を assoc_types レジストリに登録し、置換マップを構築
+        let mut assoc_map: HashMap<String, Type> = HashMap::new();
+        for (assoc_name, assoc_ty) in &ti.associated_types {
+            let resolved_assoc = self.resolve_user_type(assoc_ty);
+            assoc_map.insert(assoc_name.clone(), resolved_assoc);
+        }
+        if !assoc_map.is_empty() {
+            self.assoc_types
+                .insert((ti.trait_name.clone(), target_name.clone()), assoc_map.clone());
+        }
+
+        // 4. Verify method signatures match trait definition
         // (skip for generic impls as types are unknown)
         if ti.generics.is_empty() {
             // Check that all required methods are implemented
@@ -1717,24 +1763,24 @@ impl SemanticAnalyzer {
             }
         }
 
-        // 4. Inject default methods that are not overridden
+        // 5. Inject default methods that are not overridden
         for trait_method in &trait_def.methods {
             if let Some(default_body) = &trait_method.default_body {
                 if !ti.methods.iter().any(|m| m.name == trait_method.name) {
                     // Inject default method as FunctionDef
                     let mut args = trait_method.args.clone();
-                    // Replace Self with target type
+                    // Replace Self and Self::AssocType with concrete types
                     for (_, arg_ty) in &mut args {
-                        if let Type::Struct(n, _) = arg_ty {
-                            if n == "Self" {
-                                *arg_ty = ti.target_type.clone();
-                            }
-                        }
+                        *arg_ty = Self::substitute_self_types(arg_ty, &ti.target_type, &assoc_map);
                     }
                     let injected = FunctionDef {
                         name: trait_method.name.clone(),
                         args,
-                        return_type: trait_method.return_type.clone(),
+                        return_type: Self::substitute_self_types(
+                            &trait_method.return_type,
+                            &ti.target_type,
+                            &assoc_map,
+                        ),
                         body: default_body.clone(),
                         generics: vec![],
                         generic_bounds: vec![],
@@ -1747,29 +1793,20 @@ impl SemanticAnalyzer {
             }
         }
 
-        // 5. Register methods into self.methods (same as regular impl)
-        let mut resolved_methods: Vec<(String, FunctionDef)> = Vec::new();
-        for method in &ti.methods {
-            let mut m = method.clone();
-            for (_, arg_ty) in &mut m.args {
-                if let &mut Type::Struct(ref n, _) = arg_ty {
-                    if n == "Self" {
-                        *arg_ty = ti.target_type.clone();
-                        continue;
-                    }
-                }
+        // 6. Register methods into self.methods (same as regular impl)
+        // ti.methods を直接更新して codegen が参照する元データにも反映させる
+        for method in &mut ti.methods {
+            for (_, arg_ty) in &mut method.args {
+                *arg_ty = Self::substitute_self_types(arg_ty, &ti.target_type, &assoc_map);
                 *arg_ty = self.resolve_user_type(arg_ty);
             }
-            if let Type::Struct(ref n, _) = m.return_type {
-                if n == "Self" {
-                    m.return_type = ti.target_type.clone();
-                } else {
-                    m.return_type = self.resolve_user_type(&m.return_type);
-                }
-            } else {
-                m.return_type = self.resolve_user_type(&m.return_type);
-            }
-            resolved_methods.push((method.name.clone(), m));
+            method.return_type =
+                Self::substitute_self_types(&method.return_type, &ti.target_type, &assoc_map);
+            method.return_type = self.resolve_user_type(&method.return_type);
+        }
+        let mut resolved_methods: Vec<(String, FunctionDef)> = Vec::new();
+        for method in &ti.methods {
+            resolved_methods.push((method.name.clone(), method.clone()));
         }
 
         {
@@ -1787,7 +1824,7 @@ impl SemanticAnalyzer {
             }
         }
 
-        // 6. Register in trait_impls and type_traits
+        // 7. Register in trait_impls and type_traits
         self.trait_impls
             .insert((ti.trait_name.clone(), target_name.clone()), ti.clone());
         self.type_traits
@@ -1796,6 +1833,73 @@ impl SemanticAnalyzer {
             .push(ti.trait_name.clone());
 
         Ok(())
+    }
+
+    /// `Self` および `Self::AssocName` を含む型を具象型に置換する。
+    ///
+    /// - `Type::Struct("Self", _)` / `Type::Path(["Self"], _)` → `target_type`
+    /// - `Type::Path(["Self", "X"], _)` → `assoc_map["X"]`（存在しない場合はそのまま）
+    ///
+    /// 再帰的に型引数（ジェネリクス）も処理するため、`Poll<Self::Output>` のような
+    /// ネストした型でも正しく置換される。
+    fn substitute_self_types(
+        ty: &Type,
+        target_type: &Type,
+        assoc_map: &HashMap<String, Type>,
+    ) -> Type {
+        match ty {
+            // Self → target_type
+            Type::Struct(n, _) if n == "Self" => target_type.clone(),
+            Type::Path(segments, _) if segments == &["Self".to_string()] => target_type.clone(),
+            // Self::AssocName → assoc_map["AssocName"] or keep as-is
+            Type::Path(segments, _)
+                if segments.len() == 2 && segments[0] == "Self" =>
+            {
+                if let Some(concrete) = assoc_map.get(&segments[1]) {
+                    concrete.clone()
+                } else {
+                    ty.clone()
+                }
+            }
+            // ジェネリクスを持つ型は再帰的に処理（例: Poll<Self::Output>）
+            Type::Struct(name, args) => {
+                let new_args = args
+                    .iter()
+                    .map(|a| Self::substitute_self_types(a, target_type, assoc_map))
+                    .collect();
+                Type::Struct(name.clone(), new_args)
+            }
+            Type::Enum(name, args) => {
+                let new_args = args
+                    .iter()
+                    .map(|a| Self::substitute_self_types(a, target_type, assoc_map))
+                    .collect();
+                Type::Enum(name.clone(), new_args)
+            }
+            Type::Path(segments, args) => {
+                let new_args = args
+                    .iter()
+                    .map(|a| Self::substitute_self_types(a, target_type, assoc_map))
+                    .collect();
+                Type::Path(segments.clone(), new_args)
+            }
+            Type::Tuple(args) => {
+                let new_args = args
+                    .iter()
+                    .map(|a| Self::substitute_self_types(a, target_type, assoc_map))
+                    .collect();
+                Type::Tuple(new_args)
+            }
+            Type::Fn(params, ret) => Type::Fn(
+                params
+                    .iter()
+                    .map(|a| Self::substitute_self_types(a, target_type, assoc_map))
+                    .collect(),
+                Box::new(Self::substitute_self_types(ret, target_type, assoc_map)),
+            ),
+            // プリミティブ型・その他は変更なし
+            _ => ty.clone(),
+        }
     }
 
     fn check_trait_impl_bodies(&mut self, ti: &mut TraitImplBlock) -> Result<(), TlError> {
