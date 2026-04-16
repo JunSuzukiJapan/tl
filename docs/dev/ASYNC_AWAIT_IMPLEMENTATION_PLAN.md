@@ -254,10 +254,10 @@ pub extern "C" fn tl_executor_block_on(
 
 - [ ] **4.3.1** `poll_{fn_name}(state: *mut {fn_name}State) -> Poll<T>` のプロトタイプを生成
 - [ ] **4.3.2** `discriminant` への switch 命令をエントリポイントとして生成
-- [ ] **4.3.3** 各 state ブロック（`state_0:`, `state_1:`, ...）を生成
-- [ ] **4.3.4** state ブロック間での変数の load/store（state struct 経由）を実装
+- [x] **4.3.3** 各 state ブロック（`state_0:`, `state_1:`, ...）を生成
+- [x] **4.3.4** state ブロック間での変数の load/store（state struct 経由）を実装
 - [ ] **4.3.5** サスペンション時: `discriminant` を次の state 番号に更新 + `Poll::Pending` を return
-- [ ] **4.3.6** 完了時: `Poll::Ready(val)` を return
+- [x] **4.3.6** 完了時: `Poll::Ready(val)` を return
 
 ```
 ; 生成されるLLVMコードのイメージ

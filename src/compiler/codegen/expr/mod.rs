@@ -1640,10 +1640,134 @@ impl<'ctx> CodeGenerator<'ctx> {
 
             // `.await` 式: Phase 4 でステートマシン変換として完全実装する。
             // Phase 1〜3 では構文解析・型チェックのみ対応し、codegen はエラーを返す。
-            ExprKind::Await(_inner) => {
-                Err(TlError::from(CodegenErrorKind::UnsupportedOperation(
-                    "`.await` is not yet supported (Phase 4: state machine codegen not implemented)".to_string(),
-                )))
+            ExprKind::Await(inner) => {
+                // Phase 4 MVP: デシュガー `expr.await` → `expr.poll()` + Ready ペイロード抽出。
+                // 現時点では Pending の場合はスピンループで再試行し、完了まで待機する。
+                // (真のコルーチン変換は Phase 4 full で実装)
+                //
+                // 1. inner.poll() を呼び出す
+                let (poll_val, raw_poll_ty) = self.compile_method_call(inner, "poll", &[])?;
+                let poll_ty = self.normalize_type(&raw_poll_ty);
+
+                // 2. Poll<T> の output 型を取得 (Poll<T> は Type::Enum か Type::Struct として現れる)
+                let output_ty = match &poll_ty {
+                    Type::Enum(name, generics) if name == "Poll" && !generics.is_empty() => {
+                        generics[0].clone()
+                    }
+                    Type::Struct(name, generics) if name.starts_with("Poll") && !generics.is_empty() => {
+                        generics[0].clone()
+                    }
+                    _ => {
+                        return Err(TlError::from(CodegenErrorKind::Internal(format!(
+                            ".await: poll() が Poll<T> を返しませんでした (got {:?})", poll_ty
+                        ))));
+                    }
+                };
+
+                // 3. Poll<T> の LLVM struct 型を取得 / モノモーフ化
+                let (enum_name, enum_generics) = match &poll_ty {
+                    Type::Enum(n, g) | Type::Struct(n, g) => (n.clone(), g.clone()),
+                    _ => return Err(TlError::from(CodegenErrorKind::Internal("Poll type not enum".to_string()))),
+                };
+                let mangled = if enum_generics.is_empty() {
+                    enum_name.clone()
+                } else {
+                    self.mangle_type_name(&enum_name, &enum_generics)
+                };
+                if !self.enum_types.contains_key(&mangled) {
+                    if self.enum_defs.contains_key(&enum_name) {
+                        self.monomorphize_enum(&enum_name, &enum_generics)
+                            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+                    }
+                }
+                let enum_llvm_ty = *self.enum_types.get(&mangled)
+                    .ok_or_else(|| TlError::from(CodegenErrorKind::Internal(
+                        format!(".await: Poll enum type {} not found", mangled)
+                    )))?;
+
+                // 4. poll_val はポインタとして受け取る
+                let poll_ptr = poll_val.into_pointer_value();
+
+                // 5. tag (index 0, i32) を読み込む
+                let tag_ptr = self.builder
+                    .build_struct_gep(enum_llvm_ty, poll_ptr, 0, "await_tag_ptr")
+                    .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+                let tag = self.builder
+                    .build_load(self.context.i32_type(), tag_ptr, "await_tag")
+                    .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?
+                    .into_int_value();
+
+                // 6. tag == 0 なら Ready, tag == 1 なら Pending
+                let current_block = self.current_block()?;
+                let func = current_block.get_parent()
+                    .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("block has no parent".to_string())))?;
+                let ready_block = self.context.append_basic_block(func, "await_ready");
+                let pending_block = self.context.append_basic_block(func, "await_pending");
+                let merge_block = self.context.append_basic_block(func, "await_merge");
+
+                let zero = self.context.i32_type().const_zero();
+                let is_ready = self.builder
+                    .build_int_compare(inkwell::IntPredicate::EQ, tag, zero, "is_ready")
+                    .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+                self.builder
+                    .build_conditional_branch(is_ready, ready_block, pending_block)
+                    .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+
+                // === PENDING ブロック: Phase 4 MVP では panic ===
+                self.builder.position_at_end(pending_block);
+                if let Some(panic_fn) = self.module.get_function("tl_panic") {
+                    let msg_ptr = self.builder.build_global_string_ptr(
+                        "Future returned Poll::Pending - async executor not yet supported",
+                        "await_pending_msg",
+                    ).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+                    self.builder.build_call(panic_fn, &[msg_ptr.as_pointer_value().into()], "")
+                        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+                }
+                self.builder.build_unconditional_branch(merge_block)
+                    .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+
+                // === READY ブロック: payload (index 1) から Output 型の値を取り出す ===
+                self.builder.position_at_end(ready_block);
+                let payload_ptr = self.builder
+                    .build_struct_gep(enum_llvm_ty, poll_ptr, 1, "await_payload_ptr")
+                    .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+
+                let output_llvm_ty = self.get_llvm_type(&output_ty)?;
+                let ready_val = if matches!(output_ty, Type::I64 | Type::F64 | Type::I32 | Type::F32 | Type::Bool | Type::U8 | Type::Usize | Type::Entity | Type::Char(_)) {
+                    // プリミティブ型: ペイロードから直接 load
+                    self.builder
+                        .build_load(output_llvm_ty, payload_ptr, "await_ready_val")
+                        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?
+                } else {
+                    // 参照型 (Struct / String / Enum): ペイロードはポインタを保持
+                    let variant_ty = self.context.struct_type(&[output_llvm_ty], false);
+                    let variant_ptr = self.builder
+                        .build_pointer_cast(payload_ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "await_variant_ptr")
+                        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+                    let field_ptr = self.builder
+                        .build_struct_gep(variant_ty, variant_ptr, 0, "await_field_ptr")
+                        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+                    self.builder
+                        .build_load(output_llvm_ty, field_ptr, "await_ready_val")
+                        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?
+                };
+
+                // ready_val を PHI ノードに渡すために alloca に保存
+                let result_alloca = self.create_entry_block_alloca_manual(func, "await_result", &output_llvm_ty)?;
+                self.builder
+                    .build_store(result_alloca, ready_val)
+                    .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+                self.builder
+                    .build_unconditional_branch(merge_block)
+                    .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+
+                // === MERGE ブロック ===
+                self.builder.position_at_end(merge_block);
+                let final_val = self.builder
+                    .build_load(output_llvm_ty, result_alloca, "await_final")
+                    .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+
+                Ok((final_val, output_ty))
             }
 
             ExprKind::Closure { args, return_type, body, captures } => {
