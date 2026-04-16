@@ -47,7 +47,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
         
         let method = target_method.ok_or_else(|| format!("Method {} not found in generic impls of {}", method_name, struct_name))?;
-        let imp = target_impl.unwrap();
+        let imp = target_impl.expect("target_impl is Some when target_method is Some");
 
         // Check trait bounds before monomorphization
         if !self.check_method_trait_bounds(method, generic_args, &imp.generics) {
@@ -156,7 +156,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
         
         // 2. Retrieve definition
-        let func_def = self.generic_fn_defs.get(func_name).cloned().unwrap();
+        let func_def = self.generic_fn_defs.get(func_name).cloned().expect("key existence checked above");
         
         // 3. Unify argument types to infer type parameters
         // func_def.generics vs func_def.args vs arg_types

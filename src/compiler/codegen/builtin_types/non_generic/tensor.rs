@@ -425,7 +425,7 @@ fn compile_tensor_add_assign<'ctx>(
     let (rhs_val, rhs_ty) = args[0].clone();
 
     if matches!(rhs_ty, Type::Tensor(_, _)) {
-        let fn_val = codegen.module.get_function("tl_tensor_add_assign").unwrap();
+        let fn_val = codegen.get_fn("tl_tensor_add_assign")?;
         codegen
             .builder
             .build_call(fn_val, &[obj_val.into(), rhs_val.into()], "assign_res")
@@ -451,10 +451,7 @@ fn compile_tensor_add_assign<'ctx>(
                 .map_err(|e| e.to_string())?,
             _ => return Err(format!("add_assign scalar: unsupported type {:?}", rhs_ty).into()),
         };
-        let fn_val = codegen
-            .module
-            .get_function("tl_tensor_add_assign_scalar_f32")
-            .unwrap();
+        let fn_val = codegen.get_fn("tl_tensor_add_assign_scalar_f32")?;
         codegen
             .builder
             .build_call(fn_val, &[obj_val.into(), scalar_f32.into()], "assign_res")
@@ -484,7 +481,7 @@ fn compile_tensor_sub_assign<'ctx>(
     let (rhs_val, rhs_ty) = args[0].clone();
 
     if matches!(rhs_ty, Type::Tensor(_, _)) {
-        let fn_val = codegen.module.get_function("tl_tensor_sub_assign").unwrap();
+        let fn_val = codegen.get_fn("tl_tensor_sub_assign")?;
         codegen
             .builder
             .build_call(fn_val, &[obj_val.into(), rhs_val.into()], "assign_res")
@@ -510,10 +507,7 @@ fn compile_tensor_sub_assign<'ctx>(
                 .map_err(|e| e.to_string())?,
             _ => return Err(format!("sub_assign scalar: unsupported type {:?}", rhs_ty).into()),
         };
-        let fn_val = codegen
-            .module
-            .get_function("tl_tensor_sub_assign_scalar_f32")
-            .unwrap();
+        let fn_val = codegen.get_fn("tl_tensor_sub_assign_scalar_f32")?;
         codegen
             .builder
             .build_call(fn_val, &[obj_val.into(), scalar_f32.into()], "assign_res")
@@ -544,7 +538,7 @@ fn compile_tensor_mul_assign<'ctx>(
     let (rhs_val, rhs_ty) = args[0].clone();
 
     if matches!(rhs_ty, Type::Tensor(_, _)) {
-        let fn_val = codegen.module.get_function("tl_tensor_mul_assign").unwrap();
+        let fn_val = codegen.get_fn("tl_tensor_mul_assign")?;
         codegen
             .builder
             .build_call(fn_val, &[obj_val.into(), rhs_val.into()], "assign_res")
@@ -570,10 +564,7 @@ fn compile_tensor_mul_assign<'ctx>(
                 .map_err(|e| e.to_string())?,
             _ => return Err(format!("mul_assign scalar: unsupported type {:?}", rhs_ty).into()),
         };
-        let fn_val = codegen
-            .module
-            .get_function("tl_tensor_mul_assign_scalar_f32")
-            .unwrap();
+        let fn_val = codegen.get_fn("tl_tensor_mul_assign_scalar_f32")?;
         codegen
             .builder
             .build_call(fn_val, &[obj_val.into(), scalar_f32.into()], "assign_res")
@@ -603,7 +594,7 @@ fn compile_tensor_div_assign<'ctx>(
     let (rhs_val, rhs_ty) = args[0].clone();
 
     if matches!(rhs_ty, Type::Tensor(_, _)) {
-        let fn_val = codegen.module.get_function("tl_tensor_div_assign").unwrap();
+        let fn_val = codegen.get_fn("tl_tensor_div_assign")?;
         codegen
             .builder
             .build_call(fn_val, &[obj_val.into(), rhs_val.into()], "assign_res")
@@ -629,10 +620,7 @@ fn compile_tensor_div_assign<'ctx>(
                 .map_err(|e| e.to_string())?,
             _ => return Err(format!("div_assign scalar: unsupported type {:?}", rhs_ty).into()),
         };
-        let fn_val = codegen
-            .module
-            .get_function("tl_tensor_div_assign_scalar_f32")
-            .unwrap();
+        let fn_val = codegen.get_fn("tl_tensor_div_assign_scalar_f32")?;
         codegen
             .builder
             .build_call(fn_val, &[obj_val.into(), scalar_f32.into()], "assign_res")
@@ -717,7 +705,7 @@ fn compile_tensor_tril<'ctx>(
     let (diag_val, diag_ty) = &args[0];
     let diag_i64 = match diag_ty {
         Type::I64 => diag_val.into_int_value(),
-        Type::I32 => codegen.builder.build_int_s_extend(diag_val.into_int_value(), codegen.context.i64_type(), "tril_diag_ext").unwrap(),
+        Type::I32 => codegen.builder.build_int_s_extend(diag_val.into_int_value(), codegen.context.i64_type(), "tril_diag_ext").map_err(|e| e.to_string())?,
         _ => return Err("tril argument must be integer".into()),
     };
     let call = codegen.builder.build_call(fn_val, &[obj.into(), diag_i64.into()], "tril_res").map_err(|e| e.to_string())?;
@@ -876,12 +864,12 @@ fn compile_tensor_conv2d<'ctx>(
     
     let pad_i64 = match pad_ty {
         Type::I64 => pad_val.into_int_value(),
-        Type::I32 => codegen.builder.build_int_z_extend(pad_val.into_int_value(), codegen.context.i64_type(), "ext").unwrap(),
+        Type::I32 => codegen.builder.build_int_z_extend(pad_val.into_int_value(), codegen.context.i64_type(), "ext").map_err(|e| e.to_string())?,
         _ => return Err("conv2d padding must be int".into()),
     };
     let stride_i64 = match stride_ty {
         Type::I64 => stride_val.into_int_value(),
-        Type::I32 => codegen.builder.build_int_z_extend(stride_val.into_int_value(), codegen.context.i64_type(), "ext").unwrap(),
+        Type::I32 => codegen.builder.build_int_z_extend(stride_val.into_int_value(), codegen.context.i64_type(), "ext").map_err(|e| e.to_string())?,
         _ => return Err("conv2d stride must be int".into()),
     };
 
@@ -905,13 +893,13 @@ fn compile_tensor_clamp<'ctx>(
     let (min_val, min_ty) = &args[0];
     let min_f64 = match min_ty {
         Type::F64 => min_val.into_float_value(),
-        Type::F32 => codegen.builder.build_float_ext(min_val.into_float_value(), codegen.context.f64_type(), "ext").unwrap(),
+        Type::F32 => codegen.builder.build_float_ext(min_val.into_float_value(), codegen.context.f64_type(), "ext").map_err(|e| e.to_string())?,
         _ => return Err("min must be float".into()),
     };
     let (max_val, max_ty) = &args[1];
     let max_f64 = match max_ty {
         Type::F64 => max_val.into_float_value(),
-        Type::F32 => codegen.builder.build_float_ext(max_val.into_float_value(), codegen.context.f64_type(), "ext").unwrap(),
+        Type::F32 => codegen.builder.build_float_ext(max_val.into_float_value(), codegen.context.f64_type(), "ext").map_err(|e| e.to_string())?,
         _ => return Err("max must be float".into()),
     };
 
@@ -1487,9 +1475,8 @@ fn compile_tensor_creation_helper<'ctx>(
     };
     let i64_type = codegen.context.i64_type();
 
-    let current_block = codegen.builder.get_insert_block().unwrap();
-    let function = current_block.get_parent().unwrap();
-    let entry_block = function.get_first_basic_block().unwrap();
+    let function = codegen.current_function()?;
+    let entry_block = function.get_first_basic_block().expect("function has at least one basic block");
     let entry_builder = codegen.context.create_builder();
     if let Some(first_instr) = entry_block.get_first_instruction() {
         entry_builder.position_before(&first_instr);
@@ -1504,7 +1491,7 @@ fn compile_tensor_creation_helper<'ctx>(
 
     shape_alloca
         .as_instruction_value()
-        .unwrap()
+        .expect("alloca always has an instruction value")
         .set_alignment(16)
         .map_err(|e| e.to_string())?;
 

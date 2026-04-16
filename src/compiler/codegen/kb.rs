@@ -86,14 +86,14 @@ impl<'ctx> CodeGenerator<'ctx> {
         let head = &rule.head;
         let relation_name = &head.predicate;
 
-        let clear_fn = self.module.get_function("tl_kb_fact_args_clear").unwrap();
+        let clear_fn = self.get_fn("tl_kb_fact_args_clear")?;
         self.builder.build_call(clear_fn, &[], "").map_err(|e| e.to_string())?;
 
         for arg in &head.args {
             self.emit_fact_arg(&arg.inner)?;
         }
 
-        let add_fact_fn = self.module.get_function("tl_kb_add_fact_serialized").unwrap();
+        let add_fact_fn = self.get_fn("tl_kb_add_fact_serialized")?;
         let rel_str = self
             .builder
             .build_global_string_ptr(relation_name, "rel_name")
@@ -109,7 +109,7 @@ impl<'ctx> CodeGenerator<'ctx> {
     fn emit_fact_arg(&self, expr_kind: &ExprKind) -> Result<(), TlError> {
         match expr_kind {
             ExprKind::Symbol(name) | ExprKind::Variable(name) => {
-                let add_entity_fn = self.module.get_function("tl_kb_add_entity").unwrap();
+                let add_entity_fn = self.get_fn("tl_kb_add_entity")?;
                 let name_ptr = self
                     .builder
                     .build_global_string_ptr(name, "entity_name")
@@ -124,26 +124,26 @@ impl<'ctx> CodeGenerator<'ctx> {
                     _ => return Err("Failed to get basic value from tl_kb_add_entity".into()),
                 };
                 
-                let add_arg_fn = self.module.get_function("tl_kb_fact_args_add_entity").unwrap();
+                let add_arg_fn = self.get_fn("tl_kb_fact_args_add_entity")?;
                 self.builder.build_call(add_arg_fn, &[entity_id.into()], "").map_err(|e| e.to_string())?;
             }
             ExprKind::Int(val) => {
-                let add_arg_fn = self.module.get_function("tl_kb_fact_args_add_int").unwrap();
+                let add_arg_fn = self.get_fn("tl_kb_fact_args_add_int")?;
                 let v = self.context.i64_type().const_int(*val as u64, true);
                 self.builder.build_call(add_arg_fn, &[v.into()], "").map_err(|e| e.to_string())?;
             }
             ExprKind::Float(val) => {
-                let add_arg_fn = self.module.get_function("tl_kb_fact_args_add_float").unwrap();
+                let add_arg_fn = self.get_fn("tl_kb_fact_args_add_float")?;
                 let v = self.context.f64_type().const_float(*val);
                 self.builder.build_call(add_arg_fn, &[v.into()], "").map_err(|e| e.to_string())?;
             }
             ExprKind::Bool(val) => {
-                let add_arg_fn = self.module.get_function("tl_kb_fact_args_add_bool").unwrap();
+                let add_arg_fn = self.get_fn("tl_kb_fact_args_add_bool")?;
                 let v = self.context.bool_type().const_int(if *val { 1 } else { 0 }, false);
                 self.builder.build_call(add_arg_fn, &[v.into()], "").map_err(|e| e.to_string())?;
             }
             ExprKind::StringLiteral(val) => {
-                let add_arg_fn = self.module.get_function("tl_kb_fact_args_add_string").unwrap();
+                let add_arg_fn = self.get_fn("tl_kb_fact_args_add_string")?;
                 let s_ptr = self.builder.build_global_string_ptr(val, "fact_str").map_err(|e| e.to_string())?;
                 self.builder.build_call(add_arg_fn, &[s_ptr.as_pointer_value().into()], "").map_err(|e| e.to_string())?;
             }
@@ -156,7 +156,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         let mut local_vars: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
         let mut next_var_idx = 0;
 
-        let rule_start_fn = self.module.get_function("tl_kb_rule_start").unwrap();
+        let rule_start_fn = self.get_fn("tl_kb_rule_start")?;
         let head_rel_str = self
             .builder
             .build_global_string_ptr(&rule.head.predicate, "head_rel")
@@ -169,11 +169,8 @@ impl<'ctx> CodeGenerator<'ctx> {
             self.emit_rule_arg(&arg.inner, &mut local_vars, &mut next_var_idx, known_entities, true)?;
         }
 
-        let add_body_atom_fn = self.module.get_function("tl_kb_rule_add_body_atom").unwrap();
-        let add_body_atom_neg_fn = self
-            .module
-            .get_function("tl_kb_rule_add_body_atom_neg")
-            .unwrap();
+        let add_body_atom_fn = self.get_fn("tl_kb_rule_add_body_atom")?;
+        let add_body_atom_neg_fn = self.get_fn("tl_kb_rule_add_body_atom_neg")?;
 
         let mut tmp_idx = 0i64;
         let lowered_body = lower_rule_body(&rule.body, &mut tmp_idx)?;
@@ -207,7 +204,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
         }
 
-        let finish_fn = self.module.get_function("tl_kb_rule_finish").unwrap();
+        let finish_fn = self.get_fn("tl_kb_rule_finish")?;
         self.builder.build_call(finish_fn, &[], "").map_err(|e| e.to_string())?;
 
         Ok(())
@@ -226,7 +223,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         match expr_kind {
             ExprKind::Symbol(name) | ExprKind::Variable(name) => {
                 if known_entities.contains(name) {
-                    let add_entity_fn = self.module.get_function("tl_kb_add_entity").unwrap();
+                    let add_entity_fn = self.get_fn("tl_kb_add_entity")?;
                     let name_ptr = self.builder.build_global_string_ptr(name, "entity_name").map_err(|e| e.to_string())?;
                     let call = self.builder.build_call(add_entity_fn, &[name_ptr.as_pointer_value().into()], "entity_id").map_err(|e| e.to_string())?;
                     
@@ -236,7 +233,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     };
                     
                     let fn_name = format!("tl_kb_rule_add_{}_const_entity", suffix);
-                    let fn_val = self.module.get_function(&fn_name).unwrap();
+                    let fn_val = self.get_fn(&fn_name)?;
                     self.builder.build_call(fn_val, &[entity_id.into()], "").map_err(|e| e.to_string())?;
                 } else {
                     let idx = *local_vars.entry(name.clone()).or_insert_with(|| {
@@ -245,7 +242,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         i
                     });
                     let fn_name = format!("tl_kb_rule_add_{}_var", suffix);
-                    let fn_val = self.module.get_function(&fn_name).unwrap();
+                    let fn_val = self.get_fn(&fn_name)?;
                     let v = self.context.i64_type().const_int(idx as u64, false);
                     self.builder.build_call(fn_val, &[v.into()], "").map_err(|e| e.to_string())?;
                 }
@@ -257,19 +254,19 @@ impl<'ctx> CodeGenerator<'ctx> {
                     i
                 });
                 let fn_name = format!("tl_kb_rule_add_{}_var", suffix);
-                let fn_val = self.module.get_function(&fn_name).unwrap();
+                let fn_val = self.get_fn(&fn_name)?;
                 let v = self.context.i64_type().const_int(idx as u64, false);
                 self.builder.build_call(fn_val, &[v.into()], "").map_err(|e| e.to_string())?;
             }
             ExprKind::Int(val) => {
                 let fn_name = format!("tl_kb_rule_add_{}_const_int", suffix);
-                let fn_val = self.module.get_function(&fn_name).unwrap();
+                let fn_val = self.get_fn(&fn_name)?;
                 let v = self.context.i64_type().const_int(*val as u64, true);
                 self.builder.build_call(fn_val, &[v.into()], "").map_err(|e| e.to_string())?;
             }
             ExprKind::Float(val) => {
                 let fn_name = format!("tl_kb_rule_add_{}_const_float", suffix);
-                let fn_val = self.module.get_function(&fn_name).unwrap();
+                let fn_val = self.get_fn(&fn_name)?;
                 let v = self.context.f64_type().const_float(*val);
                 self.builder.build_call(fn_val, &[v.into()], "").map_err(|e| e.to_string())?;
             }
@@ -278,7 +275,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let idx = *next_var_idx;
                 *next_var_idx += 1;
                 let fn_name = format!("tl_kb_rule_add_{}_var", suffix);
-                let fn_val = self.module.get_function(&fn_name).unwrap();
+                let fn_val = self.get_fn(&fn_name)?;
                 let v = self.context.i64_type().const_int(idx as u64, false);
                 self.builder.build_call(fn_val, &[v.into()], "").map_err(|e| e.to_string())?;
             }

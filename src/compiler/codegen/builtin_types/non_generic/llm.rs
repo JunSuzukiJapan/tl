@@ -235,7 +235,7 @@ fn compile_tokenizer_new<'ctx>(
     
     let size_int = size;
     let size_i64 = if size_int.get_type() == codegen.context.i32_type() {
-        codegen.builder.build_int_z_extend(size_int, codegen.context.i64_type(), "size_i64").unwrap()
+        codegen.builder.build_int_z_extend(size_int, codegen.context.i64_type(), "size_i64").map_err(|e| e.to_string())?
     } else {
         size_int
     };
@@ -248,7 +248,7 @@ fn compile_tokenizer_new<'ctx>(
     };
     
     if let Some(register_fn) = codegen.module.get_function("tl_mem_register_struct") {
-        let cast_ptr = codegen.builder.build_pointer_cast(raw_ptr, codegen.context.ptr_type(inkwell::AddressSpace::default()), "cast_ptr").unwrap();
+        let cast_ptr = codegen.builder.build_pointer_cast(raw_ptr, codegen.context.ptr_type(inkwell::AddressSpace::default()), "cast_ptr").map_err(|e| e.to_string())?;
         codegen.builder.build_call(register_fn, &[cast_ptr.into()], "").map_err(|e| e.to_string())?;
     }
     
@@ -385,7 +385,7 @@ fn compile_kv_cache_new<'ctx>(
     let i64_type = codegen.context.i64_type();
     let struct_ty = codegen.context.struct_type(&[i64_type.into()], false);
     
-    let alloca = codegen.builder.build_alloca(struct_ty, "kv_new_sret").unwrap();
+    let alloca = codegen.builder.build_alloca(struct_ty, "kv_new_sret").map_err(|e| e.to_string())?;
     
     codegen.builder.build_call(fn_val, &[alloca.into(), layers_val.into()], "").map_err(|e| e.to_string())?;
 

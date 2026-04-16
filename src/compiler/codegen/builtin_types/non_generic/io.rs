@@ -483,7 +483,7 @@ pub fn compile_file_exists<'ctx>(
         inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
         _ => return Err("Invalid return from File::exists".into()),
     };
-    let ok = codegen.builder.build_int_compare(inkwell::IntPredicate::EQ, res, codegen.context.i64_type().const_int(1, false), "exists_bool").unwrap();
+    let ok = codegen.builder.build_int_compare(inkwell::IntPredicate::EQ, res, codegen.context.i64_type().const_int(1, false), "exists_bool").map_err(|e| e.to_string())?;
     Ok((ok.into(), Type::Bool))
 }
 
@@ -553,7 +553,7 @@ pub fn compile_file_download<'ctx>(
         inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
         _ => return Err("Invalid return from File::download".into()),
     };
-    let ok = codegen.builder.build_int_compare(inkwell::IntPredicate::EQ, res, codegen.context.i64_type().const_int(1, false), "download_bool").unwrap();
+    let ok = codegen.builder.build_int_compare(inkwell::IntPredicate::EQ, res, codegen.context.i64_type().const_int(1, false), "download_bool").map_err(|e| e.to_string())?;
     Ok((ok.into(), Type::Bool))
 }
 
@@ -603,50 +603,49 @@ pub fn compile_file_read_binary<'ctx>(
         *ty
     } else {
         codegen.monomorphize_enum("Result", &[vec_ty.clone(), err_ty.clone()]).map_err(|e| e.to_string())?;
-        *codegen.enum_types.get(&mangled).unwrap()
+        *codegen.enum_types.get(&mangled).expect("just monomorphized")
     };
 
     let res_alloca = codegen.create_entry_block_alloca(
-        codegen.builder.get_insert_block().unwrap().get_parent().unwrap(),
+        codegen.current_function()?,
         "res_alloca",
         &res_ty
     )?;
 
-    let is_null = codegen.builder.build_is_null(raw_ptr, "is_null").unwrap();
-    let current_block = codegen.builder.get_insert_block().unwrap();
-    let func = current_block.get_parent().unwrap();
+    let is_null = codegen.builder.build_is_null(raw_ptr, "is_null").map_err(|e| e.to_string())?;
+    let func = codegen.current_function()?;
     let ok_block = codegen.context.append_basic_block(func, "read_ok");
     let err_block = codegen.context.append_basic_block(func, "read_err");
     let merge_block = codegen.context.append_basic_block(func, "read_merge");
 
-    codegen.builder.build_conditional_branch(is_null, err_block, ok_block).unwrap();
+    codegen.builder.build_conditional_branch(is_null, err_block, ok_block).map_err(|e| e.to_string())?;
 
     // === OK BLOCK ===
     codegen.builder.position_at_end(ok_block);
-    let tag_ptr_ok = codegen.builder.build_struct_gep(enum_llvm_ty, res_alloca, 0, "tag_ptr").unwrap();
-    codegen.builder.build_store(tag_ptr_ok, codegen.context.i32_type().const_int(0, false)).unwrap(); // 0 is Ok
+    let tag_ptr_ok = codegen.builder.build_struct_gep(enum_llvm_ty, res_alloca, 0, "tag_ptr").map_err(|e| e.to_string())?;
+    codegen.builder.build_store(tag_ptr_ok, codegen.context.i32_type().const_int(0, false)).map_err(|e| e.to_string())?; // 0 is Ok
 
-    let payload_ptr_raw_ok = codegen.builder.build_struct_gep(enum_llvm_ty, res_alloca, 1, "payload_ptr_raw").unwrap();
-    let payload_ptr_ok = codegen.builder.build_pointer_cast(payload_ptr_raw_ok, codegen.context.ptr_type(inkwell::AddressSpace::default()), "payload_ptr").unwrap();
-    
-    let field_ptr_ok = codegen.builder.build_struct_gep(ok_variant_ty, payload_ptr_ok, 0, "field_ptr").unwrap();
-    codegen.builder.build_store(field_ptr_ok, raw_ptr).unwrap();
-    codegen.builder.build_unconditional_branch(merge_block).unwrap();
+    let payload_ptr_raw_ok = codegen.builder.build_struct_gep(enum_llvm_ty, res_alloca, 1, "payload_ptr_raw").map_err(|e| e.to_string())?;
+    let payload_ptr_ok = codegen.builder.build_pointer_cast(payload_ptr_raw_ok, codegen.context.ptr_type(inkwell::AddressSpace::default()), "payload_ptr").map_err(|e| e.to_string())?;
+
+    let field_ptr_ok = codegen.builder.build_struct_gep(ok_variant_ty, payload_ptr_ok, 0, "field_ptr").map_err(|e| e.to_string())?;
+    codegen.builder.build_store(field_ptr_ok, raw_ptr).map_err(|e| e.to_string())?;
+    codegen.builder.build_unconditional_branch(merge_block).map_err(|e| e.to_string())?;
 
     // === ERR BLOCK ===
     codegen.builder.position_at_end(err_block);
-    let tag_ptr_err = codegen.builder.build_struct_gep(enum_llvm_ty, res_alloca, 0, "tag_ptr_err").unwrap();
-    codegen.builder.build_store(tag_ptr_err, codegen.context.i32_type().const_int(1, false)).unwrap(); // 1 is Err
+    let tag_ptr_err = codegen.builder.build_struct_gep(enum_llvm_ty, res_alloca, 0, "tag_ptr_err").map_err(|e| e.to_string())?;
+    codegen.builder.build_store(tag_ptr_err, codegen.context.i32_type().const_int(1, false)).map_err(|e| e.to_string())?; // 1 is Err
 
     // Create Error String
     let (err_str_val, _) = codegen.compile_string_literal("Failed to read binary file")?;
-    
-    let payload_ptr_raw_err = codegen.builder.build_struct_gep(enum_llvm_ty, res_alloca, 1, "payload_ptr_raw_err").unwrap();
-    let payload_ptr_err = codegen.builder.build_pointer_cast(payload_ptr_raw_err, codegen.context.ptr_type(inkwell::AddressSpace::default()), "payload_ptr_err").unwrap();
-    
-    let field_ptr_err = codegen.builder.build_struct_gep(err_variant_ty, payload_ptr_err, 0, "field_ptr_err").unwrap();
-    codegen.builder.build_store(field_ptr_err, err_str_val).unwrap();
-    codegen.builder.build_unconditional_branch(merge_block).unwrap();
+
+    let payload_ptr_raw_err = codegen.builder.build_struct_gep(enum_llvm_ty, res_alloca, 1, "payload_ptr_raw_err").map_err(|e| e.to_string())?;
+    let payload_ptr_err = codegen.builder.build_pointer_cast(payload_ptr_raw_err, codegen.context.ptr_type(inkwell::AddressSpace::default()), "payload_ptr_err").map_err(|e| e.to_string())?;
+
+    let field_ptr_err = codegen.builder.build_struct_gep(err_variant_ty, payload_ptr_err, 0, "field_ptr_err").map_err(|e| e.to_string())?;
+    codegen.builder.build_store(field_ptr_err, err_str_val).map_err(|e| e.to_string())?;
+    codegen.builder.build_unconditional_branch(merge_block).map_err(|e| e.to_string())?;
 
     // === MERGE BLOCK ===
     codegen.builder.position_at_end(merge_block);
@@ -748,9 +747,9 @@ pub fn compile_file_delete<'ctx>(
     let ptr_int = if matches!(path_ty, Type::String(_)) {
         codegen.load_struct_i64_field(*path_val, &Type::String("String".to_string()), "ptr")?.into_int_value()
     } else { return Err("Expected String".into()); };
-    let path_ptr = codegen.builder.build_int_to_ptr(ptr_int, codegen.context.ptr_type(inkwell::AddressSpace::default()), "path_ptr").unwrap();
-    
-    let call = codegen.builder.build_call(fn_val, &[path_ptr.into()], "file_delete").unwrap();
+    let path_ptr = codegen.builder.build_int_to_ptr(ptr_int, codegen.context.ptr_type(inkwell::AddressSpace::default()), "path_ptr").map_err(|e| e.to_string())?;
+
+    let call = codegen.builder.build_call(fn_val, &[path_ptr.into()], "file_delete").map_err(|e| e.to_string())?;
     let res = match call.try_as_basic_value() {
         inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
         _ => return Err("Invalid return from File::delete".into()),
@@ -769,9 +768,9 @@ pub fn compile_file_create_dir<'ctx>(
     let ptr_int = if matches!(path_ty, Type::String(_)) {
         codegen.load_struct_i64_field(*path_val, &Type::String("String".to_string()), "ptr")?.into_int_value()
     } else { return Err("Expected String".into()); };
-    let path_ptr = codegen.builder.build_int_to_ptr(ptr_int, codegen.context.ptr_type(inkwell::AddressSpace::default()), "path_ptr").unwrap();
-    
-    let call = codegen.builder.build_call(fn_val, &[path_ptr.into()], "file_create_dir").unwrap();
+    let path_ptr = codegen.builder.build_int_to_ptr(ptr_int, codegen.context.ptr_type(inkwell::AddressSpace::default()), "path_ptr").map_err(|e| e.to_string())?;
+
+    let call = codegen.builder.build_call(fn_val, &[path_ptr.into()], "file_create_dir").map_err(|e| e.to_string())?;
     let res = match call.try_as_basic_value() {
         inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
         _ => return Err("Invalid return from File::create_dir".into()),
@@ -790,9 +789,9 @@ pub fn compile_file_list_dir<'ctx>(
     let ptr_int = if matches!(path_ty, Type::String(_)) {
         codegen.load_struct_i64_field(*path_val, &Type::String("String".to_string()), "ptr")?.into_int_value()
     } else { return Err("Expected String".into()); };
-    let path_ptr = codegen.builder.build_int_to_ptr(ptr_int, codegen.context.ptr_type(inkwell::AddressSpace::default()), "path_ptr").unwrap();
-    
-    let call = codegen.builder.build_call(fn_val, &[path_ptr.into()], "file_list_dir").unwrap();
+    let path_ptr = codegen.builder.build_int_to_ptr(ptr_int, codegen.context.ptr_type(inkwell::AddressSpace::default()), "path_ptr").map_err(|e| e.to_string())?;
+
+    let call = codegen.builder.build_call(fn_val, &[path_ptr.into()], "file_list_dir").map_err(|e| e.to_string())?;
     let res = match call.try_as_basic_value() {
         inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
         _ => return Err("Invalid return from File::list_dir".into()),
@@ -807,7 +806,7 @@ pub fn compile_file_list_dir<'ctx>(
         codegen.monomorphize_struct("Vec", &vec_str_generics).map_err(|e| e.to_string())?
     };
     let vec_ptr_ty = codegen.context.ptr_type(inkwell::AddressSpace::default());
-    let vec_ptr = codegen.builder.build_pointer_cast(res, vec_ptr_ty, "vec_cast").unwrap();
+    let vec_ptr = codegen.builder.build_pointer_cast(res, vec_ptr_ty, "vec_cast").map_err(|e| e.to_string())?;
 
     Ok((vec_ptr.into(), Type::Struct("Vec".to_string(), vec![Type::String("String".to_string())])))
 }
@@ -821,10 +820,10 @@ fn compile_path_instance_method<'ctx>(
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let fn_val = codegen.module.get_function(fn_name).ok_or(format!("{} not found", fn_name))?;
     
-    let ptr = codegen.builder.build_ptr_to_int(instance_val.into_pointer_value(), codegen.context.i64_type(), "path_ptr_int").unwrap();
-    let path_ptr = codegen.builder.build_int_to_ptr(ptr, codegen.context.ptr_type(inkwell::AddressSpace::default()), "path_ptr").unwrap();
-    
-    let call = codegen.builder.build_call(fn_val, &[path_ptr.into()], res_name).unwrap();
+    let ptr = codegen.builder.build_ptr_to_int(instance_val.into_pointer_value(), codegen.context.i64_type(), "path_ptr_int").map_err(|e| e.to_string())?;
+    let path_ptr = codegen.builder.build_int_to_ptr(ptr, codegen.context.ptr_type(inkwell::AddressSpace::default()), "path_ptr").map_err(|e| e.to_string())?;
+
+    let call = codegen.builder.build_call(fn_val, &[path_ptr.into()], res_name).map_err(|e| e.to_string())?;
     let res = match call.try_as_basic_value() {
         inkwell::values::ValueKind::Basic(v) => v,
         _ => return Err("Invalid return from Path method".into()),

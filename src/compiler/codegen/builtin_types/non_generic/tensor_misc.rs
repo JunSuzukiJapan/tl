@@ -39,7 +39,7 @@ pub fn compile_debug_ptr<'ctx>(
             let fn_type = codegen.context.void_type().fn_type(&[ptr_ty.into()], false);
             Some(codegen.module.add_function("tl_metal_debug_tensor", fn_type, None))
         })
-        .unwrap();
+        .expect("or_else always provides Some");
     codegen
         .builder
         .build_call(fn_val, &[obj.into()], "debug_ptr_call")
