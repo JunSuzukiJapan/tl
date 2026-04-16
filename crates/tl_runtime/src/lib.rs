@@ -32,6 +32,7 @@ pub mod atomic_ffi;
 pub mod time_ffi;
 pub mod mutex_ffi;
 pub mod net_ffi;
+pub mod executor_ffi;
 // autograd_registry は MetalTensor 統合により廃止
 
 // ========== Stub Modules (Legacy Compatibility) ==========
