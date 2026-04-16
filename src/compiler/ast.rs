@@ -653,6 +653,49 @@ pub struct Module {
     pub submodules: HashMap<String, Module>,
 }
 
+impl Module {
+    /// 空の Module を生成する。
+    pub fn new() -> Self {
+        Module {
+            structs: Vec::new(),
+            enums: Vec::new(),
+            impls: Vec::new(),
+            traits: Vec::new(),
+            trait_impls: Vec::new(),
+            functions: Vec::new(),
+            tensor_decls: Vec::new(),
+            relations: Vec::new(),
+            rules: Vec::new(),
+            queries: Vec::new(),
+            imports: Vec::new(),
+            submodules: HashMap::new(),
+        }
+    }
+
+    /// `other` のすべてのフィールドを self に結合する。
+    /// ビルトインのインジェクトやマルチファイルのマージに使用する。
+    pub fn merge(&mut self, other: Module) {
+        self.structs.extend(other.structs);
+        self.enums.extend(other.enums);
+        self.impls.extend(other.impls);
+        self.traits.extend(other.traits);
+        self.trait_impls.extend(other.trait_impls);
+        self.functions.extend(other.functions);
+        self.tensor_decls.extend(other.tensor_decls);
+        self.relations.extend(other.relations);
+        self.rules.extend(other.rules);
+        self.queries.extend(other.queries);
+        self.imports.extend(other.imports);
+        self.submodules.extend(other.submodules);
+    }
+}
+
+impl Default for Module {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum EnumVariantInit {
     Unit,

@@ -1,3 +1,4 @@
+use crate::compiler::error::{TlError, CodegenErrorKind};
 use crate::compiler::ast::*;
 
 
@@ -76,8 +77,8 @@ impl<'ctx> CodeGenerator<'ctx> {
         let builder = context.create_builder();
         let execution_engine = module
             .create_jit_execution_engine(OptimizationLevel::None)
-            .map_err(|e| e.to_string())
-            .unwrap();
+            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))
+            .expect("failed to create LLVM JIT execution engine");
 
         let mut codegen = CodeGenerator {
             context,
@@ -155,6 +156,29 @@ impl<'ctx> CodeGenerator<'ctx> {
         codegen
     }
 
+    // --- Error-safe LLVM helpers ---
+
+    /// 現在のビルダーが挿入中の基本ブロックを取得する
+    pub(crate) fn current_block(&self) -> Result<inkwell::basic_block::BasicBlock<'ctx>, TlError> {
+        self.builder
+            .get_insert_block()
+            .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("no current basic block".to_string())))
+    }
+
+    /// 現在の基本ブロックが属する関数を取得する
+    pub(crate) fn current_function(&self) -> Result<inkwell::values::FunctionValue<'ctx>, TlError> {
+        self.current_block()?
+            .get_parent()
+            .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("current block has no parent function".to_string())))
+    }
+
+    /// モジュールから関数を名前で取得する
+    pub(crate) fn get_fn(&self, name: &str) -> Result<inkwell::values::FunctionValue<'ctx>, TlError> {
+        self.module
+            .get_function(name)
+            .ok_or_else(|| TlError::from(CodegenErrorKind::FunctionNotFound(format!("function '{}' not found in module", name))))
+    }
+
     fn register_builtin_return_types(&mut self) {
         // ポインタ返却FFI関数の型は declare_runtime_functions 内の add_fn_typed で一元登録済み。
         // ここには add_fn_typed で登録できない特殊なケース（メソッド呼び出し等）のみ残す。
@@ -180,27 +204,27 @@ impl<'ctx> CodeGenerator<'ctx> {
         self.module.print_to_stderr();
     }
 
-    pub fn jit_execute(&self, function_name: &str) -> Result<u64, String> {
+    pub fn jit_execute(&self, function_name: &str) -> Result<u64, TlError> {
         unsafe {
             let function = self
                 .execution_engine
                 .get_function::<unsafe extern "C" fn() -> u64>(function_name)
-                .map_err(|e| format!("JIT compile error: {}", e))?;
+                .map_err(|e| TlError::from(CodegenErrorKind::Internal(format!("JIT compile error: {}", e))))?;
             self.module.print_to_file("debug.ll").ok();
             let result = function.call();
             Ok(result)
         }
     }
 
-    pub fn emit_object_file(&self, path: &std::path::Path) -> Result<(), String> {
+    pub fn emit_object_file(&self, path: &std::path::Path) -> Result<(), TlError> {
         use inkwell::targets::{
             CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine,
         };
 
-        Target::initialize_native(&InitializationConfig::default()).map_err(|e| e.to_string())?;
+        Target::initialize_native(&InitializationConfig::default()).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
         let triple = TargetMachine::get_default_triple();
-        let target = Target::from_triple(&triple).map_err(|e| e.to_string())?;
+        let target = Target::from_triple(&triple).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
         let target_machine = target
             .create_target_machine(
@@ -211,22 +235,22 @@ impl<'ctx> CodeGenerator<'ctx> {
                 RelocMode::Default,
                 CodeModel::Default,
             )
-            .ok_or("Failed to create target machine")?;
+            .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("Failed to create target machine".to_string())))?;
 
         target_machine
             .write_to_file(&self.module, FileType::Object, path)
-            .map_err(|e| e.to_string())
+            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))
     }
 
-    pub fn emit_assembly_file(&self, path: &std::path::Path) -> Result<(), String> {
+    pub fn emit_assembly_file(&self, path: &std::path::Path) -> Result<(), TlError> {
         use inkwell::targets::{
             CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine,
         };
 
-    Target::initialize_native(&InitializationConfig::default()).map_err(|e| e.to_string())?;
+    Target::initialize_native(&InitializationConfig::default()).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
         let triple = TargetMachine::get_default_triple();
-        let target = Target::from_triple(&triple).map_err(|e| e.to_string())?;
+        let target = Target::from_triple(&triple).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
         let target_machine = target
             .create_target_machine(
@@ -237,17 +261,17 @@ impl<'ctx> CodeGenerator<'ctx> {
                 RelocMode::Default,
                 CodeModel::Default,
             )
-            .ok_or("Failed to create target machine")?;
+            .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("Failed to create target machine".to_string())))?;
 
         target_machine
             .write_to_file(&self.module, FileType::Assembly, path)
-            .map_err(|e| e.to_string())
+            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))
     }
 
-    pub fn emit_llvm_file(&self, path: &std::path::Path) -> Result<(), String> {
+    pub fn emit_llvm_file(&self, path: &std::path::Path) -> Result<(), TlError> {
         self.module
             .print_to_file(path)
-            .map_err(|e| e.to_string())
+            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))
     }
 
     pub(crate) fn push_temp_scope(&mut self) {
@@ -255,7 +279,7 @@ impl<'ctx> CodeGenerator<'ctx> {
     }
 
     #[allow(dead_code)]
-    pub(crate) fn pop_temp_scope(&mut self) -> Result<(), String> {
+    pub(crate) fn pop_temp_scope(&mut self) -> Result<(), TlError> {
         let temps = self.temporaries.pop().expect("Temporary stack underflow");
         for (val, ty, cleanup) in temps {
             if cleanup != CLEANUP_NONE {
@@ -331,7 +355,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         &self,
         call_site_value: inkwell::values::CallSiteValue<'ctx>,
         context_msg: &str,
-    ) -> Result<BasicValueEnum<'ctx>, String> {
+    ) -> Result<BasicValueEnum<'ctx>, TlError> {
         let (file, line, col) = if let Some(span) = &self.current_span {
             (span.file.as_deref(), span.line as u32, span.column as u32)
         } else {
@@ -347,10 +371,10 @@ impl<'ctx> CodeGenerator<'ctx> {
         file: Option<&str>,
         line: u32,
         col: u32,
-    ) -> Result<BasicValueEnum<'ctx>, String> {
+    ) -> Result<BasicValueEnum<'ctx>, TlError> {
         let basic_value = match call_site_value.try_as_basic_value() {
             inkwell::values::ValueKind::Basic(v) => v,
-            _ => return Err("Call returned void".into()),
+            _ => return Err(CodegenErrorKind::Internal("Call returned void".to_string()).into()),
         };
 
         if !basic_value.is_pointer_value() {
@@ -377,24 +401,25 @@ impl<'ctx> CodeGenerator<'ctx> {
                  let i32_type = self.context.i32_type();
                  let line_val = i32_type.const_int(line as u64, false);
                  
-                 let cast_ptr = self.builder.build_pointer_cast(ptr_val, self.context.ptr_type(inkwell::AddressSpace::default()), "cast_log").unwrap();
-    
+                 let cast_ptr = self.builder.build_pointer_cast(ptr_val, self.context.ptr_type(inkwell::AddressSpace::default()), "cast_log").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+
                  self.builder.build_call(f, &[cast_ptr.into(), size_val.into(), file_ptr.into(), line_val.into()], "").ok();
              }
         }
 
-        let current_bb = self.builder.get_insert_block().unwrap();
-        let function = current_bb.get_parent().unwrap();
+        let current_bb = self.current_block()?;
+        let function = current_bb.get_parent()
+            .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("current block has no parent function".to_string())))?;
 
         // Check is_null
-        let is_null = self.builder.build_is_null(ptr_val, "is_null").unwrap();
+        let is_null = self.builder.build_is_null(ptr_val, "is_null").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
         let error_bb = self.context.append_basic_block(function, "runtime_error");
         let success_bb = self.context.append_basic_block(function, "runtime_success");
 
         self.builder
             .build_conditional_branch(is_null, error_bb, success_bb)
-            .unwrap();
+            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
         // Error Handler
         self.builder.position_at_end(error_bb);
@@ -404,7 +429,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         let file_ptr = self
             .builder
             .build_global_string_ptr(file_str, "file_str")
-            .map_err(|e| e.to_string())?
+            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?
             .as_pointer_value();
 
         // Call tl_report_runtime_error_loc(file, line, col)
@@ -427,7 +452,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 ],
                 "",
             )
-            .unwrap();
+            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
         // Return zero/null
         let return_type = function.get_type().get_return_type();
@@ -435,20 +460,20 @@ impl<'ctx> CodeGenerator<'ctx> {
             if rt.is_pointer_type() {
                 self.builder
                     .build_return(Some(&rt.into_pointer_type().const_null()))
-                    .unwrap();
+                    .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
             } else if rt.is_int_type() {
                 self.builder
                     .build_return(Some(&rt.into_int_type().const_zero()))
-                    .unwrap();
+                    .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
             } else if rt.is_float_type() {
                 self.builder
                     .build_return(Some(&rt.into_float_type().const_zero()))
-                    .unwrap();
+                    .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
             } else {
-                self.builder.build_return(None).unwrap();
+                self.builder.build_return(None).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
             }
         } else {
-            self.builder.build_return(None).unwrap();
+            self.builder.build_return(None).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
         }
 
         // Success Path
@@ -471,7 +496,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         self.variable_liveness.push(std::collections::HashMap::new());
         self.push_temp_scope(); // Track temporaries for this scope
         if let Some(f) = self.module.get_function("tl_mem_enter_scope") {
-            self.builder.build_call(f, &[], "").unwrap();
+            self.builder.build_call(f, &[], "").expect("failed to emit tl_mem_enter_scope call");
         }
     }
 
@@ -567,7 +592,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 self.emit_cleanup_vars_in_scope(i);
 
                 // 2. Call runtime exit_scope
-                self.builder.build_call(f, &[], "").unwrap();
+                self.builder.build_call(f, &[], "").expect("failed to emit tl_mem_exit_scope call");
             }
         }
     }
@@ -582,11 +607,10 @@ impl<'ctx> CodeGenerator<'ctx> {
         self.emit_cleanup_vars_in_scope(self.variables.len() - 1);
 
         if let Some(f) = self.module.get_function("tl_mem_exit_scope") {
-            self.builder.build_call(f, &[], "").unwrap();
+            self.builder.build_call(f, &[], "").expect("failed to emit tl_mem_exit_scope call");
         }
     }
 
-    // Emit cleanup for all scopes down to (but not including) target_depth.
     // Emit cleanup for all scopes down to (but not including) target_depth.
     pub(crate) fn emit_cleanup_to_depth(&mut self, target_depth: usize) {
         if let Some(f) = self.module.get_function("tl_mem_exit_scope") {
@@ -594,12 +618,12 @@ impl<'ctx> CodeGenerator<'ctx> {
             while idx > target_depth {
                 idx -= 1;
                 self.emit_cleanup_vars_in_scope(idx);
-                self.builder.build_call(f, &[], "").unwrap();
+                self.builder.build_call(f, &[], "").expect("failed to emit tl_mem_exit_scope call");
             }
         }
     }
 
-    pub(crate) fn emit_trace_mem(&self, tag: &str) -> Result<(), String> {
+    pub(crate) fn emit_trace_mem(&self, tag: &str) -> Result<(), TlError> {
         let f = match self.module.get_function("tl_trace_mem") {
             Some(f) => f,
             None => return Ok(()),
@@ -616,12 +640,12 @@ impl<'ctx> CodeGenerator<'ctx> {
         let file_ptr = self
             .builder
             .build_global_string_ptr(file, "trace_file")
-            .map_err(|e| e.to_string())?
+            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?
             .as_pointer_value();
         let tag_ptr = self
             .builder
             .build_global_string_ptr(tag, "trace_tag")
-            .map_err(|e| e.to_string())?
+            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?
             .as_pointer_value();
         let i32_type = self.context.i32_type();
         self.builder
@@ -635,12 +659,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                 ],
                 "",
             )
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
         Ok(())
     }
 
     #[allow(dead_code)]
-    pub(crate) fn emit_log_alloc(&self, ptr: inkwell::values::BasicValueEnum<'ctx>, size: inkwell::values::IntValue<'ctx>) -> Result<(), String> {
+    pub(crate) fn emit_log_alloc(&self, ptr: inkwell::values::BasicValueEnum<'ctx>, size: inkwell::values::IntValue<'ctx>) -> Result<(), TlError> {
         // tl_log_alloc(ptr, size, file, line)
         let f_name = "tl_log_alloc";
         let f = if let Some(f) = self.module.get_function(f_name) {
@@ -668,7 +692,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         let file_ptr = self
             .builder
             .build_global_string_ptr(file, "log_file")
-            .map_err(|e| e.to_string())?
+            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?
             .as_pointer_value();
         
         let i32_type = self.context.i32_type();
@@ -677,10 +701,10 @@ impl<'ctx> CodeGenerator<'ctx> {
         } else {
              // Cast to void*? Or error? Just assume correct usage.
              // If not pointer, maybe cast int to ptr? No, memory alloc always returns ptr.
-             return Err("emit_log_alloc expects pointer".into());
+             return Err(TlError::from(CodegenErrorKind::Internal("emit_log_alloc expects pointer".to_string())));
         };
         
-        let cast_ptr = self.builder.build_pointer_cast(ptr_val, self.context.ptr_type(inkwell::AddressSpace::default()), "cast_log").unwrap();
+        let cast_ptr = self.builder.build_pointer_cast(ptr_val, self.context.ptr_type(inkwell::AddressSpace::default()), "cast_log").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
         self.builder.build_call(
             f,
@@ -691,13 +715,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                 i32_type.const_int(line as u64, false).into(),
             ],
             ""
-        ).map_err(|e| e.to_string())?;
-        
+        ).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+
         Ok(())
     }
 
 /*
-    pub(crate) fn emit_log_free(&self, ptr: inkwell::values::BasicValueEnum<'ctx>) -> Result<(), String> {
+    pub(crate) fn emit_log_free(&self, ptr: inkwell::values::BasicValueEnum<'ctx>) -> Result<(), TlError> {
         // tl_log_free(ptr, file, line)
         let f_name = "tl_log_free";
         let f = if let Some(f) = self.module.get_function(f_name) {
@@ -724,16 +748,16 @@ impl<'ctx> CodeGenerator<'ctx> {
         let file_ptr = self
             .builder
             .build_global_string_ptr(file, "log_file")
-            .map_err(|e| e.to_string())?
+            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?
             .as_pointer_value();
         
         let i32_type = self.context.i32_type();
         let ptr_val = if ptr.is_pointer_value() {
             ptr.into_pointer_value()
         } else {
-             return Err("emit_log_free expects pointer".into());
+             return Err(TlError::from(CodegenErrorKind::Internal("emit_log_free expects pointer".to_string())));
         };
-        let cast_ptr = self.builder.build_pointer_cast(ptr_val, self.context.ptr_type(inkwell::AddressSpace::default()), "cast_log").unwrap();
+        let cast_ptr = self.builder.build_pointer_cast(ptr_val, self.context.ptr_type(inkwell::AddressSpace::default()), "cast_log").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
         self.builder.build_call(
             f,
@@ -743,7 +767,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 i32_type.const_int(line as u64, false).into(),
             ],
             ""
-        ).map_err(|e| e.to_string())?;
+        ).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
         
         Ok(())
     }
@@ -772,7 +796,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
     /// Null out a variable (Move Semantics) so it won't be double-freed
     #[allow(dead_code)]
-    pub(crate) fn null_out_variable(&self, name: &str) -> Result<(), String> {
+    pub(crate) fn null_out_variable(&self, name: &str) -> Result<(), TlError> {
         for scope in self.variables.iter().rev() {
             if let Some((val, ty, _should_free)) = scope.get(name) {
                 // Only for types that would be freed recursively
@@ -785,7 +809,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                     self.builder
                         .build_store(val.into_pointer_value(), null_ptr)
-                        .map_err(|e| e.to_string())?;
+                        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                 }
                 return Ok(());
             }
@@ -805,7 +829,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
     }
 
-    fn compile_struct_defs(&mut self, structs: &[StructDef]) -> Result<(), String> {
+    fn compile_struct_defs(&mut self, structs: &[StructDef]) -> Result<(), TlError> {
         // Pass 1: Opaque
         for s in structs {
             if !s.generics.is_empty() {
@@ -874,7 +898,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         } else {
                              // If definition not found yet, assume pointer (safe default for forward decls?)
                              // But compiler should have all defs in Pass 1.
-                             return Err(format!("Struct definition {} not found during compilation", name));
+                             return Err(TlError::from(CodegenErrorKind::Internal(format!("Struct definition {} not found during compilation", name))));
                         };
 
                         // ZST Strategy V3.2: Even ZSTs are treated as Pointers (NULL).
@@ -893,7 +917,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                                     .into()
                             }
                         } else {
-                            return Err(format!("Struct type {} not found", name));
+                            return Err(TlError::from(CodegenErrorKind::Internal(format!("Struct type {} not found", name))));
                         }
                         */
                     }
@@ -918,10 +942,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                     }
 
                     _ => {
-                        return Err(format!(
+                        return Err(TlError::from(CodegenErrorKind::UnsupportedOperation(format!(
                             "Unsupported field type in struct {}: {:?}",
                             s.name, field_type
-                        ))
+                        ))))
                     }
                 };
                 field_types.push(llvm_type);
@@ -933,7 +957,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         Ok(())
     }
 
-    fn compile_enum_defs(&mut self, enums: &[EnumDef]) -> Result<(), String> {
+    fn compile_enum_defs(&mut self, enums: &[EnumDef]) -> Result<(), TlError> {
         // Pass 1: Opaque
         for e in enums {
             if !e.generics.is_empty() {
@@ -1048,10 +1072,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 .into()
                         }
                         _ => {
-                            return Err(format!(
+                            return Err(TlError::from(CodegenErrorKind::UnsupportedOperation(format!(
                                 "Unsupported type in enum variant {}: {:?}",
                                 v.name, ty
-                            ))
+                            ))))
                         }
                     };
                     field_types.push(field_llvm_ty);
@@ -1145,7 +1169,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         false
     }
 
-    fn compile_impl_blocks(&mut self, impls: &[ImplBlock]) -> Result<(), String> {
+    fn compile_impl_blocks(&mut self, impls: &[ImplBlock]) -> Result<(), TlError> {
         // Pass 1: Declare all methods (Prototypes) and register return types
         for imp in impls {
             // Check if generic impl
@@ -1327,7 +1351,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let function = self
                     .module
                     .get_function(&mangled_name)
-                    .ok_or(format!("Function {} not found", mangled_name))?;
+                    .ok_or_else(|| TlError::from(CodegenErrorKind::Internal(format!("Function {} not found", mangled_name))))?;
 
                 // Compile Body
                 let entry = self.context.append_basic_block(function, "entry");
@@ -1352,7 +1376,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                          enter_fn,
                          &[self.context.i64_type().const_int(num_slots as u64, false).into()],
                          ""
-                     ).unwrap();
+                     ).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                 } else {
                     // Declare it if missing
                     let i64_type = self.context.i64_type();
@@ -1362,7 +1386,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                          enter_fn,
                          &[self.context.i64_type().const_int(num_slots as u64, false).into()],
                          ""
-                     ).unwrap();
+                     ).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                 }
 
                 self.fn_entry_scope_depth = self.variables.len();
@@ -1402,12 +1426,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                         param_val.set_name(arg_name);
                         let alloca =
                             self.create_entry_block_alloca(function, arg_name, &resolved_ty)?;
-                        self.builder.build_store(alloca, param_val).unwrap();
+                        self.builder.build_store(alloca, param_val).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
                         // Register in scope
                         self.variables
                             .last_mut()
-                            .unwrap()
+                            .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("no scope available".to_string())))?
                             .insert(arg_name.clone(), (alloca.into(), resolved_ty, CLEANUP_NONE));
                             
                         let arg_time = i + 1; // 1-indexed like visit_function
@@ -1415,10 +1439,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                             analysis.last_use_times.get(&arg_time).copied().unwrap_or(0)
                         } else { 0 };
                         
-                        self.variable_liveness
-                            .last_mut()
-                            .unwrap()
-                            .insert(arg_name.clone(), last_use);
+                        if let Some(liveness) = self.variable_liveness.last_mut() {
+                            liveness.insert(arg_name.clone(), last_use);
+                        }
                     }
                 }
 
@@ -1448,8 +1471,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                                     if let Some(prepare_fn) = self.module.get_function("tl_tensor_prepare_return") {
                                         let ptr = val.into_pointer_value();
                                         let void_ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
-                                        let cast_ptr = self.builder.build_pointer_cast(ptr, void_ptr_type, "cast_prep_ret").unwrap();
-                                        let call = self.builder.build_call(prepare_fn, &[cast_ptr.into()], "ret_ptr").unwrap();
+                                        let cast_ptr = self.builder.build_pointer_cast(ptr, void_ptr_type, "cast_prep_ret").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+                                        let call = self.builder.build_call(prepare_fn, &[cast_ptr.into()], "ret_ptr").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                                         use inkwell::values::ValueKind;
                                         if let ValueKind::Basic(basic_val) = call.try_as_basic_value() {
                                             final_val = basic_val;
@@ -1462,12 +1485,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                                     // SRET Handling for Implicit Returns
                                     if let Some(sret_ptr) = self.current_sret_dest {
                                          let src_ptr = val.into_pointer_value();
-                                         self.builder.build_store(sret_ptr, src_ptr).unwrap();
+                                         self.builder.build_store(sret_ptr, src_ptr).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
                                          if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
                                              let void_ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
-                                             let cast_ptr = self.builder.build_pointer_cast(src_ptr, void_ptr_type, "cast_unreg_sret").unwrap();
-                                             self.builder.build_call(unreg_fn, &[cast_ptr.into()], "").unwrap();
+                                             let cast_ptr = self.builder.build_pointer_cast(src_ptr, void_ptr_type, "cast_unreg_sret").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+                                             self.builder.build_call(unreg_fn, &[cast_ptr.into()], "").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                                          }
                                          
                                          // DISABLED: SRET source free — exit_scope に解放を任せる。
@@ -1478,9 +1501,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                                          self.emit_all_scopes_cleanup();
                                          // REMOVED: self.variables.pop(); // Handled by exit_scope later
                                          if let Some(exit_fn) = self.module.get_function("tl_mem_function_exit") {
-                                                self.builder.build_call(exit_fn, &[], "").unwrap();
+                                                self.builder.build_call(exit_fn, &[], "").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                                          }
-                                         self.builder.build_return(None).unwrap();
+                                         self.builder.build_return(None).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                                          continue;
                                     }
 
@@ -1495,8 +1518,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                                              ptr,
                                              ptr_type,
                                              "cast_unreg"
-                                         ).unwrap(); 
-                                         self.builder.build_call(unreg_fn, &[cast_ptr.into()], "").unwrap();
+                                         ).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+                                         self.builder.build_call(unreg_fn, &[cast_ptr.into()], "").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                                     }
                                 }
                                 _ => {
@@ -1508,12 +1531,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                             self.variables.pop();
 
                             if let Some(exit_fn) = self.module.get_function("tl_mem_function_exit") {
-                                 self.builder.build_call(exit_fn, &[], "").unwrap();
+                                 self.builder.build_call(exit_fn, &[], "").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                             }
 
                             self.builder
                                 .build_return(Some(&final_val))
-                                .map_err(|e| e.to_string())?;
+                                .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                             continue;
                         }
                     }
@@ -1530,18 +1553,18 @@ impl<'ctx> CodeGenerator<'ctx> {
                 if !is_terminated {
                     let ret_ty = self.get_llvm_type(&method.return_type).unwrap_or(self.context.i8_type().into());
                     if let Type::Void = method.return_type {
-                        self.builder.build_return(None).unwrap();
+                        self.builder.build_return(None).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                     } else if ret_ty.is_struct_type() {
                         let s = ret_ty.into_struct_type().const_zero();
-                        self.builder.build_return(Some(&s)).unwrap();
+                        self.builder.build_return(Some(&s)).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                     } else if ret_ty.is_pointer_type() {
-                        self.builder.build_return(Some(&ret_ty.into_pointer_type().const_null())).unwrap();
+                        self.builder.build_return(Some(&ret_ty.into_pointer_type().const_null())).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                     } else if ret_ty.is_int_type() {
-                        self.builder.build_return(Some(&ret_ty.into_int_type().const_zero())).unwrap();
+                        self.builder.build_return(Some(&ret_ty.into_int_type().const_zero())).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                     } else if ret_ty.is_float_type() {
-                        self.builder.build_return(Some(&ret_ty.into_float_type().const_zero())).unwrap();
+                        self.builder.build_return(Some(&ret_ty.into_float_type().const_zero())).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                     } else {
-                        self.builder.build_unreachable().unwrap();
+                        self.builder.build_unreachable().map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                     }
                 }
 
@@ -1549,14 +1572,14 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 if !function.verify(true) {
                     function.print_to_stderr();
-                    return Err(format!("Invalid generated method {}", mangled_name));
+                    return Err(TlError::from(CodegenErrorKind::Internal(format!("Invalid generated method {}", mangled_name))));
                 }
             }
         }
         Ok(())
     }
 
-    pub fn compile_module(&mut self, ast_module: &Module, module_name: &str) -> Result<(), String> {
+    pub fn compile_module(&mut self, ast_module: &Module, module_name: &str) -> Result<(), TlError> {
 
 
         // Generate Logic KB initialization function
@@ -1677,7 +1700,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Apply LLVM optimizations
         if let Err(e) = self.module.verify() {
             self.module.print_to_stderr();
-            return Err(format!("Module verification failed: {}", e.to_string()));
+            return Err(TlError::from(CodegenErrorKind::Internal(format!("Module verification failed: {}", e))));
         }
 
         self.apply_optimizations();
@@ -1713,7 +1736,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         false
     }
 
-    pub(crate) fn compile_fn_proto(&mut self, func: &FunctionDef) -> Result<FunctionValue<'ctx>, String> {
+    pub(crate) fn compile_fn_proto(&mut self, func: &FunctionDef) -> Result<FunctionValue<'ctx>, TlError> {
         if func.name.contains("Vec") && func.name.contains("K") {
             panic!("COMPILE_FN_PROTO_CALLED_FOR_{}!!", func.name);
         }
@@ -1739,7 +1762,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         // Add regular arguments
         for (_, val) in &func.args {
-            let arg_ty_val = self.get_llvm_type(val).map_err(|e| format!("Error compiling arg type {:?}: {}", val, e))?;
+            let arg_ty_val = self.get_llvm_type(val).map_err(|e| TlError::from(CodegenErrorKind::Internal(format!("Error compiling arg type {:?}: {}", val, e))))?;
             let arg_ty: inkwell::types::BasicMetadataTypeEnum = arg_ty_val.into();
             args_types.push(arg_ty);
         }
@@ -1752,7 +1775,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             let ret_type: Option<inkwell::types::BasicTypeEnum> = if let Type::Void = func.return_type {
                 None
             } else {
-                Some(self.get_llvm_type(&func.return_type).map_err(|e| format!("Error compiling return type {:?}: {}", func.return_type, e))?)
+                Some(self.get_llvm_type(&func.return_type).map_err(|e| TlError::from(CodegenErrorKind::Internal(format!("Error compiling return type {:?}: {}", func.return_type, e))))?)
             };
 
             match ret_type {
@@ -1784,14 +1807,14 @@ impl<'ctx> CodeGenerator<'ctx> {
         Ok(val)
     }
 
-    pub(crate) fn compile_fn(&mut self, func: &FunctionDef, extra_stmts: &[Stmt]) -> Result<(), String> {
+    pub(crate) fn compile_fn(&mut self, func: &FunctionDef, extra_stmts: &[Stmt]) -> Result<(), TlError> {
         let old_ret_type = self.current_fn_return_type.clone();
         self.current_fn_return_type = Some(func.return_type.clone());
 
         let function = self
             .module
             .get_function(&func.name)
-            .ok_or("Function not found")?;
+            .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("Function not found".to_string())))?;
 
         // Run Liveness Analysis
         self.function_analysis = Some(crate::compiler::liveness::LivenessAnalyzer::analyze(func));
@@ -1820,7 +1843,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                  enter_fn,
                  &[self.context.i64_type().const_int(num_slots as u64, false).into()],
                  ""
-             ).unwrap();
+             ).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
         } else {
             // Declare it if missing
             let i64_type = self.context.i64_type();
@@ -1830,7 +1853,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                  enter_fn,
                  &[self.context.i64_type().const_int(num_slots as u64, false).into()],
                  ""
-             ).unwrap();
+             ).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
         }
 
         // Push a new scope for function arguments
@@ -1861,49 +1884,48 @@ impl<'ctx> CodeGenerator<'ctx> {
             // Do NOT Acquire/DeepClone. The caller owns the data.
             match arg {
                 inkwell::values::BasicValueEnum::PointerValue(p) => {
-                    self.builder.build_store(alloca, p).unwrap()
+                    self.builder.build_store(alloca, p).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?
                 }
                 inkwell::values::BasicValueEnum::FloatValue(f) => {
-                    self.builder.build_store(alloca, f).unwrap()
+                    self.builder.build_store(alloca, f).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?
                 }
                 inkwell::values::BasicValueEnum::IntValue(v) => {
-                    self.builder.build_store(alloca, v).unwrap()
+                    self.builder.build_store(alloca, v).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?
                 }
                 inkwell::values::BasicValueEnum::StructValue(s) => {
-                    self.builder.build_store(alloca, s).unwrap()
+                    self.builder.build_store(alloca, s).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?
                 }
                 inkwell::values::BasicValueEnum::ArrayValue(a) => {
-                    self.builder.build_store(alloca, a).unwrap()
+                    self.builder.build_store(alloca, a).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?
                 }
-                _ => return Err(format!("Unsupported arg type: {:?}", arg)),
+                _ => return Err(TlError::from(CodegenErrorKind::UnsupportedOperation(format!("Unsupported arg type: {:?}", arg)))),
             };
 
             // Insert into current scope with should_free=FALSE
             // Arguments are BORROWED. Function must NOT free them on exit.
             self.variables
                 .last_mut()
-                .unwrap()
+                .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("no scope available".to_string())))?
                 .insert(arg_name.clone(), (alloca.into(), arg_type.clone(), CLEANUP_NONE));
-                
+
             let last_use = if let Some(analysis) = &self.function_analysis {
                 analysis.last_use_times.get(&arg_time).copied().unwrap_or(0)
             } else { 0 };
-            
-            self.variable_liveness
-                .last_mut()
-                .unwrap()
-                .insert(arg_name.clone(), last_use);
+
+            if let Some(liveness) = self.variable_liveness.last_mut() {
+                liveness.insert(arg_name.clone(), last_use);
+            }
         }
 
         // Initialize Arena in main if needed
         if func.name == "main" {
             // Logic Engine Init - MUST be before anything else
             if let Some(init_kb) = self.module.get_function("_tl_init_kb") {
-                self.builder.build_call(init_kb, &[], "").unwrap();
+                self.builder.build_call(init_kb, &[], "").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
             }
             // Execute infer to ensure queries work inside main
             if let Some(infer_fn) = self.module.get_function("tl_kb_infer") {
-                self.builder.build_call(infer_fn, &[], "").unwrap();
+                self.builder.build_call(infer_fn, &[], "").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
             }
 
             let mut analyzer = ShapeAnalyzer::new();
@@ -1929,7 +1951,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         let f = self.module.add_function("tl_arena_init", fn_type, None);
                         Some(f)
                     })
-                    .unwrap();
+                    .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("failed to get or declare tl_arena_init".to_string())))?;
 
                 self.builder
                     .build_call(
@@ -1941,7 +1963,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             .into()],
                         "",
                     )
-                    .unwrap();
+                    .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
             }
         }
 
@@ -1986,12 +2008,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                          // SRET Logic
                          if let Some(dest) = self.current_sret_dest {
                              let src_ptr = val.into_pointer_value();
-                             self.builder.build_store(dest, src_ptr).unwrap();
-                             
+                             self.builder.build_store(dest, src_ptr).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+
                              if let Some(unreg_fn) = self.module.get_function("tl_mem_unregister") {
                                  let void_ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
-                                 let cast_ptr = self.builder.build_pointer_cast(src_ptr, void_ptr_type, "cast_unreg_sret").unwrap();
-                                 self.builder.build_call(unreg_fn, &[cast_ptr.into()], "").unwrap();
+                                 let cast_ptr = self.builder.build_pointer_cast(src_ptr, void_ptr_type, "cast_unreg_sret").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+                                 self.builder.build_call(unreg_fn, &[cast_ptr.into()], "").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                              }
                              // FIXME: Now that we just store the pointer, we must NOT free the source struct
                              // because the caller now owns that heap-allocated struct pointer!
@@ -2006,20 +2028,20 @@ impl<'ctx> CodeGenerator<'ctx> {
                                      let ft = void_ty.fn_type(&[i32_ty.into()], false);
                                      self.module.add_function("exit", ft, None)
                                  });
-                             self.builder.build_call(exit_fn, &[self.context.i32_type().const_int(0, false).into()], "").unwrap();
-                             self.builder.build_unreachable().unwrap();
+                             self.builder.build_call(exit_fn, &[self.context.i32_type().const_int(0, false).into()], "").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+                             self.builder.build_unreachable().map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                              self.current_fn_return_type = old_ret_type;
                              return Ok(());
                          }
                          self.emit_all_scopes_cleanup();
                          self.variables.pop(); // Compiler scope cleanup
-                         
+
                          // Calls to function exit must happen before return
                          if let Some(exit_fn) = self.module.get_function("tl_mem_function_exit") {
-                              self.builder.build_call(exit_fn, &[], "").unwrap();
+                              self.builder.build_call(exit_fn, &[], "").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                          }
 
-                         self.builder.build_return(None).map_err(|e| e.to_string())?;
+                         self.builder.build_return(None).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                     } else {
                         // IMPORTANT: Unregister return value (same as StmtKind::Return)
                         // Use tl_tensor_prepare_return if available
@@ -2031,8 +2053,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 if let Some(prepare_fn) = self.module.get_function("tl_tensor_prepare_return") {
                                     let ptr = val.into_pointer_value();
                                     let void_ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
-                                    let cast_ptr = self.builder.build_pointer_cast(ptr, void_ptr_type, "cast_prep_ret").unwrap();
-                                    let call = self.builder.build_call(prepare_fn, &[cast_ptr.into()], "ret_ptr").unwrap();
+                                    let cast_ptr = self.builder.build_pointer_cast(ptr, void_ptr_type, "cast_prep_ret").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+                                    let call = self.builder.build_call(prepare_fn, &[cast_ptr.into()], "ret_ptr").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                                     use inkwell::values::ValueKind;
                                     if let ValueKind::Basic(basic_val) = call.try_as_basic_value() {
                                         final_val = basic_val;
@@ -2061,8 +2083,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                                     let ft = void_ty.fn_type(&[i32_ty.into()], false);
                                     self.module.add_function("exit", ft, None)
                                 });
-                            self.builder.build_call(exit_fn, &[self.context.i32_type().const_int(0, false).into()], "").unwrap();
-                            self.builder.build_unreachable().unwrap();
+                            self.builder.build_call(exit_fn, &[self.context.i32_type().const_int(0, false).into()], "").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+                            self.builder.build_unreachable().map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                             self.current_fn_return_type = old_ret_type;
                             return Ok(());
                         }
@@ -2070,18 +2092,18 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                         // CRITICAL FIX: Pop the function scope from variables stack
                         self.variables.pop();
-                        
+
                         // Call function exit helper BEFORE return
                         if let Some(exit_fn) = self.module.get_function("tl_mem_function_exit") {
-                             self.builder.build_call(exit_fn, &[], "").unwrap();
+                             self.builder.build_call(exit_fn, &[], "").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                         }
 
                         if ty == Type::Void && func.return_type != Type::Void {
-                            self.builder.build_unreachable().unwrap();
+                            self.builder.build_unreachable().map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                         } else {
                             self.builder
                                 .build_return(Some(&final_val))
-                                .map_err(|e| e.to_string())?;
+                                .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                         }
                     }
                                 self.current_fn_return_type = old_ret_type;
@@ -2097,7 +2119,10 @@ impl<'ctx> CodeGenerator<'ctx> {
         // exit(0) を呼んでプロセスを安全に終了し、compile_fn から early return して
         // exit_scope の cleanup IR 生成自体をスキップする。
         if func.name == "main" {
-            if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
+            let block_unterminated = self.builder.get_insert_block()
+                .map(|b| b.get_terminator().is_none())
+                .unwrap_or(false);
+            if block_unterminated {
                 let exit_fn = self.module.get_function("exit")
                     .unwrap_or_else(|| {
                         let void_ty = self.context.void_type();
@@ -2105,8 +2130,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                         let ft = void_ty.fn_type(&[i32_ty.into()], false);
                         self.module.add_function("exit", ft, None)
                     });
-                self.builder.build_call(exit_fn, &[self.context.i32_type().const_int(0, false).into()], "").unwrap();
-                self.builder.build_unreachable().unwrap();
+                self.builder.build_call(exit_fn, &[self.context.i32_type().const_int(0, false).into()], "").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+                self.builder.build_unreachable().map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
             }
             self.current_fn_return_type = old_ret_type;
             return Ok(());
@@ -2116,25 +2141,28 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         // CLEANUP FUNCTION FRAME
         // Only if block is NOT terminated (e.g. no return statement at flow end)
-        if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
+        let block_unterminated = self.builder.get_insert_block()
+            .map(|b| b.get_terminator().is_none())
+            .unwrap_or(false);
+        if block_unterminated {
              if let Some(exit_fn) = self.module.get_function("tl_mem_function_exit") {
-                  self.builder.build_call(exit_fn, &[], "").unwrap();
+                  self.builder.build_call(exit_fn, &[], "").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
              }
 
              let ret_ty = self.get_llvm_type(&func.return_type).unwrap_or(self.context.i8_type().into());
              if func.return_type == Type::Void {
-                 self.builder.build_return(None).map_err(|e| e.to_string())?;
+                 self.builder.build_return(None).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
              } else if ret_ty.is_struct_type() {
                  let s = ret_ty.into_struct_type().const_zero();
-                 self.builder.build_return(Some(&s)).unwrap();
+                 self.builder.build_return(Some(&s)).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
              } else if ret_ty.is_pointer_type() {
-                 self.builder.build_return(Some(&ret_ty.into_pointer_type().const_null())).unwrap();
+                 self.builder.build_return(Some(&ret_ty.into_pointer_type().const_null())).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
              } else if ret_ty.is_int_type() {
-                 self.builder.build_return(Some(&ret_ty.into_int_type().const_zero())).unwrap();
+                 self.builder.build_return(Some(&ret_ty.into_int_type().const_zero())).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
              } else if ret_ty.is_float_type() {
-                 self.builder.build_return(Some(&ret_ty.into_float_type().const_zero())).unwrap();
+                 self.builder.build_return(Some(&ret_ty.into_float_type().const_zero())).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
              } else {
-                 self.builder.build_unreachable().unwrap();
+                 self.builder.build_unreachable().map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
              }
         }
 
@@ -2143,7 +2171,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             log::error!("=== LLVM VERIFICATION FAILED FOR: {} ===", func.name);
             // function.verify(true) should print the error to stderr
             function.print_to_stderr();
-            return Err(format!("Invalid generated function {}", func.name));
+            return Err(TlError::from(CodegenErrorKind::Internal(format!("Invalid generated function {}", func.name))));
         }
 
         self.current_fn_return_type = old_ret_type;
@@ -2155,7 +2183,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Manual pass management requires exact matching of inkwell/LLVM versioned methods.
     }
 
-    fn compile_relation_wrappers(&mut self, relations: &[RelationDecl]) -> Result<(), String> {
+    fn compile_relation_wrappers(&mut self, relations: &[RelationDecl]) -> Result<(), TlError> {
         if relations.is_empty() {
             return Ok(());
         }
@@ -2171,17 +2199,17 @@ impl<'ctx> CodeGenerator<'ctx> {
         let tl_query_fn = self
             .module
             .get_function("tl_query")
-            .ok_or("tl_query must be declared")?;
+            .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_query must be declared".to_string())))?;
         // Runtime function tl_tensor_from_i64_array
         let tl_tensor_from_arr_fn = self
             .module
             .get_function("tl_tensor_from_i64_array")
-            .ok_or("tl_tensor_from_i64_array must be declared")?;
+            .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_tensor_from_i64_array must be declared".to_string())))?;
         // Runtime function tl_tensor_free
         let tl_tensor_free_fn = self
             .module
             .get_function("tl_tensor_free")
-            .ok_or("tl_tensor_free must be declared")?;
+            .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_tensor_free must be declared".to_string())))?;
         // Runtime function tl_ptr_inc_ref
         let _tl_ptr_inc_ref_fn = self
             .module
@@ -2192,7 +2220,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let ft = void_ty.fn_type(&[ptr_ty.into()], false);
                 Some(self.module.add_function("tl_ptr_inc_ref", ft, None))
             })
-            .ok_or("tl_ptr_inc_ref decl failed")?;
+            .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_ptr_inc_ref decl failed".to_string())))?;
 
         for rel in relations {
             let func_name = &rel.name;
@@ -2214,22 +2242,24 @@ impl<'ctx> CodeGenerator<'ctx> {
             let name_global = self
                 .builder
                 .build_global_string_ptr(func_name, "rel_name")
-                .unwrap();
+                .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
             let name_ptr = name_global.as_pointer_value();
 
             // Get mask
-            let mask_arg = function.get_nth_param(0).unwrap().into_int_value();
+            let mask_arg = function.get_nth_param(0)
+                .ok_or_else(|| TlError::from(CodegenErrorKind::Internal(format!("relation wrapper '{}' missing mask param", func_name))))?
+                .into_int_value();
 
             // Pack other args into array
             let num_args = rel.args.len();
             if num_args > 0 {
                 let arr_type = i64_type.array_type(num_args as u32);
-                let arr_alloca = self.builder.build_alloca(arr_type, "args_arr").unwrap();
+                let arr_alloca = self.builder.build_alloca(arr_type, "args_arr").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
                 for i in 0..num_args {
                     let arg_val = function
                         .get_nth_param((i + 1) as u32)
-                        .unwrap()
+                        .ok_or_else(|| TlError::from(CodegenErrorKind::Internal(format!("relation wrapper '{}' missing arg {}", func_name, i))))?
                         .into_int_value();
                     // Store in array
                     // GEP to element i
@@ -2244,9 +2274,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 ],
                                 "",
                             )
-                            .unwrap()
+                            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?
                     };
-                    self.builder.build_store(ptr, arg_val).unwrap();
+                    self.builder.build_store(ptr, arg_val).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                 }
 
                 // Create tensor from array
@@ -2259,7 +2289,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             &[i64_type.const_int(0, false), i64_type.const_int(0, false)],
                             "decayed",
                         )
-                        .unwrap()
+                        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?
                 };
 
                 let call = self
@@ -2272,13 +2302,15 @@ impl<'ctx> CodeGenerator<'ctx> {
                         ],
                         "args_tensor",
                     )
-                    .unwrap();
+                    .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                 let args_tensor = self.check_tensor_result(call, "args_tensor_error")?;
 
                 // Get tags passed from call-site
-                let tags_arg = function.get_nth_param((num_args + 1) as u32).unwrap();
+                let tags_arg = function.get_nth_param((num_args + 1) as u32)
+                    .ok_or_else(|| TlError::from(CodegenErrorKind::Internal(format!("relation wrapper '{}' missing tags param", func_name))))?;
 
                 // Call tl_query
+                let tags_ptr = self.builder.build_int_to_ptr(tags_arg.into_int_value(), self.context.ptr_type(AddressSpace::default()), "tags_ptr").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                 let result_tensor = match self
                     .builder
                     .build_call(
@@ -2287,29 +2319,29 @@ impl<'ctx> CodeGenerator<'ctx> {
                             name_ptr.into(),
                             mask_arg.into(),
                             args_tensor.into(),
-                            self.builder.build_int_to_ptr(tags_arg.into_int_value(), self.context.ptr_type(AddressSpace::default()), "tags_ptr").unwrap().into(),
+                            tags_ptr.into(),
                         ],
                         "res",
                     )
-                    .unwrap()
+                    .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?
                     .try_as_basic_value()
                 {
                     ValueKind::Basic(v) => v,
-                    _ => return Err("Expected value from tl_query".to_string()),
+                    _ => return Err(CodegenErrorKind::Internal("Expected value from tl_query".to_string()).into()),
                 };
 
                 // Free args_tensor (it was created for this call)
                 self.builder
                     .build_call(tl_tensor_free_fn, &[args_tensor.into()], "")
-                    .unwrap();
+                    .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
-                self.builder.build_return(Some(&result_tensor)).unwrap();
+                self.builder.build_return(Some(&result_tensor)).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
             } else {
                 // No args case
-                // Create empty tensor
-                // Or pass null? tl_query check for null args
                 let null_ptr = tensor_ptr_type.const_null();
-                let tags_arg = function.get_nth_param(1).unwrap(); // tags is at index 1 for no-arg relation
+                let tags_arg = function.get_nth_param(1)
+                    .ok_or_else(|| TlError::from(CodegenErrorKind::Internal(format!("relation wrapper '{}' missing tags param", func_name))))?;
+                let tags_ptr = self.builder.build_int_to_ptr(tags_arg.into_int_value(), self.context.ptr_type(AddressSpace::default()), "tags_ptr").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                 let result_tensor = match self
                     .builder
                     .build_call(
@@ -2318,21 +2350,21 @@ impl<'ctx> CodeGenerator<'ctx> {
                             name_ptr.into(),
                             mask_arg.into(),
                             null_ptr.into(),
-                            self.builder.build_int_to_ptr(tags_arg.into_int_value(), self.context.ptr_type(AddressSpace::default()), "tags_ptr").unwrap().into(),
+                            tags_ptr.into(),
                         ],
                         "res",
                     )
-                    .unwrap()
+                    .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?
                     .try_as_basic_value()
                 {
                     ValueKind::Basic(v) => v,
-                    _ => return Err("Expected value from tl_query".to_string()),
+                    _ => return Err(CodegenErrorKind::Internal("Expected value from tl_query".to_string()).into()),
                 };
-                self.builder.build_return(Some(&result_tensor)).unwrap();
+                self.builder.build_return(Some(&result_tensor)).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
             }
 
             if !function.verify(true) {
-                return Err(format!("Invalid generated relation wrapper {}", func_name));
+                return Err(TlError::from(CodegenErrorKind::Internal(format!("Invalid generated relation wrapper {}", func_name))));
             }
         }
         Ok(())

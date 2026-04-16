@@ -24,3 +24,4 @@ temp_*.bin
 
 tmp/
 .claude/settings.local.json
+.claude/settings.json

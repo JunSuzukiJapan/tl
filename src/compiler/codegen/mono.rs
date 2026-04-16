@@ -1,3 +1,4 @@
+use crate::compiler::error::{TlError, CodegenErrorKind};
 use super::CodeGenerator;
 use crate::compiler::ast::{Type, Expr, mangle_wrap_args, mangle_base_name, mangle_has_args};
 use crate::compiler::mangler::MANGLER;
@@ -14,7 +15,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         struct_name: &str,
         method_name: &str,
         generic_args: &[Type],
-    ) -> Result<String, String> {
+    ) -> Result<String, TlError> {
         let args_str = format!("{:?}", generic_args);
         if struct_name == "Vec" && method_name == "pop" && args_str.contains("K") {
             panic!("Vec_pop_K_monomorphized!!");
@@ -28,7 +29,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
 
         let impls = self.generic_impls.get(struct_name)
-             .ok_or_else(|| format!("No generic impls found for struct {}", struct_name))?;
+             .ok_or_else(|| TlError::from(CodegenErrorKind::Internal(format!("No generic impls found for struct {}", struct_name))))?;
 
         // Find method in impls
         let mut target_method = None;
@@ -45,12 +46,12 @@ impl<'ctx> CodeGenerator<'ctx> {
             if target_method.is_some() { break; }
         }
         
-        let method = target_method.ok_or_else(|| format!("Method {} not found in generic impls of {}", method_name, struct_name))?;
-        let imp = target_impl.unwrap();
+        let method = target_method.ok_or_else(|| TlError::from(CodegenErrorKind::Internal(format!("Method {} not found in generic impls of {}", method_name, struct_name))))?;
+        let imp = target_impl.expect("target_impl is Some when target_method is Some");
 
         // Check trait bounds before monomorphization
         if !self.check_method_trait_bounds(method, generic_args, &imp.generics) {
-            return Err(format!("Method {}.{} skipped: trait bounds not satisfied for {:?}", struct_name, method_name, generic_args));
+            return Err(TlError::from(CodegenErrorKind::Internal(format!("Method {}.{} skipped: trait bounds not satisfied for {:?}", struct_name, method_name, generic_args))));
         }
 
         // Check and fix generic count - pad with default type if insufficient
@@ -147,7 +148,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         &mut self,
         func_name: &str,
         arg_types: &[Type],
-    ) -> Result<String, String> {
+    ) -> Result<String, TlError> {
         // 1. Check if the function exists in generic registry
         if !self.generic_fn_defs.contains_key(func_name) {
              // Not a generic function, or not found.
@@ -155,13 +156,13 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
         
         // 2. Retrieve definition
-        let func_def = self.generic_fn_defs.get(func_name).cloned().unwrap();
+        let func_def = self.generic_fn_defs.get(func_name).cloned().expect("key existence checked above");
         
         // 3. Unify argument types to infer type parameters
         // func_def.generics vs func_def.args vs arg_types
         if func_def.args.len() != arg_types.len() {
-             return Err(format!("Argument count mismatch for generic function {}: expected {}, got {}", 
-                 func_name, func_def.args.len(), arg_types.len()));
+             return Err(TlError::from(CodegenErrorKind::Internal(format!("Argument count mismatch for generic function {}: expected {}, got {}",
+                 func_name, func_def.args.len(), arg_types.len()))));
         }
 
         let mut subst_map: HashMap<String, Type> = HashMap::new();
@@ -172,7 +173,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Ensure all generics are inferred
         for param in &func_def.generics {
             if !subst_map.contains_key(param) {
-                 return Err(format!("Could not infer type parameter {} for function {}", param, func_name));
+                 return Err(TlError::from(CodegenErrorKind::Internal(format!("Could not infer type parameter {} for function {}", param, func_name))));
             }
         }
         
@@ -218,7 +219,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         &mut self,
         enum_name: &str,
         generic_args: &[Type],
-    ) -> Result<String, String> {
+    ) -> Result<String, TlError> {
         // Early return: if enum_name is already a mangled name that exists in enum_types, done.
         if self.enum_types.contains_key(enum_name) {
             return Ok(enum_name.to_string());
@@ -242,16 +243,16 @@ impl<'ctx> CodeGenerator<'ctx> {
             if let Some(def) = self.enum_defs.get(base_name) {
                 def.clone()
             } else {
-                return Err(format!("Enum {} not found (tried base {})", enum_name, base_name));
+                return Err(TlError::from(CodegenErrorKind::Internal(format!("Enum {} not found (tried base {})", enum_name, base_name))));
             }
         } else {
-            return Err(format!("Enum {} not found", enum_name));
+            return Err(TlError::from(CodegenErrorKind::Internal(format!("Enum {} not found", enum_name))));
         };
 
         // 2. Check generics
         if enum_def.generics.len() != generic_args.len() {
-             return Err(format!("Generic count mismatch for enum {}: expected {}, got {}", 
-                 enum_name, enum_def.generics.len(), generic_args.len()));
+             return Err(TlError::from(CodegenErrorKind::Internal(format!("Generic count mismatch for enum {}: expected {}, got {}",
+                 enum_name, enum_def.generics.len(), generic_args.len()))));
         }
 
         // 3. Mangle - use base name to avoid double-mangling (e.g. Entry[i64][i64] -> Entry[i64][i64][i64][i64])
@@ -320,7 +321,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         // 7. Compile/Register
         // We can reuse compile_enum_defs. It handles LLVM struct creation and map insertion.
         self.compile_enum_defs(&[new_def.clone()])
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
         // Note: compile_enum_defs adds it to `enum_defs` and `enum_types`
         
@@ -332,7 +333,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         expected: &Type,
         actual: &Type,
         map: &mut HashMap<String, Type>,
-    ) -> Result<(), String> {
+    ) -> Result<(), TlError> {
          match (expected, actual) {
              (Type::Struct(name, args), _) => {
                  // If It's a Type Parameter (no args), infer it.
@@ -344,7 +345,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                      // Check if already mapped
                      if let Some(existing) = map.get(name) {
                          if existing != actual {
-                              return Err(format!("Type mismatch for generic {}: expected {:?}, got {:?}", name, existing, actual));
+                              return Err(TlError::from(CodegenErrorKind::TypeError(format!("Type mismatch for generic {}: expected {:?}, got {:?}", name, existing, actual))));
                          }
                      } else {
                          // Map it!
@@ -361,7 +362,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                  // If recursive generic (e.g. MyStruct<T>)
                  if let Type::Struct(act_name, act_args) = actual {
                      if name != act_name || args.len() != act_args.len() {
-                          return Err("Type mismatch or arity mismatch".into());
+                          return Err(TlError::from(CodegenErrorKind::TypeError("Type mismatch or arity mismatch".to_string())));
                      }
                      for (e, a) in args.iter().zip(act_args) {
                          self.unify_types(e, a, map)?;
@@ -378,14 +379,14 @@ impl<'ctx> CodeGenerator<'ctx> {
                  
                  // If we are here, we have Struct vs something else (not Struct).
                  // e.g. Struct vs Tensor? Error.
-                 return Err(format!("Type mismatch: Expected Struct {}, found {:?}", name, actual));
+                 return Err(TlError::from(CodegenErrorKind::TypeError(format!("Type mismatch: Expected Struct {}, found {:?}", name, actual))));
              }
              (Type::Tensor(e, r), Type::Tensor(a, ar)) => {
-                 if r != ar { return Err("Rank mismatch".into()); }
+                 if r != ar { return Err(CodegenErrorKind::Internal("Rank mismatch".to_string()).into()); }
                  self.unify_types(e, a, map)?;
              }
              (Type::Array(e_inner, e_size), Type::Array(a_inner, a_size)) => {
-                 if e_size != a_size { return Err(format!("Array size mismatch: expected {}, got {}", e_size, a_size)); }
+                 if e_size != a_size { return Err(TlError::from(CodegenErrorKind::Internal(format!("Array size mismatch: expected {}, got {}", e_size, a_size)))); }
                  self.unify_types(e_inner, a_inner, map)?;
              }
              // Add other structural recursions as needed
@@ -393,7 +394,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                  if expected != actual {
                      // If they are different concrete types, error.
                      // But wait, what if expected is concrete? (e.g. Fn(i64, T))
-                     return Err(format!("Type mismatch: expected {:?}, got {:?}", expected, actual));
+                     return Err(TlError::from(CodegenErrorKind::TypeError(format!("Type mismatch: expected {:?}, got {:?}", expected, actual))));
                  }
              }
          }
@@ -500,7 +501,7 @@ impl<'ctx> CodeGenerator<'ctx> {
     /// This is the single source of truth for Type -> BasicTypeEnum conversion.
     /// Note: This version uses &self and does NOT perform on-demand monomorphization.
     /// For monomorphization, use `get_or_monomorphize_type` which takes &mut self.
-    pub fn get_llvm_type(&self, ty: &Type) -> Result<BasicTypeEnum<'ctx>, String> {
+    pub fn get_llvm_type(&self, ty: &Type) -> Result<BasicTypeEnum<'ctx>, TlError> {
         match ty {
             Type::Ptr(_) => Ok(self.context.ptr_type(AddressSpace::default()).into()),
             Type::I64 | Type::Entity => Ok(self.context.i64_type().into()),
@@ -573,7 +574,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     BasicTypeEnum::StructType(t) => Ok(t.array_type(*size as u32).into()),
                     BasicTypeEnum::ArrayType(t) => Ok(t.array_type(*size as u32).into()),
                     BasicTypeEnum::VectorType(t) => Ok(t.array_type(*size as u32).into()),
-                    _ => Err(format!("Unsupported array element type: {:?}", elem_ty)),
+                    _ => Err(TlError::from(CodegenErrorKind::UnsupportedOperation(format!("Unsupported array element type: {:?}", elem_ty)))),
                 }
             }
             
@@ -614,14 +615,14 @@ impl<'ctx> CodeGenerator<'ctx> {
             
             _ => {
                 // strict NO IMPLICIT FALLBACK rule: returning explicitly failed types to prevent undefined behavior
-                Err(format!("get_llvm_type: compilation error, unhandled or unresolved type {:?}", ty))
+                Err(TlError::from(CodegenErrorKind::Internal(format!("get_llvm_type: compilation error, unhandled or unresolved type {:?}", ty))))
             }
         }
     }
     
     /// Get or create the LLVM type, performing on-demand monomorphization if needed.
     /// This version takes &mut self and can create new struct definitions.
-    pub fn get_or_monomorphize_type(&mut self, ty: &Type) -> Result<BasicTypeEnum<'ctx>, String> {
+    pub fn get_or_monomorphize_type(&mut self, ty: &Type) -> Result<BasicTypeEnum<'ctx>, TlError> {
         match ty {
             Type::Struct(name, args) if !args.is_empty() => {
                 // Generic struct: monomorphize
@@ -643,7 +644,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         &mut self,
         base_name: &str,
         type_args: &[Type],
-    ) -> Result<StructType<'ctx>, String> {
+    ) -> Result<StructType<'ctx>, TlError> {
         let mangled_name = self.mangle_type_name(base_name, type_args);
         
         // Check if already monomorphized
@@ -653,7 +654,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         
         // Get the generic struct definition
         let struct_def = self.struct_defs.get(base_name).cloned()
-            .ok_or_else(|| format!("Generic struct definition not found: {}", base_name))?;
+            .ok_or_else(|| TlError::from(CodegenErrorKind::Internal(format!("Generic struct definition not found: {}", base_name))))?;
         
         // Register this specialization
         self.specialization_registry.register(base_name, type_args);
@@ -674,7 +675,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         let mut field_llvm_types = Vec::new();
         for (field_name, field_ty) in &struct_def.fields {
             let substituted_ty = self.substitute_type(field_ty, &subst);
-            let llvm_ty = self.get_llvm_type(&substituted_ty).map_err(|e| format!("Error compiling field {} of {}: {}", field_name, mangled_name, e))?;
+            let llvm_ty = self.get_llvm_type(&substituted_ty).map_err(|e| TlError::from(CodegenErrorKind::Internal(format!("Error compiling field {} of {}: {}", field_name, mangled_name, e))))?;
             field_llvm_types.push(llvm_ty);
         }
         
@@ -1267,7 +1268,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         &mut self,
         base_name: &str,
         type_args: &[Type],
-    ) -> Result<(), String> {
+    ) -> Result<(), TlError> {
         // Get impl blocks for this base type
         let impls = match self.generic_impls.get(base_name) {
             Some(impls) => impls.clone(),

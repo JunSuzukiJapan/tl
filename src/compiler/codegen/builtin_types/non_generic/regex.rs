@@ -1,3 +1,4 @@
+use crate::compiler::error::{TlError, CodegenErrorKind};
 use crate::compiler::codegen::type_manager::{CodeGenType, TypeManager};
 use crate::compiler::codegen::CodeGenerator;
 use crate::compiler::ast::Type;
@@ -67,7 +68,7 @@ pub fn register_regex_types(manager: &mut TypeManager) {
 fn extract_regex_id<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     obj: BasicValueEnum<'ctx>,
-) -> Result<inkwell::values::IntValue<'ctx>, String> {
+) -> Result<inkwell::values::IntValue<'ctx>, TlError> {
     // Assuming `obj` is a pointer to the Regex struct which has a single i64 field.
     let struct_ty = codegen.context.struct_type(&[
         codegen.context.i64_type().into()
@@ -75,9 +76,9 @@ fn extract_regex_id<'ctx>(
     
     let ptr = obj.into_pointer_value();
     let id_ptr = codegen.builder.build_struct_gep(struct_ty, ptr, 0, "regex_id_ptr")
-        .map_err(|_| "Failed to GEP Regex ID")?;
+        .map_err(|_| TlError::from(CodegenErrorKind::Internal("Failed to GEP Regex ID".to_string())))?;
     let id_val = codegen.builder.build_load(codegen.context.i64_type(), id_ptr, "regex_id")
-        .map_err(|e| e.to_string())?.into_int_value();
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?.into_int_value();
     
     Ok(id_val)
 }
@@ -86,16 +87,16 @@ pub fn compile_regex_new<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
     _hint: Option<&Type>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let fn_val = codegen.module.get_function("tl_regex_new")
-        .ok_or("tl_regex_new not found")?;
+        .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_regex_new not found".to_string())))?;
         
     let call = codegen.builder.build_call(fn_val, &[args[0].0.into()], "regex_id_raw")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
         
     let id_val = match call.try_as_basic_value() {
         ValueKind::Basic(v) => v,
-        _ => return Err("Invalid return from tl_regex_new".into()),
+        _ => return Err(CodegenErrorKind::Internal("Invalid return from tl_regex_new".to_string()).into()),
     };
     
     // Allocate a Regex struct { i64 }
@@ -104,12 +105,12 @@ pub fn compile_regex_new<'ctx>(
     ], false);
     
     let regex_ptr = codegen.builder.build_alloca(struct_ty, "regex_struct")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
         
     let id_ptr = codegen.builder.build_struct_gep(struct_ty, regex_ptr, 0, "id_field")
-        .map_err(|_| "Failed to GEP")?;
+        .map_err(|_| TlError::from(CodegenErrorKind::Internal("Failed to GEP".to_string())))?;
     codegen.builder.build_store(id_ptr, id_val)
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
         
     Ok((regex_ptr.into(), Type::Struct("Regex".to_string(), vec![])))
 }
@@ -119,7 +120,7 @@ pub fn compile_regex_is_valid<'ctx>(
     obj: BasicValueEnum<'ctx>,
     _obj_ty: Type,
     _args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let id_val = extract_regex_id(codegen, obj)?;
     let zero = codegen.context.i64_type().const_zero();
     
@@ -128,7 +129,7 @@ pub fn compile_regex_is_valid<'ctx>(
         id_val,
         zero,
         "is_valid"
-    ).map_err(|e| e.to_string())?;
+    ).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     
     Ok((is_valid.into(), Type::Bool))
 }
@@ -138,18 +139,18 @@ pub fn compile_regex_is_match<'ctx>(
     obj: BasicValueEnum<'ctx>,
     _obj_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let id_val = extract_regex_id(codegen, obj)?;
     
     let fn_val = codegen.module.get_function("tl_regex_is_match")
-        .ok_or("tl_regex_is_match not found")?;
+        .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_regex_is_match not found".to_string())))?;
         
     let call = codegen.builder.build_call(fn_val, &[id_val.into(), args[0].0.into()], "is_match_res")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
         
     let res = match call.try_as_basic_value() {
         ValueKind::Basic(v) => v,
-        _ => return Err("Invalid return from tl_regex_is_match".into()),
+        _ => return Err(CodegenErrorKind::Internal("Invalid return from tl_regex_is_match".to_string()).into()),
     };
     
     Ok((res, Type::Bool))
@@ -160,18 +161,18 @@ pub fn compile_regex_replace<'ctx>(
     obj: BasicValueEnum<'ctx>,
     _obj_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let id_val = extract_regex_id(codegen, obj)?;
     
     let fn_val = codegen.module.get_function("tl_regex_replace")
-        .ok_or("tl_regex_replace not found")?;
+        .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_regex_replace not found".to_string())))?;
         
     let call = codegen.builder.build_call(fn_val, &[id_val.into(), args[0].0.into(), args[1].0.into()], "replace_res")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
         
     let res = match call.try_as_basic_value() {
         ValueKind::Basic(v) => v,
-        _ => return Err("Invalid return from tl_regex_replace".into()),
+        _ => return Err(CodegenErrorKind::Internal("Invalid return from tl_regex_replace".to_string()).into()),
     };
     
     Ok((res, Type::String("String".to_string())))
@@ -184,14 +185,14 @@ pub fn compile_regex_release<'ctx>(
     obj: BasicValueEnum<'ctx>,
     _obj_ty: Type,
     _args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), String> {
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let id_val = extract_regex_id(codegen, obj)?;
     
     let fn_val = codegen.module.get_function("tl_regex_release")
-        .ok_or("tl_regex_release not found")?;
+        .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_regex_release not found".to_string())))?;
         
     codegen.builder.build_call(fn_val, &[id_val.into()], "")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
         
     Ok((codegen.context.i64_type().const_zero().into(), Type::Void))
 }

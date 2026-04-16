@@ -296,6 +296,7 @@ impl TypeManager {
 mod tests {
     use super::*;
     use crate::compiler::codegen::CodeGenerator;
+    use crate::compiler::error::{TlError, CodegenErrorKind};
     use inkwell::values::BasicValueEnum;
 
     // Mock function matching InstanceMethodEval signature
@@ -304,8 +305,8 @@ mod tests {
         _val: BasicValueEnum<'ctx>,
         _ty: Type,
         _args: Vec<(BasicValueEnum<'ctx>, Type)>,
-    ) -> Result<(BasicValueEnum<'ctx>, Type), String> {
-        Err("Mock method".into())
+    ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
+        Err(TlError::from(CodegenErrorKind::Internal("Mock method".to_string())))
     }
 
     #[test]
