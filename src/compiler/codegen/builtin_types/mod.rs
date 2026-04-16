@@ -12,6 +12,7 @@ pub use generic::vec_deque;
 pub use generic::btreemap;
 pub use generic::string_builder;
 pub use generic::traits;
+pub use generic::future;
 pub use generic::mutex;
 
 pub use non_generic::io;

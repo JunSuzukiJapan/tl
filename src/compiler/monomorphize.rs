@@ -102,13 +102,21 @@ impl Monomorphizer {
         module.functions.extend(self.concrete_functions.drain(..));
         module.enums.extend(self.concrete_enums.drain(..));
         module.impls.extend(self.concrete_impls.drain(..));
-        
+
         // NOTE: ジェネリックテンプレートは module に残す。
         // codegen 側の各コンパイル関数にスキップガードがあるため安全:
         //   - compile_struct_defs: generics.is_empty() チェックで LLVM型生成をスキップし struct_defs に登録
         //   - compile_enum_defs: 同上で enum_defs に登録
         //   - compile_module (functions): generic_fn_defs に登録してスキップ
         // テンプレートを残すことで parse_mangled_type_args が arity 情報を取得できる。
+        // ジェネリック enum テンプレートを module に戻す (scan_module で drain されているため)
+        // codegen の compile_enum_defs が enum_defs に登録し、on-demand 単相化の基盤となる。
+        for generic_enum in self.generic_enums.values() {
+            // 既に具象版として追加済みでなければテンプレートを追加
+            if !module.enums.iter().any(|e| e.name == generic_enum.name) {
+                module.enums.push(generic_enum.clone());
+            }
+        }
         
         log::info!("Monomorphization done. Structs: {}", module.structs.len());
         Ok(())

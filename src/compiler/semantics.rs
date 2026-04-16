@@ -250,6 +250,9 @@ pub struct SemanticAnalyzer {
     /// (trait名, 型名) → (関連型名 → 具象型)
     /// 例: ("Future", "FooState") → {"Output": Type::I64}
     assoc_types: HashMap<(String, String), HashMap<String, Type>>,
+
+    /// `async fn` 内にいるかどうか (`.await` 式の検証用)
+    in_async_fn: bool,
 }
 
 impl SemanticAnalyzer {
@@ -315,6 +318,7 @@ impl SemanticAnalyzer {
             trait_impls: HashMap::new(),
             type_traits: HashMap::new(),
             assoc_types: HashMap::new(),
+            in_async_fn: false,
         };
         // Register builtin types into TypeManager
         crate::compiler::codegen::builtin_types::non_generic::primitives::register_primitive_types(
@@ -1939,6 +1943,8 @@ impl SemanticAnalyzer {
         self_type: Option<Type>,
     ) -> Result<(), TlError> {
         // eprintln!("DEBUG: check_function {}", func.name);
+        let prev_in_async = self.in_async_fn;
+        self.in_async_fn = func.is_async;
         self.enter_scope();
 
         // Set expected return type for this function (resolve first)
@@ -1986,8 +1992,9 @@ impl SemanticAnalyzer {
             self.resolve_stmt_types(stmt);
         }
 
-        // Clear return type context
+        // Clear return type context and restore async context
         self.current_return_type = None;
+        self.in_async_fn = prev_in_async;
 
         // Update function definition in self.functions to reflect resolved types
         self.functions.insert(func.name.clone(), func.clone());
@@ -3288,14 +3295,30 @@ impl SemanticAnalyzer {
 
                 Ok(ok_ty)
             }
-            // `.await` 式: Phase 2 で Future トレイトと完全統合する。
-            // Phase 1 では構文を受け付けつつ、`async fn` 外での使用をエラーとして検出する。
+            // `.await` 式: `async fn` 内でのみ有効。
+            // 対象の型が `Future` を実装していることを確認し、`Output` 関連型を返す。
             ExprKind::Await(inner) => {
+                if !self.in_async_fn {
+                    return self.err(
+                        SemanticError::Generic(
+                            "`.await` は `async fn` 内でのみ使用できます".to_string(),
+                        ),
+                        Some(expr.span.clone()),
+                    );
+                }
                 let inner_ty = self.check_expr(inner)?;
-                // TODO(Phase 2): inner_ty が Future を実装しているか確認し、
-                //   resolve_assoc_type(&inner_ty, "Future", "Output") を返す。
-                // Phase 1 ではプレースホルダとして inner_ty をそのまま返す。
-                Ok(inner_ty)
+                // `Future` トレイトの `Output` 関連型を解決する
+                if let Some(output_ty) = self.resolve_assoc_type(&inner_ty, "Future", "Output") {
+                    Ok(output_ty)
+                } else {
+                    self.err(
+                        SemanticError::Generic(format!(
+                            "型 `{}` は `Future` を実装していません",
+                            inner_ty.get_base_name()
+                        )),
+                        Some(expr.span.clone()),
+                    )
+                }
             }
             ExprKind::Closure { args, return_type, body, captures } => {
                 // Enter a new scope for the closure

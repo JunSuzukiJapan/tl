@@ -34,6 +34,7 @@ fn create_generic_function(name: &str, param: &str) -> FunctionDef {
         ],
         is_extern: false,
         is_pub: false,
+        is_async: false,
     }
 }
 
@@ -61,6 +62,7 @@ fn test_basic_function_instantiation() {
         body: main_stmts,
         is_extern: false,
         is_pub: false,
+        is_async: false,
     };
     module.functions.push(main_func);
 
@@ -100,6 +102,7 @@ fn test_deduplication() {
         body: main_stmts,
         is_extern: false,
         is_pub: false,
+        is_async: false,
     };
     module.functions.push(main_func);
 
