@@ -1,4 +1,4 @@
-use crate::compiler::error::TlError;
+use crate::compiler::error::{TlError, CodegenErrorKind};
 use crate::compiler::codegen::CodeGenerator;
 use crate::compiler::ast::Type;
 use inkwell::values::{BasicValueEnum, ValueKind};
@@ -16,7 +16,7 @@ fn compile_tensor_shape_op<'ctx>(
     let fn_val = codegen
         .module
         .get_function(&fn_name)
-        .ok_or(format!("{} not found", fn_name))?;
+        .ok_or_else(|| TlError::from(CodegenErrorKind::Internal(format!("{} not found", fn_name))))?;
     
     let mut call_args: Vec<inkwell::values::BasicMetadataValueEnum> = Vec::with_capacity(args.len() + 1);
     call_args.push(obj.into());
@@ -27,7 +27,7 @@ fn compile_tensor_shape_op<'ctx>(
     let call = codegen
         .builder
         .build_call(fn_val, &call_args, &format!("{}_res", op_name))
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     let res = codegen.check_tensor_result(call, &format!("{}_error", op_name))?;
     Ok((res, obj_ty))
 }
@@ -45,7 +45,7 @@ fn compile_tensor_shape_void<'ctx>(
     let fn_val = codegen
         .module
         .get_function(&fn_name)
-        .ok_or(format!("{} not found", fn_name))?;
+        .ok_or_else(|| TlError::from(CodegenErrorKind::Internal(format!("{} not found", fn_name))))?;
     
     let mut call_args: Vec<inkwell::values::BasicMetadataValueEnum> = Vec::with_capacity(args.len() + 1);
     call_args.push(obj.into());
@@ -56,7 +56,7 @@ fn compile_tensor_shape_void<'ctx>(
     codegen
         .builder
         .build_call(fn_val, &call_args, &format!("{}_res", op_name))
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     Ok((
         codegen.context.i64_type().const_int(0, false).into(),
         Type::Void,
@@ -75,7 +75,7 @@ fn compile_tensor_shape_i64<'ctx>(
     let fn_val = codegen
         .module
         .get_function(&fn_name)
-        .ok_or(format!("{} not found", fn_name))?;
+        .ok_or_else(|| TlError::from(CodegenErrorKind::Internal(format!("{} not found", fn_name))))?;
     
     let mut call_args: Vec<inkwell::values::BasicMetadataValueEnum> = Vec::with_capacity(args.len() + 1);
     call_args.push(obj.into());
@@ -86,10 +86,10 @@ fn compile_tensor_shape_i64<'ctx>(
     let call = codegen
         .builder
         .build_call(fn_val, &call_args, &format!("{}_res", op_name))
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     let res = match call.try_as_basic_value() {
         ValueKind::Basic(v) => v,
-        _ => return Err(format!("Invalid return from {}()", op_name).into()),
+        _ => return Err(TlError::from(CodegenErrorKind::Internal(format!("Invalid return from {}()", op_name)))),
     };
     Ok((res, Type::I64))
 }
@@ -122,7 +122,7 @@ pub fn compile_permute<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx
 // ---- cat(other: Tensor) -> Tensor ----
 pub fn compile_cat<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, t: Type, a: Vec<(BasicValueEnum<'ctx>, Type)>) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let fn_name = "tl_tensor_cat_4d";
-    let fn_val = c.module.get_function(fn_name).ok_or("tl_tensor_cat_4d not found")?;
+    let fn_val = c.module.get_function(fn_name).ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_tensor_cat_4d not found".to_string())))?;
     
     let mut call_args: Vec<inkwell::values::BasicMetadataValueEnum> = Vec::with_capacity(3);
     call_args.push(o.into());
@@ -131,7 +131,7 @@ pub fn compile_cat<'ctx>(c: &mut CodeGenerator<'ctx>, o: BasicValueEnum<'ctx>, t
     }
     call_args.push(c.context.i64_type().const_int(0, false).into());
     
-    let call = c.builder.build_call(fn_val, &call_args, "cat_res").map_err(|e| e.to_string())?;
+    let call = c.builder.build_call(fn_val, &call_args, "cat_res").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     let res = c.check_tensor_result(call, "cat_error")?;
     Ok((res, t))
 }
@@ -161,14 +161,14 @@ pub fn compile_get_shape<'ctx>(
     let fn_val = codegen
         .module
         .get_function("tl_tensor_get_shape")
-        .ok_or("tl_tensor_get_shape not found")?;
+        .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_tensor_get_shape not found".to_string())))?;
     let call = codegen
         .builder
         .build_call(fn_val, &[obj.into()], "get_shape_res")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     let res = match call.try_as_basic_value() {
         ValueKind::Basic(v) => v,
-        _ => return Err("Invalid return from get_shape()".into()),
+        _ => return Err(CodegenErrorKind::Internal("Invalid return from get_shape()".to_string()).into()),
     };
-    Ok((res, Type::Struct("Vec".into(), vec![Type::I64])))
+    Ok((res, Type::Struct("Vec".to_string(), vec![Type::I64])))
 }

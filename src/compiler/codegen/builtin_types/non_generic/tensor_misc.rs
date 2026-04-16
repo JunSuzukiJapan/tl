@@ -1,4 +1,4 @@
-use crate::compiler::error::TlError;
+use crate::compiler::error::{TlError, CodegenErrorKind};
 use crate::compiler::codegen::CodeGenerator;
 use crate::compiler::ast::Type;
 use inkwell::values::BasicValueEnum;
@@ -13,11 +13,11 @@ pub fn compile_print<'ctx>(
     let fn_val = codegen
         .module
         .get_function("tl_tensor_print")
-        .ok_or("tl_tensor_print not found")?;
+        .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_tensor_print not found".to_string())))?;
     codegen
         .builder
         .build_call(fn_val, &[obj.into()], "print_call")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     Ok((
         codegen.context.i64_type().const_int(0, false).into(),
         Type::Void,
@@ -43,7 +43,7 @@ pub fn compile_debug_ptr<'ctx>(
     codegen
         .builder
         .build_call(fn_val, &[obj.into()], "debug_ptr_call")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     Ok((
         codegen.context.i64_type().const_int(0, false).into(),
         Type::Void,
@@ -60,11 +60,11 @@ pub fn compile_display<'ctx>(
     let fn_val = codegen
         .module
         .get_function("tl_tensor_display")
-        .ok_or("tl_tensor_display not found")?;
+        .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_tensor_display not found".to_string())))?;
     codegen
         .builder
         .build_call(fn_val, &[obj.into()], "display_call")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     Ok((
         codegen.context.i64_type().const_int(0, false).into(),
         Type::Void,
@@ -81,19 +81,19 @@ pub fn compile_slice2<'ctx>(
     let fn_val = codegen
         .module
         .get_function("tl_tensor_slice")
-        .ok_or("tl_tensor_slice not found")?;
+        .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_tensor_slice not found".to_string())))?;
     let i64_ty = codegen.context.i64_type();
 
     let dim = i64_ty.const_int(0, false);
     let start = args[0].0.into_int_value();
     let len = args[1].0.into_int_value();
     let end = codegen.builder.build_int_add(start, len, "slice_end")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     let step = i64_ty.const_int(1, false);
 
     let call = codegen.builder
         .build_call(fn_val, &[obj.into(), dim.into(), start.into(), end.into(), step.into()], "slice_res")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     let res = codegen.check_tensor_result(call, "slice_error")?;
     Ok((res, obj_ty))
 }
@@ -108,19 +108,19 @@ pub fn compile_slice3<'ctx>(
     let fn_val = codegen
         .module
         .get_function("tl_tensor_slice")
-        .ok_or("tl_tensor_slice not found")?;
+        .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_tensor_slice not found".to_string())))?;
     let i64_ty = codegen.context.i64_type();
 
     let dim = args[0].0;
     let start = args[1].0.into_int_value();
     let len = args[2].0.into_int_value();
     let end = codegen.builder.build_int_add(start, len, "slice_end")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     let step = i64_ty.const_int(1, false);
 
     let call = codegen.builder
         .build_call(fn_val, &[obj.into(), dim.into(), start.into(), end.into(), step.into()], "slice_res")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     let res = codegen.check_tensor_result(call, "slice_error")?;
     Ok((res, obj_ty))
 }
@@ -135,11 +135,11 @@ pub fn compile_slice4<'ctx>(
     let fn_val = codegen
         .module
         .get_function("tl_tensor_slice")
-        .ok_or("tl_tensor_slice not found")?;
+        .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_tensor_slice not found".to_string())))?;
 
     let call = codegen.builder
         .build_call(fn_val, &[obj.into(), args[0].0.into(), args[1].0.into(), args[2].0.into(), args[3].0.into()], "slice_res")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     let res = codegen.check_tensor_result(call, "slice_error")?;
     Ok((res, obj_ty))
 }

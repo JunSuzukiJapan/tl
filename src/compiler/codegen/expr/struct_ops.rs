@@ -2,7 +2,7 @@
 //!
 //! 構造体の初期化・アロケーション。
 //! compile_struct_init, compile_struct_alloc。
-use crate::compiler::error::TlError;
+use crate::compiler::error::{TlError, CodegenErrorKind};
 
 use inkwell::values::*;
 
@@ -22,7 +22,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         if !generics.is_empty() && mangle_has_args(name) {
             if let Some(&existing_type) = self.struct_types.get(name) {
                 let struct_def = self.struct_defs.get(name)
-                    .ok_or_else(|| format!("Struct definition {} not found", name))?
+                    .ok_or_else(|| TlError::from(CodegenErrorKind::Internal(format!("Struct definition {} not found", name))))?
                     .clone();
                 return self.compile_struct_alloc(name, &[], &existing_type, &struct_def, fields);
             }
@@ -42,7 +42,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                      if let Some(t) = self.struct_types.get(&mangled_name) {
                          *t
                      } else {
-                         return Err(format!("Struct type {} not found after monomorphization", mangled_name).into());
+                         return Err(TlError::from(CodegenErrorKind::Internal(format!("Struct type {} not found after monomorphization", mangled_name))));
                      }
                  } else {
                      // Recovery for double-mangled names (e.g. HashMap_i64_i64 -> HashMap)
@@ -66,10 +66,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                              let base = mangle_base_name(name);
                              let base_mangled = self.mangle_type_name(base, generics);
                              *self.struct_types.get(&base_mangled)
-                                 .ok_or(format!("Struct type {} not found (tried {} and {})", name, mangled_name, base_mangled))?
+                                 .ok_or_else(|| TlError::from(CodegenErrorKind::Internal(format!("Struct type {} not found (tried {} and {})", name, mangled_name, base_mangled))))?
                          }
                      } else {
-                         return Err(format!("Monomorphization failed for {} with generics {:?}", name, generics).into());
+                         return Err(TlError::from(CodegenErrorKind::Internal(format!("Monomorphization failed for {} with generics {:?}", name, generics))));
                      }
                  }
              };
@@ -81,7 +81,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                      let base_mangled = self.mangle_type_name(base, generics);
                      self.struct_defs.get(&base_mangled)
                  })
-                 .ok_or(format!("Struct definition {} not found", mangled_name))?
+                 .ok_or_else(|| TlError::from(CodegenErrorKind::Internal(format!("Struct definition {} not found", mangled_name))))?
                  .clone();
              
              return self.compile_struct_alloc(name, generics, &struct_type, &struct_def, fields);
@@ -127,14 +127,14 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .take(5)
                     .cloned()
                     .collect();
-                format!("Struct type {} not found in codegen (in function {}, similar keys: {:?})", lookup_name, fn_name, struct_keys)
+                TlError::from(CodegenErrorKind::Internal(format!("Struct type {} not found in codegen (in function {}, similar keys: {:?})", lookup_name, fn_name, struct_keys)))
             })?;
 
         let struct_def = self
             .struct_defs
             .get(&lookup_name)
             .ok_or_else(|| {
-                 format!("Struct definition {} not found", lookup_name)
+                 TlError::from(CodegenErrorKind::Internal(format!("Struct definition {} not found", lookup_name)))
             })?
             .clone();
 
@@ -155,7 +155,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         // Determine allocation strategy: Arena or Heap
         let size = struct_type
             .size_of()
-            .ok_or(format!("Cannot determine size of struct {}", name))?;
+            .ok_or_else(|| TlError::from(CodegenErrorKind::Internal(format!("Cannot determine size of struct {}", name))))?;
 
         // ZST Optimization (PhantomData etc): Return NULL, not an aggregate value.
         // The Runtime handles NULL pointers gracefully (ignores them).
@@ -168,11 +168,11 @@ impl<'ctx> CodeGenerator<'ctx> {
         let malloc_fn = self
             .module
             .get_function("malloc")
-            .ok_or("malloc not found (declare in builtins)")?;
+            .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("malloc not found (declare in builtins)".to_string())))?;
         
         let size_int = size;
         let size_i64 = if size_int.get_type() == self.context.i32_type() {
-             self.builder.build_int_z_extend(size_int, self.context.i64_type(), "size_i64").map_err(|e| e.to_string())?
+             self.builder.build_int_z_extend(size_int, self.context.i64_type(), "size_i64").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?
         } else {
              size_int
         };
@@ -180,10 +180,10 @@ impl<'ctx> CodeGenerator<'ctx> {
         let call = self
             .builder
             .build_call(malloc_fn, &[size_i64.into()], "struct_malloc")
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
         let raw_ptr = match call.try_as_basic_value() {
             inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
-            _ => return Err("malloc returned invalid value".into()),
+            _ => return Err(CodegenErrorKind::Internal("malloc returned invalid value".to_string()).into()),
         };
 
         // 2. Register with MemoryManager
@@ -200,16 +200,16 @@ impl<'ctx> CodeGenerator<'ctx> {
                 self.context.ptr_type(inkwell::AddressSpace::default()),
                 "cast_ptr",
             )
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
         let name_global = self
             .builder
             .build_global_string_ptr(name, "struct_name")
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
         self.builder
             .build_call(register_fn, &[cast_ptr.into(), name_global.as_pointer_value().into()], "")
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
         // Cast to Struct Pointer (opaque pointer in modern LLVM, but typed for GEP)
         let struct_ptr = self
@@ -219,14 +219,14 @@ impl<'ctx> CodeGenerator<'ctx> {
                 self.context.ptr_type(inkwell::AddressSpace::default()),
                 "struct_ptr",
             )
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
         for (field_name, field_expr) in fields {
             let field_idx = struct_def
                 .fields
                 .iter()
                 .position(|(n, _)| n == field_name)
-                .ok_or(format!("Field {} not found in struct {}", field_name, name))?;
+                .ok_or_else(|| TlError::from(CodegenErrorKind::Internal(format!("Field {} not found in struct {}", field_name, name))))?;
 
             let (val, _ty) = self.compile_expr(field_expr)?;
             
@@ -266,14 +266,14 @@ impl<'ctx> CodeGenerator<'ctx> {
                     field_idx as u32,
                     &format!("{}.{}", name, field_name),
                 )
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
             // Store the value directly (move semantics - no deep clone needed since we're transferring ownership)
             // For scalar types, just store the value.
             // For pointer types (Tensor, Struct, etc.), store the pointer - ownership is transferred.
             self.builder
                 .build_store(field_ptr, val)
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
         }
 
 

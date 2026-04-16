@@ -1,4 +1,4 @@
-use crate::compiler::error::TlError;
+use crate::compiler::error::{TlError, CodegenErrorKind};
 use crate::compiler::codegen::CodeGenerator;
 use crate::compiler::ast::Type;
 use inkwell::values::BasicValueEnum;
@@ -13,11 +13,11 @@ pub fn compile_backward<'ctx>(
     let fn_val = codegen
         .module
         .get_function("tl_tensor_backward")
-        .ok_or("tl_tensor_backward not found")?;
+        .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_tensor_backward not found".to_string())))?;
     codegen
         .builder
         .build_call(fn_val, &[obj.into()], "backward_call")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     Ok((
         codegen.context.i64_type().const_int(0, false).into(),
         Type::Void,
@@ -34,12 +34,12 @@ pub fn compile_enable_grad<'ctx>(
     let fn_val = codegen
         .module
         .get_function("tl_tensor_enable_grad")
-        .ok_or("tl_tensor_enable_grad not found")?;
+        .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_tensor_enable_grad not found".to_string())))?;
     // enable_grad is a void FFI: it enables grad in-place, returns nothing.
     codegen
         .builder
         .build_call(fn_val, &[obj.into()], "enable_grad")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     // Return the same pointer, but with GradTensor type
     let grad_ty = match &obj_ty {
         Type::Tensor(inner, rank) => Type::GradTensor(inner.clone(), *rank),

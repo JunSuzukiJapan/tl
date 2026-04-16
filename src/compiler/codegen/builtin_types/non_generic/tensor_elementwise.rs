@@ -1,4 +1,4 @@
-use crate::compiler::error::TlError;
+use crate::compiler::error::{TlError, CodegenErrorKind};
 use crate::compiler::codegen::CodeGenerator;
 use crate::compiler::ast::Type;
 use inkwell::values::BasicValueEnum;
@@ -16,11 +16,11 @@ fn compile_tensor_unary_ffi<'ctx>(
     let fn_val = codegen
         .module
         .get_function(&fn_name)
-        .ok_or(format!("{} not found", fn_name))?;
+        .ok_or_else(|| TlError::from(CodegenErrorKind::Internal(format!("{} not found", fn_name))))?;
     let call = codegen
         .builder
         .build_call(fn_val, &[obj.into()], "unary_res")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     let res = codegen.check_tensor_result(call, &format!("{}_error", op_name))?;
     Ok((res, obj_ty))
 }

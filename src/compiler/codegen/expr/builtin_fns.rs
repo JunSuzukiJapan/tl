@@ -3,7 +3,7 @@
 //! 組み込み関数のコンパイル実装。
 //! IO (print/println/format), 文字列操作, 引数アクセス,
 //! パラメータ管理, VarBuilder, 型変換ヘルパー等。
-use crate::compiler::error::TlError;
+use crate::compiler::error::{TlError, CodegenErrorKind};
 
 use inkwell::values::*;
 
@@ -28,19 +28,19 @@ pub(super) fn compile_varbuilder_get_static<'ctx>(
         let ptr_to_first_field = codegen
             .builder
             .build_pointer_cast(ptr_to_struct, i64_ptr_ty, "str_ptr_cast")
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
         let str_addr_i64 = codegen
             .builder
             .build_load(codegen.context.i64_type(), ptr_to_first_field, "str_addr")
-            .map_err(|e| e.to_string())?
+            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?
             .into_int_value();
         let i8_ptr_ty = codegen.context.i8_type().ptr_type(inkwell::AddressSpace::default());
         codegen
             .builder
             .build_int_to_ptr(str_addr_i64, i8_ptr_ty, "cstr_ptr")
-            .map_err(|e| e.to_string())?
+            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?
     } else {
-         return Err("VarBuilder::get name must be String".into());
+         return Err(TlError::from(CodegenErrorKind::Internal("VarBuilder::get name must be String".to_string())));
     };
 
     // Arg 1..: Shape
@@ -54,7 +54,7 @@ pub(super) fn compile_varbuilder_get_static<'ctx>(
                 let shape_alloca = codegen
                     .builder
                     .build_alloca(shape_array_type, "shape_arr")
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
                 for (i, elem) in elements.iter().enumerate() {
                     let (val, ty) = codegen.compile_expr(elem)?;
@@ -63,12 +63,12 @@ pub(super) fn compile_varbuilder_get_static<'ctx>(
                         Type::I32 => codegen
                             .builder
                             .build_int_z_extend(val.into_int_value(), i64_type, "dim_zext")
-                            .map_err(|e| e.to_string())?,
+                            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?,
                         _ => {
-                            return Err(format!(
+                            return Err(TlError::from(CodegenErrorKind::Internal(format!(
                                 "VarBuilder::get expects integer dimensions, got {:?}",
                                 ty
-                            ).into())
+                            ))))
                         }
                     };
                     let ptr = unsafe {
@@ -83,12 +83,12 @@ pub(super) fn compile_varbuilder_get_static<'ctx>(
                                 ],
                                 "tmp",
                             )
-                            .map_err(|e| e.to_string())?
+                            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?
                     };
                     codegen
                         .builder
                         .build_store(ptr, i_val)
-                        .map_err(|e| e.to_string())?;
+                        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                 }
                 (rank, shape_alloca)
             }
@@ -98,17 +98,17 @@ pub(super) fn compile_varbuilder_get_static<'ctx>(
                 let shape_alloca = codegen
                     .builder
                     .build_alloca(shape_array_type, "shape_arr")
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
                 for (i, arg) in args[1..].iter().enumerate() {
                     let (val, ty) = codegen.compile_expr(arg)?;
                     let i_val = if ty == Type::I64 {
                         val.into_int_value()
                     } else {
-                        return Err(format!(
+                        return Err(TlError::from(CodegenErrorKind::Internal(format!(
                             "VarBuilder::get expects integer dimensions, got {:?}",
                             ty
-                        ).into());
+                        ))));
                     };
                     let ptr = unsafe {
                         codegen
@@ -122,12 +122,12 @@ pub(super) fn compile_varbuilder_get_static<'ctx>(
                                 ],
                                 "tmp",
                             )
-                            .map_err(|e| e.to_string())?
+                            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?
                     };
                     codegen
                         .builder
                         .build_store(ptr, i_val)
-                        .map_err(|e| e.to_string())?;
+                        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                 }
                 (rank, shape_alloca)
             }
@@ -138,17 +138,17 @@ pub(super) fn compile_varbuilder_get_static<'ctx>(
         let shape_alloca = codegen
             .builder
             .build_alloca(shape_array_type, "shape_arr")
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
         for (i, arg) in args[1..].iter().enumerate() {
             let (val, ty) = codegen.compile_expr(arg)?;
             let i_val = if ty == Type::I64 {
                 val.into_int_value()
             } else {
-                return Err(format!(
+                return Err(TlError::from(CodegenErrorKind::Internal(format!(
                     "VarBuilder::get expects integer dimensions, got {:?}",
                     ty
-                ).into());
+                ))));
             };
             let ptr = unsafe {
                 codegen
@@ -162,12 +162,12 @@ pub(super) fn compile_varbuilder_get_static<'ctx>(
                                 ],
                                 "tmp",
                             )
-                    .map_err(|e| e.to_string())?
+                    .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?
             };
             codegen
                 .builder
                 .build_store(ptr, i_val)
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
         }
         (rank, shape_alloca)
     };
@@ -175,7 +175,7 @@ pub(super) fn compile_varbuilder_get_static<'ctx>(
     let f = codegen
         .module
         .get_function("tl_varbuilder_get")
-        .ok_or("tl_varbuilder_get not found")?;
+        .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_varbuilder_get not found".to_string())))?;
     let call = codegen
         .builder
         .build_call(
@@ -187,7 +187,7 @@ pub(super) fn compile_varbuilder_get_static<'ctx>(
             ],
             "vb_get_res",
         )
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
     let v = codegen.check_tensor_result(call, "vb_get_error")?;
     let result_ty = Type::Tensor(Box::new(Type::F32), rank);
@@ -201,7 +201,7 @@ pub(super) fn compile_set_device<'ctx>(
     _target: Option<&Type>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 {
-        return Err("set_device expects 1 argument".into());
+        return Err(TlError::from(CodegenErrorKind::Internal("set_device expects 1 argument".to_string())));
     }
     let (arg_val, arg_ty) = codegen.compile_expr(&args[0])?;
 
@@ -212,27 +212,27 @@ pub(super) fn compile_set_device<'ctx>(
     };
 
     if !is_device_enum {
-        return Err(format!(
+        return Err(TlError::from(CodegenErrorKind::Internal(format!(
             "set_device argument must be a Device enum, found {:?}",
             arg_ty
-        ).into());
+        ))));
     }
 
     let fn_val = codegen
         .module
         .get_function("tl_set_device")
-        .ok_or("tl_set_device not found")?;
+        .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_set_device not found".to_string())))?;
 
     // Argument is pointer to Device enum (which is opaque* in LLVM)
     let arg_ptr = match arg_val {
         BasicValueEnum::PointerValue(p) => p,
-        _ => return Err("Expected pointer to Device enum".into()),
+        _ => return Err(CodegenErrorKind::Internal("Expected pointer to Device enum".to_string()).into()),
     };
 
     codegen
         .builder
         .build_call(fn_val, &[arg_ptr.into()], "")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
     Ok((
         codegen.context.i64_type().const_int(0, false).into(),
@@ -246,7 +246,7 @@ pub(super) fn compile_checkpoint<'ctx>(
     _target: Option<&Type>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 2 {
-        return Err("checkpoint requires 2 arguments: (method_ref, input)".into());
+        return Err(TlError::from(CodegenErrorKind::Internal("checkpoint requires 2 arguments: (method_ref, input)".to_string())));
     }
 
     // Inline expansion: Param::checkpoint(obj.method, input) → obj.method(input)
@@ -260,7 +260,7 @@ pub(super) fn compile_checkpoint<'ctx>(
         let (val, ty) = codegen.compile_method_call(obj_expr, method_name, input_args)?;
         Ok((val, ty))
     } else {
-        Err("checkpoint first argument must be 'obj.method'".into())
+        Err(TlError::from(CodegenErrorKind::Internal("checkpoint first argument must be 'obj.method'".to_string())))
     }
 }
 
@@ -271,7 +271,7 @@ pub(super) fn compile_print_common<'ctx>(
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     // Shared name arg for error message (not passed here but can infer)
     if args.len() != 1 {
-        return Err("print/println requires 1 argument".into());
+        return Err(TlError::from(CodegenErrorKind::Internal("print/println requires 1 argument".to_string())));
     }
     // Check type of arg
     let (arg_val, arg_type) = &args[0];
@@ -284,11 +284,11 @@ pub(super) fn compile_print_common<'ctx>(
                 "tl_display_i64"
             };
             let fn_val = codegen.module.get_function(fn_name)
-                .ok_or_else(|| format!("{} not found", fn_name))?;
+                .ok_or_else(|| TlError::from(CodegenErrorKind::Internal(format!("{} not found", fn_name))))?;
             codegen
                 .builder
                 .build_call(fn_val, &[(*arg_val).into()], "print_call")
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
         }
         Type::Char(_) => {
              let fn_name = if is_newline {
@@ -301,14 +301,14 @@ pub(super) fn compile_print_common<'ctx>(
              // If arg_val is i8, we might need cast if function expects i32/u8?
              // Runtime signatures in lib.rs define what expectations are.
              let fn_val = codegen.module.get_function(fn_name)
-                 .ok_or_else(|| format!("{} not found", fn_name))?;
+                 .ok_or_else(|| TlError::from(CodegenErrorKind::Internal(format!("{} not found", fn_name))))?;
 
              // If we need a cast:
              let arg_casted = if arg_val.is_int_value() {
                  let int_val = arg_val.into_int_value();
                  let i32_type = codegen.context.i32_type();
                  if int_val.get_type() != i32_type {
-                      codegen.builder.build_int_cast(int_val, i32_type, "char_cast").map_err(|e| e.to_string())?.into()
+                      codegen.builder.build_int_cast(int_val, i32_type, "char_cast").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?.into()
                  } else {
                       (*arg_val).into()
                  }
@@ -319,7 +319,7 @@ pub(super) fn compile_print_common<'ctx>(
              codegen
                  .builder
                  .build_call(fn_val, &[arg_casted], "print_call")
-                 .map_err(|e| e.to_string())?;
+                 .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
         }
         Type::I32 => {
             let fn_name = if is_newline {
@@ -328,11 +328,11 @@ pub(super) fn compile_print_common<'ctx>(
                 "tl_display_i32"
             };
             let fn_val = codegen.module.get_function(fn_name)
-                .ok_or_else(|| format!("{} not found", fn_name))?;
+                .ok_or_else(|| TlError::from(CodegenErrorKind::Internal(format!("{} not found", fn_name))))?;
             codegen
                 .builder
                 .build_call(fn_val, &[(*arg_val).into()], "print_call")
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
         }
         Type::F32 => {
             let fn_name = if is_newline {
@@ -341,11 +341,11 @@ pub(super) fn compile_print_common<'ctx>(
                 "tl_display_f32"
             };
             let fn_val = codegen.module.get_function(fn_name)
-                .ok_or_else(|| format!("{} not found", fn_name))?;
+                .ok_or_else(|| TlError::from(CodegenErrorKind::Internal(format!("{} not found", fn_name))))?;
             codegen
                 .builder
                 .build_call(fn_val, &[(*arg_val).into()], "print_call")
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
         }
         Type::F64 => {
             let fn_name = if is_newline {
@@ -354,11 +354,11 @@ pub(super) fn compile_print_common<'ctx>(
                 "tl_display_f64"
             };
             let fn_val = codegen.module.get_function(fn_name)
-                .ok_or_else(|| format!("{} not found", fn_name))?;
+                .ok_or_else(|| TlError::from(CodegenErrorKind::Internal(format!("{} not found", fn_name))))?;
             codegen
                 .builder
                 .build_call(fn_val, &[(*arg_val).into()], "print_call")
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
         }
         Type::Bool => {
             let fn_name = if is_newline {
@@ -367,22 +367,22 @@ pub(super) fn compile_print_common<'ctx>(
                 "tl_display_bool"
             };
             let fn_val = codegen.module.get_function(fn_name)
-                .ok_or_else(|| format!("{} not found", fn_name))?;
+                .ok_or_else(|| TlError::from(CodegenErrorKind::Internal(format!("{} not found", fn_name))))?;
             codegen
                 .builder
                 .build_call(fn_val, &[(*arg_val).into()], "print_call")
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
         }
         Type::Tuple(elem_types) => {
             // Print tuple as (a, b, c)
             let display_fn = codegen
                 .module
                 .get_function("tl_display_string")
-                .ok_or("tl_display_string not found")?;
+                .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_display_string not found".to_string())))?;
             let print_fn = codegen
                 .module
                 .get_function("tl_print_string")
-                .ok_or("tl_print_string not found")?;
+                .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_print_string not found".to_string())))?;
 
             fn emit_tuple_str<'ctx>(
                 codegen: &mut CodeGenerator<'ctx>,
@@ -398,14 +398,14 @@ pub(super) fn compile_print_common<'ctx>(
                 codegen
                     .builder
                     .build_call(fn_val, &[ptr.into()], "print_tuple_part")
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                 Ok(())
             }
 
             emit_tuple_str(codegen, "(", false, display_fn, print_fn)?;
 
             if !arg_val.is_pointer_value() {
-                return Err("Tuple value is not a pointer".into());
+                return Err(TlError::from(CodegenErrorKind::Internal("Tuple value is not a pointer".to_string())));
             }
             let tuple_ptr = arg_val.into_pointer_value();
 
@@ -422,12 +422,12 @@ pub(super) fn compile_print_common<'ctx>(
                 let field_ptr = codegen
                     .builder
                     .build_struct_gep(tuple_struct_type, tuple_ptr, idx as u32, "tuple_elem_ptr")
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                 let llvm_field_ty = codegen.get_llvm_type(ty)?;
                 let val = codegen
                     .builder
                     .build_load(llvm_field_ty, field_ptr, "tuple_elem")
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                 compile_print_common(codegen, vec![(val, ty.clone())], false)?;
             }
 
@@ -443,11 +443,11 @@ pub(super) fn compile_print_common<'ctx>(
                 "tl_tensor_display"
             };
             let fn_val = codegen.module.get_function(fn_name)
-                .ok_or_else(|| format!("{} not found", fn_name))?;
+                .ok_or_else(|| TlError::from(CodegenErrorKind::Internal(format!("{} not found", fn_name))))?;
             codegen
                 .builder
                 .build_call(fn_val, &[(*arg_val).into()], "print_call")
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
         }
         Type::Struct(s, _) | Type::Struct(s, _) if s == "Tensor" => {
             let fn_name = if is_newline {
@@ -456,11 +456,11 @@ pub(super) fn compile_print_common<'ctx>(
                 "tl_tensor_display"
             };
             let fn_val = codegen.module.get_function(fn_name)
-                .ok_or_else(|| format!("{} not found", fn_name))?;
+                .ok_or_else(|| TlError::from(CodegenErrorKind::Internal(format!("{} not found", fn_name))))?;
             codegen
                 .builder
                 .build_call(fn_val, &[(*arg_val).into()], "print_call")
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
         }
         Type::String(_) => {
             let fn_name = if is_newline {
@@ -473,9 +473,9 @@ pub(super) fn compile_print_common<'ctx>(
                 codegen
                     .builder
                     .build_call(f, &[(*arg_val).into()], "print_call")
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
             } else {
-                return Err(format!("{} not found (add to init)", fn_name).into());
+                return Err(TlError::from(CodegenErrorKind::Internal(format!("{} not found (add to init)", fn_name))));
             }
         },
         _ => {
@@ -487,11 +487,11 @@ pub(super) fn compile_print_common<'ctx>(
             
             if let Ok(mangled) = codegen.monomorphize_method(&base_name, "to_string", &type_args) {
                 if let Some(to_str_fn) = codegen.module.get_function(&mangled) {
-                    let call = codegen.builder.build_call(to_str_fn, &[(*arg_val).into()], "to_string_call").map_err(|e| e.to_string())?;
+                    let call = codegen.builder.build_call(to_str_fn, &[(*arg_val).into()], "to_string_call").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                     if let inkwell::values::ValueKind::Basic(str_val) = call.try_as_basic_value() {
                         let print_fn_name = if is_newline { "tl_print_string" } else { "tl_display_string" };
-                        let print_fn = codegen.module.get_function(print_fn_name).ok_or("print string not found")?;
-                        codegen.builder.build_call(print_fn, &[str_val.into()], "print_call").map_err(|e| e.to_string())?;
+                        let print_fn = codegen.module.get_function(print_fn_name).ok_or_else(|| TlError::from(CodegenErrorKind::Internal("print string not found".to_string())))?;
+                        codegen.builder.build_call(print_fn, &[str_val.into()], "print_call").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                         
                         return Ok((
                             codegen.context.i64_type().const_int(0, false).into(),
@@ -501,7 +501,7 @@ pub(super) fn compile_print_common<'ctx>(
                 }
             }
             
-            return Err(format!("Cannot print type {:?} (does not implement Display)", arg_type).into())
+            return Err(TlError::from(CodegenErrorKind::Internal(format!("Cannot print type {:?} (does not implement Display)", arg_type))))
         }
     }
     Ok((
@@ -536,7 +536,7 @@ pub(super) fn compile_format_uneval<'ctx>(
     }
 
     let concat_fn = codegen.module.get_function("tl_string_concat")
-        .ok_or("tl_string_concat not found")?;
+        .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_string_concat not found".to_string())))?;
 
     // Check for format string
     let fmt_str_opt = if let ExprKind::StringLiteral(s) = &args[0].inner {
@@ -551,10 +551,10 @@ pub(super) fn compile_format_uneval<'ctx>(
         let placeholder_count = parts.len() - 1;
 
         if arg_count != placeholder_count {
-            return Err(format!(
+            return Err(TlError::from(CodegenErrorKind::Internal(format!(
                 "Format string has {} placeholders but {} arguments were provided",
                 placeholder_count, arg_count
-            ).into());
+            ))));
         }
 
         // Start with first literal part
@@ -567,20 +567,20 @@ pub(super) fn compile_format_uneval<'ctx>(
 
             // Concat result + arg_str
             let call = codegen.builder.build_call(concat_fn, &[result.into(), arg_str.into()], "fmt_concat")
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
             result = match call.try_as_basic_value() {
                 inkwell::values::ValueKind::Basic(v) => v,
-                _ => return Err("concat returned void".into()),
+                _ => return Err(CodegenErrorKind::Internal("concat returned void".to_string()).into()),
             };
 
             // Concat literal part
             if !part.is_empty() {
                 let (lit_str, _) = codegen.compile_string_literal(part)?;
                 let call = codegen.builder.build_call(concat_fn, &[result.into(), lit_str.into()], "fmt_concat")
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                 result = match call.try_as_basic_value() {
                     inkwell::values::ValueKind::Basic(v) => v,
-                    _ => return Err("concat returned void".into()),
+                    _ => return Err(CodegenErrorKind::Internal("concat returned void".to_string()).into()),
                 };
             }
         }
@@ -589,7 +589,7 @@ pub(super) fn compile_format_uneval<'ctx>(
     } else {
         // No format string: format(value) = value.to_string()
         if args.len() != 1 {
-            return Err("format requires format string or 1 argument".into());
+            return Err(TlError::from(CodegenErrorKind::Internal("format requires format string or 1 argument".to_string())));
         }
         let (val, ty) = codegen.compile_expr(&args[0])?;
         let str_val = compile_value_to_string(codegen, val, &ty)?;
@@ -607,68 +607,68 @@ pub(super) fn compile_value_to_string<'ctx>(
         Type::String(_) => Ok(val), // already a string
         Type::I64 => {
             let fn_val = codegen.module.get_function("tl_string_from_int")
-                .ok_or("tl_string_from_int not found")?;
+                .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_string_from_int not found".to_string())))?;
             let call = codegen.builder.build_call(fn_val, &[val.into()], "i64_to_str")
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
             match call.try_as_basic_value() {
                 inkwell::values::ValueKind::Basic(v) => Ok(v),
-                _ => Err("tl_string_from_int returned void".into()),
+                _ => Err(CodegenErrorKind::Internal("tl_string_from_int returned void".to_string()).into()),
             }
         }
         Type::F64 => {
             let fn_val = codegen.module.get_function("tl_string_from_f64")
-                .ok_or("tl_string_from_f64 not found")?;
+                .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_string_from_f64 not found".to_string())))?;
             let call = codegen.builder.build_call(fn_val, &[val.into()], "f64_to_str")
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
             match call.try_as_basic_value() {
                 inkwell::values::ValueKind::Basic(v) => Ok(v),
-                _ => Err("tl_string_from_f64 returned void".into()),
+                _ => Err(CodegenErrorKind::Internal("tl_string_from_f64 returned void".to_string()).into()),
             }
         }
         Type::Bool => {
             let fn_val = codegen.module.get_function("tl_string_from_bool")
-                .ok_or("tl_string_from_bool not found")?;
+                .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_string_from_bool not found".to_string())))?;
             let call = codegen.builder.build_call(fn_val, &[val.into()], "bool_to_str")
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
             match call.try_as_basic_value() {
                 inkwell::values::ValueKind::Basic(v) => Ok(v),
-                _ => Err("tl_string_from_bool returned void".into()),
+                _ => Err(CodegenErrorKind::Internal("tl_string_from_bool returned void".to_string()).into()),
             }
         }
         Type::I32 | Type::F32 => {
             // Cast to i64/f64 first, then convert
             let i64_type = codegen.context.i64_type();
             let casted = if matches!(ty, Type::I32) {
-                codegen.builder.build_int_s_extend(val.into_int_value(), i64_type, "i32_ext").map_err(|e| e.to_string())?.into()
+                codegen.builder.build_int_s_extend(val.into_int_value(), i64_type, "i32_ext").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?.into()
             } else {
                 let f64_type = codegen.context.f64_type();
-                codegen.builder.build_float_ext(val.into_float_value(), f64_type, "f32_ext").map_err(|e| e.to_string())?.into()
+                codegen.builder.build_float_ext(val.into_float_value(), f64_type, "f32_ext").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?.into()
             };
             let fn_name = if matches!(ty, Type::I32) { "tl_string_from_int" } else { "tl_string_from_f64" };
             let fn_val = codegen.module.get_function(fn_name)
-                .ok_or(format!("{} not found", fn_name))?;
+                .ok_or_else(|| TlError::from(CodegenErrorKind::Internal(format!("{} not found", fn_name))))?;
             let call = codegen.builder.build_call(fn_val, &[casted], "cast_to_str")
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
             match call.try_as_basic_value() {
                 inkwell::values::ValueKind::Basic(v) => Ok(v),
-                _ => Err("conversion returned void".into()),
+                _ => Err(CodegenErrorKind::Internal("conversion returned void".to_string()).into()),
             }
         }
         _ => {
             // Fallback: try tl_string_from_int (for Char, U8 etc.)
             let fn_val = codegen.module.get_function("tl_string_from_int")
-                .ok_or("tl_string_from_int not found")?;
+                .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_string_from_int not found".to_string())))?;
             let i64_type = codegen.context.i64_type();
             let int_val = if val.is_int_value() {
-                codegen.builder.build_int_s_extend_or_bit_cast(val.into_int_value(), i64_type, "to_i64").map_err(|e| e.to_string())?.into()
+                codegen.builder.build_int_s_extend_or_bit_cast(val.into_int_value(), i64_type, "to_i64").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?.into()
             } else {
                 val.into()
             };
             let call = codegen.builder.build_call(fn_val, &[int_val], "fallback_to_str")
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
             match call.try_as_basic_value() {
                 inkwell::values::ValueKind::Basic(v) => Ok(v),
-                _ => Err("fallback conversion returned void".into()),
+                _ => Err(CodegenErrorKind::Internal("fallback conversion returned void".to_string()).into()),
             }
         }
     }
@@ -679,20 +679,20 @@ pub(super) fn compile_read_line_uneval<'ctx>(
     args: &[Expr],
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 {
-        return Err("read_line requires 1 argument".into());
+        return Err(TlError::from(CodegenErrorKind::Internal("read_line requires 1 argument".to_string())));
     }
     let (prompt_val, _prompt_ty) = codegen.compile_expr(&args[0])?;
     let fn_val = codegen
         .module
         .get_function("tl_read_line")
-        .ok_or("tl_read_line not found")?;
+        .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_read_line not found".to_string())))?;
     let call = codegen
         .builder
         .build_call(fn_val, &[prompt_val.into()], "read_line_res")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     let res = match call.try_as_basic_value() {
         inkwell::values::ValueKind::Basic(v) => v,
-        _ => return Err("Invalid return from read_line".into()),
+        _ => return Err(CodegenErrorKind::Internal("Invalid return from read_line".to_string()).into()),
     };
     Ok((res, Type::String("String".to_string())))
 }
@@ -703,7 +703,7 @@ pub(super) fn compile_panic_uneval<'ctx>(
     args: &[Expr],
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 {
-        return Err("panic requires 1 argument (error message)".into());
+        return Err(TlError::from(CodegenErrorKind::Internal("panic requires 1 argument (error message)".to_string())));
     }
     
     let (msg_val, _msg_ty) = codegen.compile_expr(&args[0])?;
@@ -712,25 +712,25 @@ pub(super) fn compile_panic_uneval<'ctx>(
     let display_fn = codegen
         .module
         .get_function("tl_display_string")
-        .ok_or("tl_display_string not found")?;
+        .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_display_string not found".to_string())))?;
     
     // Print "[PANIC] " prefix using compile_string_literal for proper TL string format
     let (prefix_val, _) = codegen.compile_string_literal("[PANIC] ")?;
-    codegen.builder.build_call(display_fn, &[prefix_val.into()], "").map_err(|e| e.to_string())?;
+    codegen.builder.build_call(display_fn, &[prefix_val.into()], "").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
     // Print the actual message
-    codegen.builder.build_call(display_fn, &[msg_val.into()], "").map_err(|e| e.to_string())?;
+    codegen.builder.build_call(display_fn, &[msg_val.into()], "").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
     // Print newline
     let (newline_val, _) = codegen.compile_string_literal("\n")?;
-    codegen.builder.build_call(display_fn, &[newline_val.into()], "").map_err(|e| e.to_string())?;
+    codegen.builder.build_call(display_fn, &[newline_val.into()], "").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
     // Call abort() to terminate the program
-    let abort_fn = codegen.module.get_function("abort").ok_or("abort function not found")?;
-    codegen.builder.build_call(abort_fn, &[], "").map_err(|e| e.to_string())?;
+    let abort_fn = codegen.module.get_function("abort").ok_or_else(|| TlError::from(CodegenErrorKind::Internal("abort function not found".to_string())))?;
+    codegen.builder.build_call(abort_fn, &[], "").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
     // Insert LLVM unreachable instruction to indicate control doesn't reach here
-    codegen.builder.build_unreachable().map_err(|e| e.to_string())?;
+    codegen.builder.build_unreachable().map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     
     // Return a dummy value with Never type (code won't actually reach here)
     let dummy = codegen.context.i64_type().const_zero();
@@ -742,7 +742,7 @@ pub(super) fn compile_assert_uneval<'ctx>(
     args: &[Expr],
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 2 {
-        return Err("assert requires 2 arguments (condition, message)".into());
+        return Err(TlError::from(CodegenErrorKind::Internal("assert requires 2 arguments (condition, message)".to_string())));
     }
 
     let (cond_val, _cond_ty) = codegen.compile_expr(&args[0])?;
@@ -751,12 +751,12 @@ pub(super) fn compile_assert_uneval<'ctx>(
     let fn_val = codegen
         .module
         .get_function("tl_assert")
-        .ok_or("tl_assert not found")?;
+        .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_assert not found".to_string())))?;
 
     codegen
         .builder
         .build_call(fn_val, &[cond_val.into(), msg_val.into()], "")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
     Ok((
         codegen.context.i64_type().const_zero().into(),
@@ -775,7 +775,7 @@ pub(super) fn compile_print_formatted<'ctx>(
             let fn_val = codegen
                 .module
                 .get_function("tl_print_string")
-                .ok_or("tl_print_string not found")?;
+                .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_print_string not found".to_string())))?;
 
             // Create empty string "" and print it (tl_print_string adds newline)
             let s_val = codegen.context.const_string(b"", true);
@@ -800,13 +800,13 @@ pub(super) fn compile_print_formatted<'ctx>(
                         ],
                         "str_ptr",
                     )
-                    .map_err(|e| e.to_string())?
+                    .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?
             };
 
             codegen
                 .builder
                 .build_call(fn_val, &[ptr.into()], "print_newline")
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
         }
         return Ok((
             codegen.context.i64_type().const_int(0, false).into(),
@@ -832,16 +832,16 @@ pub(super) fn compile_print_formatted<'ctx>(
         let placeholder_count = parts.len() - 1;
 
         if arg_count != placeholder_count {
-            return Err(format!(
+            return Err(TlError::from(CodegenErrorKind::Internal(format!(
                 "Format string has {} placeholders but {} arguments were provided",
                 placeholder_count, arg_count
-            ).into());
+            ))));
         }
 
         let display_fn = codegen
             .module
             .get_function("tl_display_string")
-            .ok_or("tl_display_string not found")?;
+            .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_display_string not found".to_string())))?;
 
         for (i, part) in parts.iter().enumerate() {
             // 1. Print literal part
@@ -850,7 +850,7 @@ pub(super) fn compile_print_formatted<'ctx>(
                 codegen
                     .builder
                     .build_call(display_fn, &[str_val.into()], "print_part")
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
             }
 
             // 2. Print argument
@@ -867,7 +867,7 @@ pub(super) fn compile_print_formatted<'ctx>(
             let print_fn = codegen
                 .module
                 .get_function("tl_print_string")
-                .ok_or("tl_print_string not found")?;
+                .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_print_string not found".to_string())))?;
 
             // Use compile_string_literal to create StringStruct
             let (str_struct_ptr, _) = codegen.compile_string_literal("")?;
@@ -875,12 +875,12 @@ pub(super) fn compile_print_formatted<'ctx>(
             codegen
                 .builder
                 .build_call(print_fn, &[str_struct_ptr.into()], "print_newline")
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
         }
     } else {
         // Normal print
         if args.len() != 1 {
-            return Err("print/println requires 1 argument (or format string)".into());
+            return Err(TlError::from(CodegenErrorKind::Internal("print/println requires 1 argument (or format string)".to_string())));
         }
         let (val, ty) = codegen.compile_expr(&args[0])?;
         compile_print_common(codegen, vec![(val, ty)], is_newline)?;
@@ -897,19 +897,19 @@ pub(super) fn compile_args_count<'ctx>(
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if !args.is_empty() {
-        return Err("args_count takes no arguments".into());
+        return Err(TlError::from(CodegenErrorKind::Internal("args_count takes no arguments".to_string())));
     }
     let fn_val = codegen
         .module
         .get_function("tl_args_count")
-        .ok_or("tl_args_count not found")?;
+        .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_args_count not found".to_string())))?;
     let call = codegen
         .builder
         .build_call(fn_val, &[], "args_count_res")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     let res = match call.try_as_basic_value() {
         inkwell::values::ValueKind::Basic(v) => v,
-        _ => return Err("Invalid args_count return".into()),
+        _ => return Err(CodegenErrorKind::Internal("Invalid args_count return".to_string()).into()),
     };
     Ok((res, Type::I64))
 }
@@ -919,20 +919,20 @@ pub(super) fn compile_args_get<'ctx>(
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 {
-        return Err("args_get requires 1 argument (index)".into());
+        return Err(TlError::from(CodegenErrorKind::Internal("args_get requires 1 argument (index)".to_string())));
     }
     let (idx_val, _) = args[0].clone();
     let fn_val = codegen
         .module
         .get_function("tl_args_get")
-        .ok_or("tl_args_get not found")?;
+        .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_args_get not found".to_string())))?;
     let call = codegen
         .builder
         .build_call(fn_val, &[idx_val.into()], "args_get_res")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     let res = match call.try_as_basic_value() {
         inkwell::values::ValueKind::Basic(v) => v,
-        _ => return Err("Invalid args_get return".into()),
+        _ => return Err(CodegenErrorKind::Internal("Invalid args_get return".to_string()).into()),
     };
     Ok((res, Type::String("String".to_string())))
 }
@@ -942,7 +942,7 @@ pub(super) fn compile_string_char_at<'ctx>(
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 2 {
-        return Err("char_at requires 2 arguments (string, index)".into());
+        return Err(TlError::from(CodegenErrorKind::Internal("char_at requires 2 arguments (string, index)".to_string())));
     }
     let (str_val, _) = args[0].clone();
     let (idx_val, idx_ty) = args[1].clone();
@@ -957,21 +957,21 @@ pub(super) fn compile_string_char_at<'ctx>(
                 codegen.context.i64_type(),
                 "idx_ext",
             )
-            .map_err(|e| e.to_string())?,
-        _ => return Err("Index must be integer".into()),
+            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?,
+        _ => return Err(TlError::from(CodegenErrorKind::TypeError("Index must be integer".to_string()))),
     };
 
     let fn_val = codegen
         .module
         .get_function("tl_string_char_at")
-        .ok_or("tl_string_char_at not found")?;
+        .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_string_char_at not found".to_string())))?;
     let call = codegen
         .builder
         .build_call(fn_val, &[str_val.into(), idx_i64.into()], "char_at_res")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     let res = match call.try_as_basic_value() {
         inkwell::values::ValueKind::Basic(v) => v,
-        _ => return Err("Invalid char_at return".into()),
+        _ => return Err(CodegenErrorKind::Internal("Invalid char_at return".to_string()).into()),
     };
     Ok((res, Type::Char("Char".to_string())))
 }
@@ -981,21 +981,21 @@ pub(super) fn compile_string_len<'ctx>(
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 {
-        return Err("len requires 1 argument (string)".into());
+        return Err(TlError::from(CodegenErrorKind::Internal("len requires 1 argument (string)".to_string())));
     }
     let (str_val, _) = args[0].clone();
 
     let fn_val = codegen
         .module
         .get_function("tl_string_len")
-        .ok_or("tl_string_len not found")?;
+        .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_string_len not found".to_string())))?;
     let call = codegen
         .builder
         .build_call(fn_val, &[str_val.into()], "len_res")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     let res = match call.try_as_basic_value() {
         inkwell::values::ValueKind::Basic(v) => v,
-        _ => return Err("Invalid len return".into()),
+        _ => return Err(CodegenErrorKind::Internal("Invalid len return".to_string()).into()),
     };
     Ok((res, Type::I64))
 }
@@ -1007,13 +1007,13 @@ pub(super) fn compile_save_weights<'ctx>(
     _target: Option<&Type>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 2 {
-        return Err("save_weights requires 2 arguments: tensor/struct, path".into());
+        return Err(TlError::from(CodegenErrorKind::Internal("save_weights requires 2 arguments: tensor/struct, path".to_string())));
     }
     let (t_val, t_ty) = &args[0];
     let (path_val, path_ty) = &args[1];
 
     if !matches!(path_ty, Type::String(_)) {
-        return Err("Second argument to save_weights must be a String (path)".into());
+        return Err(TlError::from(CodegenErrorKind::TypeError("Second argument to save_weights must be a String (path)".to_string())));
     }
 
     match t_ty {
@@ -1021,25 +1021,25 @@ pub(super) fn compile_save_weights<'ctx>(
             let fn_val = codegen
                 .module
                 .get_function("tl_tensor_save")
-                .ok_or("tl_tensor_save not found")?;
+                .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_tensor_save not found".to_string())))?;
             codegen
                 .builder
                 .build_call(fn_val, &[(*t_val).into(), (*path_val).into()], "")
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
         }
         Type::Struct(struct_name, _) | Type::Struct(struct_name, _) if struct_name != "String" => {
             // Struct serialization
             let new_fn = codegen
                 .module
                 .get_function("tl_tensor_map_new")
-                .ok_or("tl_tensor_map_new not found")?;
+                .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_tensor_map_new not found".to_string())))?;
             let map_call = codegen
                 .builder
                 .build_call(new_fn, &[], "map")
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
             let map_val = match map_call.try_as_basic_value() {
                 inkwell::values::ValueKind::Basic(v) => v,
-                _ => return Err("tl_tensor_map_new returned void".into()),
+                _ => return Err(CodegenErrorKind::Internal("tl_tensor_map_new returned void".to_string()).into()),
             };
 
             codegen.gen_save_struct(map_val, *t_val, &struct_name, "".to_string())?;
@@ -1047,26 +1047,26 @@ pub(super) fn compile_save_weights<'ctx>(
             let save_fn = codegen
                 .module
                 .get_function("tl_tensor_map_save")
-                .ok_or("tl_tensor_map_save not found")?;
+                .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_tensor_map_save not found".to_string())))?;
             codegen
                 .builder
                 .build_call(save_fn, &[map_val.into(), (*path_val).into()], "")
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
             let free_fn = codegen
                 .module
                 .get_function("tl_tensor_map_free")
-                .ok_or("tl_tensor_map_free not found")?;
+                .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_tensor_map_free not found".to_string())))?;
             codegen
                 .builder
                 .build_call(free_fn, &[map_val.into()], "")
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
         }
         _ => {
-            return Err(format!(
+            return Err(TlError::from(CodegenErrorKind::Internal(format!(
                 "First argument to save_weights must be a tensor or struct. Found: {:?}",
                 t_ty
-            ).into())
+            ))))
         }
     }
 
@@ -1084,21 +1084,21 @@ pub(super) fn compile_load_weights<'ctx>(
     if args.len() == 1 {
         let (path_val, path_ty) = &args[0];
         if !matches!(path_ty, Type::String(_)) {
-            return Err("Argument to load_weights must be a String (path)".into());
+            return Err(TlError::from(CodegenErrorKind::TypeError("Argument to load_weights must be a String (path)".to_string())));
         }
 
         let fn_val = codegen
             .module
             .get_function("tl_tensor_load")
-            .ok_or("tl_tensor_load not found")?;
+            .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_tensor_load not found".to_string())))?;
         let call = codegen
             .builder
             .build_call(fn_val, &[(*path_val).into()], "load_res")
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
         let res = match call.try_as_basic_value() {
             inkwell::values::ValueKind::Basic(v) => v,
-            _ => return Err("Invalid load_weights return".into()),
+            _ => return Err(CodegenErrorKind::Internal("Invalid load_weights return".to_string()).into()),
         };
         Ok((res, Type::Tensor(Box::new(Type::F32), 0)))
     } else if args.len() == 2 {
@@ -1106,7 +1106,7 @@ pub(super) fn compile_load_weights<'ctx>(
         let (struct_val, s_ty) = &args[0];
         let (path_val, path_ty) = &args[1];
         if !matches!(path_ty, Type::String(_)) {
-            return Err("Second argument to load_weights must be a String (path)".into());
+            return Err(TlError::from(CodegenErrorKind::TypeError("Second argument to load_weights must be a String (path)".to_string())));
         }
 
         let struct_name_opt = match &s_ty {
@@ -1122,14 +1122,14 @@ pub(super) fn compile_load_weights<'ctx>(
             let load_fn = codegen
                 .module
                 .get_function("tl_tensor_map_load")
-                .ok_or("tl_tensor_map_load not found")?;
+                .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_tensor_map_load not found".to_string())))?;
             let map_call = codegen
                 .builder
                 .build_call(load_fn, &[(*path_val).into()], "map")
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
             let map_val = match map_call.try_as_basic_value() {
                 inkwell::values::ValueKind::Basic(v) => v,
-                _ => return Err("tl_tensor_map_load returned void".into()),
+                _ => return Err(CodegenErrorKind::Internal("tl_tensor_map_load returned void".to_string()).into()),
             };
 
             codegen.gen_load_struct(map_val, *struct_val, &struct_name, "".to_string())?;
@@ -1137,24 +1137,24 @@ pub(super) fn compile_load_weights<'ctx>(
             let free_fn = codegen
                 .module
                 .get_function("tl_tensor_map_free")
-                .ok_or("tl_tensor_map_free not found")?;
+                .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_tensor_map_free not found".to_string())))?;
             codegen
                 .builder
                 .build_call(free_fn, &[map_val.into()], "")
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
             Ok((
                 codegen.context.i64_type().const_int(0, false).into(),
                 Type::Void,
             ))
         } else {
-            Err(format!(
+            Err(TlError::from(CodegenErrorKind::Internal(format!(
                 "First argument to load_weights (2 args) must be a struct. Found: {:?}",
                 s_ty
-            ).into())
+            ))))
         }
     } else {
-        Err("load_weights requires 1 or 2 arguments".into())
+        Err(TlError::from(CodegenErrorKind::Internal("load_weights requires 1 or 2 arguments".to_string())))
     }
 }
 
@@ -1164,7 +1164,7 @@ pub(super) fn compile_register_modules<'ctx>(
     _target: Option<&Type>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 {
-        return Err("register_modules requires 1 argument (struct)".into());
+        return Err(TlError::from(CodegenErrorKind::Internal("register_modules requires 1 argument (struct)".to_string())));
     }
     let (val, ty) = &args[0];
     match ty {
@@ -1172,7 +1172,7 @@ pub(super) fn compile_register_modules<'ctx>(
             codegen.gen_register_params(*val, &sname, "".to_string())?;
             return Ok((codegen.context.i64_type().const_zero().into(), Type::Void));
         }
-        _ => return Err("register_modules expects a struct argument".into()),
+        _ => return Err(CodegenErrorKind::Internal("register_modules expects a struct argument".to_string()).into()),
     }
 }
 
@@ -1182,15 +1182,15 @@ pub(super) fn compile_update_all_params<'ctx>(
     _target: Option<&Type>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 {
-        return Err("update_all_params requires 1 argument".into());
+        return Err(TlError::from(CodegenErrorKind::Internal("update_all_params requires 1 argument".to_string())));
     }
     let (lr_val, _) = &args[0];
     let fn_val = codegen.module.get_function("tl_update_all_params")
-        .ok_or_else(|| "tl_update_all_params not found".to_string())?;
+        .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_update_all_params not found".to_string())))?;
     codegen
         .builder
         .build_call(fn_val, &[(*lr_val).into()], "")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     Ok((
         codegen.context.i64_type().const_int(0, false).into(),
         Type::Void,
@@ -1203,8 +1203,8 @@ pub(super) fn compile_clear_grads<'ctx>(
     _target: Option<&Type>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let fn_val = codegen.module.get_function("tl_clear_grads")
-        .ok_or("tl_clear_grads not found")?;
-    codegen.builder.build_call(fn_val, &[], "").map_err(|e| e.to_string())?;
+        .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_clear_grads not found".to_string())))?;
+    codegen.builder.build_call(fn_val, &[], "").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     Ok((codegen.context.i64_type().const_int(0, false).into(), Type::Void))
 }
 
@@ -1214,13 +1214,13 @@ pub(super) fn compile_add_parameter<'ctx>(
     _target: Option<&Type>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let fn_val = codegen.module.get_function("tl_add_parameter")
-        .ok_or_else(|| "tl_add_parameter not found".to_string())?;
+        .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_add_parameter not found".to_string())))?;
     let (name_val, _) = &args[0];
     let (tensor_val, _) = &args[1];
     codegen
         .builder
         .build_call(fn_val, &[(*name_val).into(), (*tensor_val).into()], "")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     Ok((
         codegen.context.i64_type().const_int(0, false).into(),
         Type::Void,
@@ -1233,12 +1233,12 @@ pub(super) fn compile_load_all_params<'ctx>(
     _target: Option<&Type>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let fn_val = codegen.module.get_function("tl_load_all_params")
-        .ok_or_else(|| "tl_load_all_params not found".to_string())?;
+        .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_load_all_params not found".to_string())))?;
     let path_val = if args.len() == 2 {
         let (struct_val, struct_ty) = &args[0];
         let struct_name = match struct_ty {
             Type::Struct(s, _) => s,
-            _ => return Err("Expected struct as first arg".into()),
+            _ => return Err(CodegenErrorKind::Internal("Expected struct as first arg".to_string()).into()),
         };
         codegen.gen_register_params(*struct_val, &struct_name, "".to_string())?;
         let (path, _) = &args[1];
@@ -1251,7 +1251,7 @@ pub(super) fn compile_load_all_params<'ctx>(
     codegen
         .builder
         .build_call(fn_val, &[(*path_val).into()], "load_all_res")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     Ok((
         codegen.context.i64_type().const_int(0, false).into(),
         Type::Void,
@@ -1264,20 +1264,20 @@ pub(super) fn compile_parameter<'ctx>(
     _target: Option<&Type>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 {
-        return Err("parameter requires 1 argument".into());
+        return Err(TlError::from(CodegenErrorKind::Internal("parameter requires 1 argument".to_string())));
     }
     let (arg_val, arg_ty) = &args[0];
     let fn_val = codegen
         .module
         .get_function("tl_register_parameter")
-        .ok_or("tl_register_parameter not found")?;
+        .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_register_parameter not found".to_string())))?;
     let call = codegen
         .builder
         .build_call(fn_val, &[(*arg_val).into()], "param_reg")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     let res = match call.try_as_basic_value() {
         ValueKind::Basic(v) => v,
-        _ => return Err("Invalid parameter return".into()),
+        _ => return Err(CodegenErrorKind::Internal("Invalid parameter return".to_string()).into()),
     };
     Ok((res, (*arg_ty).clone()))
 }
@@ -1288,12 +1288,12 @@ pub(super) fn compile_save_all_params<'ctx>(
     _target: Option<&Type>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let fn_val = codegen.module.get_function("tl_save_all_params")
-        .ok_or_else(|| "tl_save_all_params not found".to_string())?;
+        .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_save_all_params not found".to_string())))?;
     let path_val = if args.len() == 2 {
         let (struct_val, struct_ty) = &args[0];
         let struct_name = match struct_ty {
             Type::Struct(s, _) => s,
-            _ => return Err("Expected struct as first arg".into()),
+            _ => return Err(CodegenErrorKind::Internal("Expected struct as first arg".to_string()).into()),
         };
         codegen.gen_register_params(*struct_val, &struct_name, "".to_string())?;
         let (path, _) = &args[1];
@@ -1306,7 +1306,7 @@ pub(super) fn compile_save_all_params<'ctx>(
     codegen
         .builder
         .build_call(fn_val, &[(*path_val).into()], "save_all_res")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     Ok((
         codegen.context.i64_type().const_int(0, false).into(),
         Type::Void,
@@ -1320,14 +1320,14 @@ pub(super) fn compile_varbuilder_get<'ctx>(
     args: &[Expr],
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() < 2 {
-        return Err("varbuilder_get requires at least 2 arguments (name and dimensions)".into());
+        return Err(TlError::from(CodegenErrorKind::Internal("varbuilder_get requires at least 2 arguments (name and dimensions)".to_string())));
     }
     let (name_val, name_ty) = codegen.compile_expr(&args[0])?;
     if !matches!(name_ty, Type::String(_)) {
-        return Err(format!(
+        return Err(TlError::from(CodegenErrorKind::Internal(format!(
             "varbuilder_get expects String as first argument, found {:?}",
             name_ty
-        ).into());
+        ))));
     }
     let name_ptr = name_val.into_pointer_value();
 
@@ -1342,14 +1342,14 @@ pub(super) fn compile_varbuilder_get<'ctx>(
                 let len_fn = codegen
                     .module
                     .get_function("tl_tensor_len")
-                    .ok_or("tl_tensor_len not found")?;
+                    .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_tensor_len not found".to_string())))?;
                 let call = codegen
                     .builder
                     .build_call(len_fn, &[shape_val.into()], "len")
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                 let _len = match call.try_as_basic_value() {
                     ValueKind::Basic(v) => v.into_int_value(),
-                    _ => return Err("Invalid len return".into()),
+                    _ => return Err(CodegenErrorKind::Internal("Invalid len return".to_string()).into()),
                 };
 
                 match &args[1].inner {
@@ -1363,7 +1363,7 @@ pub(super) fn compile_varbuilder_get<'ctx>(
                             })
                             .collect::<Result<Vec<_>, TlError>>()?,
                     ),
-                    _ => return Err("varbuilder_get shape must be a literal array".into()),
+                    _ => return Err(TlError::from(CodegenErrorKind::TypeError("varbuilder_get shape must be a literal array".to_string()))),
                 }
             }
             _ => unreachable!(),
@@ -1373,7 +1373,7 @@ pub(super) fn compile_varbuilder_get<'ctx>(
         let shape_alloca = codegen
             .builder
             .build_alloca(i64_type.array_type(num_elements as u32), "shape_arr")
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
         for (i, val) in shape_vals.iter().enumerate() {
             let idx = codegen.context.i64_type().const_int(i as u64, false);
             let ptr = unsafe {
@@ -1385,12 +1385,12 @@ pub(super) fn compile_varbuilder_get<'ctx>(
                         &[codegen.context.i64_type().const_zero(), idx],
                         "shptr",
                     )
-                    .map_err(|e| e.to_string())?
+                    .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?
             };
             codegen
                 .builder
                 .build_store(ptr, val.into_int_value())
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
         }
         (num_elements, shape_alloca)
     } else {
@@ -1399,7 +1399,7 @@ pub(super) fn compile_varbuilder_get<'ctx>(
         let shape_alloca = codegen
             .builder
             .build_alloca(i64_type.array_type(num_dims as u32), "shape_arr")
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
         for (i, arg) in args[1..].iter().enumerate() {
             let (val, _) = codegen.compile_expr(arg)?;
             let idx = i64_type.const_int(i as u64, false);
@@ -1412,18 +1412,18 @@ pub(super) fn compile_varbuilder_get<'ctx>(
                         &[i64_type.const_zero(), idx],
                         "shptr",
                     )
-                    .map_err(|e| e.to_string())?
+                    .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?
             };
             codegen
                 .builder
                 .build_store(ptr, val.into_int_value())
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
         }
         (num_dims, shape_alloca)
     };
 
     let fn_val = codegen.module.get_function("tl_varbuilder_get")
-        .ok_or_else(|| "tl_varbuilder_get not found".to_string())?;
+        .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_varbuilder_get not found".to_string())))?;
     let call = codegen
         .builder
         .build_call(
@@ -1439,7 +1439,7 @@ pub(super) fn compile_varbuilder_get<'ctx>(
             ],
             "varbuilder_get_result",
         )
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     let res = codegen.check_tensor_result(call, "varbuilder_get_error")?;
     let res_ty = Type::Tensor(Box::new(Type::F32), 0);
     codegen.emit_register_tensor(res, &res_ty)?;
@@ -1457,27 +1457,27 @@ pub(super) fn cast_value_to_f32<'ctx>(
         Type::F64 => Ok(codegen
             .builder
             .build_float_cast(val.into_float_value(), f32_type, "f64_to_f32")
-            .map_err(|e| e.to_string())?),
+            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?),
         Type::I64 => Ok(codegen
             .builder
             .build_signed_int_to_float(val.into_int_value(), f32_type, "i64_to_f32")
-            .map_err(|e| e.to_string())?),
+            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?),
         Type::I32 => Ok(codegen
             .builder
             .build_signed_int_to_float(val.into_int_value(), f32_type, "i32_to_f32")
-            .map_err(|e| e.to_string())?),
+            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?),
         Type::Bool => {
             let i64_type = codegen.context.i64_type();
             let i64_val = codegen
                 .builder
                 .build_int_z_extend(val.into_int_value(), i64_type, "bool_to_i64")
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
             Ok(codegen
                 .builder
                 .build_signed_int_to_float(i64_val, f32_type, "bool_to_f32")
-                .map_err(|e| e.to_string())?)
+                .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?)
         }
-        _ => Err(format!("Cannot cast {:?} to F32", ty).into()),
+        _ => Err(TlError::from(CodegenErrorKind::TypeError(format!("Cannot cast {:?} to F32", ty)))),
     }
 }
 
@@ -1492,27 +1492,27 @@ pub(super) fn cast_value_to_f64<'ctx>(
         Type::F32 => Ok(codegen
             .builder
             .build_float_ext(val.into_float_value(), f64_type, "f32_to_f64")
-            .map_err(|e| e.to_string())?),
+            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?),
         Type::I64 => Ok(codegen
             .builder
             .build_signed_int_to_float(val.into_int_value(), f64_type, "i64_to_f64")
-            .map_err(|e| e.to_string())?),
+            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?),
         Type::I32 => Ok(codegen
             .builder
             .build_signed_int_to_float(val.into_int_value(), f64_type, "i32_to_f64")
-            .map_err(|e| e.to_string())?),
+            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?),
         Type::Bool => {
             let i64_type = codegen.context.i64_type();
             let i64_val = codegen
                 .builder
                 .build_int_z_extend(val.into_int_value(), i64_type, "bool_to_i64")
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
             Ok(codegen
                 .builder
                 .build_signed_int_to_float(i64_val, f64_type, "bool_to_f64")
-                .map_err(|e| e.to_string())?)
+                .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?)
         }
-        _ => Err(format!("Cannot cast {:?} to F64", ty).into()),
+        _ => Err(TlError::from(CodegenErrorKind::TypeError(format!("Cannot cast {:?} to F64", ty)))),
     }
 }
 
@@ -1527,8 +1527,8 @@ pub(crate) fn cast_value_to_i64<'ctx>(
         Type::I32 => Ok(codegen
             .builder
             .build_int_s_extend(val.into_int_value(), i64_type, "i32_to_i64")
-            .map_err(|e| e.to_string())?),
-        _ => Err(format!("Cannot cast {:?} to I64", ty).into()),
+            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?),
+        _ => Err(TlError::from(CodegenErrorKind::TypeError(format!("Cannot cast {:?} to I64", ty)))),
     }
 }
 
@@ -1543,8 +1543,8 @@ pub(super) fn cast_value_to_i32<'ctx>(
         Type::I64 => Ok(codegen
             .builder
             .build_int_cast(val.into_int_value(), i32_type, "i64_to_i32")
-            .map_err(|e| e.to_string())?),
-        _ => Err(format!("Cannot cast {:?} to I32", ty).into()),
+            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?),
+        _ => Err(TlError::from(CodegenErrorKind::TypeError(format!("Cannot cast {:?} to I32", ty)))),
     }
 }
 
@@ -1556,21 +1556,21 @@ pub(super) fn compile_f32_unary_math<'ctx>(
     op_name: &str,
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if !args.is_empty() {
-        return Err(format!("{} requires 0 arguments", op_name).into());
+        return Err(TlError::from(CodegenErrorKind::Internal(format!("{} requires 0 arguments", op_name))));
     }
     let obj_f32 = cast_value_to_f32(codegen, obj_val, &obj_ty)?;
     let fn_name = format!("tl_f32_{}", op_name);
     let fn_val = codegen
         .module
         .get_function(&fn_name)
-        .ok_or(format!("Function {} not found", fn_name))?;
+        .ok_or_else(|| TlError::from(CodegenErrorKind::Internal(format!("Function {} not found", fn_name))))?;
     let call = codegen
         .builder
         .build_call(fn_val, &[obj_f32.into()], "f32_unary")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     let res = match call.try_as_basic_value() {
         ValueKind::Basic(v) => v,
-        _ => return Err(format!("Invalid {} return", op_name).into()),
+        _ => return Err(TlError::from(CodegenErrorKind::Internal(format!("Invalid {} return", op_name)))),
     };
     Ok((res, Type::F32))
 }
@@ -1583,7 +1583,7 @@ pub(super) fn compile_f32_binary_math<'ctx>(
     op_name: &str,
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 {
-        return Err(format!("{} requires 1 argument", op_name).into());
+        return Err(TlError::from(CodegenErrorKind::Internal(format!("{} requires 1 argument", op_name))));
     }
     let obj_f32 = cast_value_to_f32(codegen, obj_val, &obj_ty)?;
     let (arg_val, arg_ty) = &args[0];
@@ -1592,14 +1592,14 @@ pub(super) fn compile_f32_binary_math<'ctx>(
     let fn_val = codegen
         .module
         .get_function(&fn_name)
-        .ok_or(format!("Function {} not found", fn_name))?;
+        .ok_or_else(|| TlError::from(CodegenErrorKind::Internal(format!("Function {} not found", fn_name))))?;
     let call = codegen
         .builder
         .build_call(fn_val, &[obj_f32.into(), arg_f32.into()], "f32_binary")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     let res = match call.try_as_basic_value() {
         ValueKind::Basic(v) => v,
-        _ => return Err(format!("Invalid {} return", op_name).into()),
+        _ => return Err(TlError::from(CodegenErrorKind::Internal(format!("Invalid {} return", op_name)))),
     };
     Ok((res, Type::F32))
 }
@@ -1611,7 +1611,7 @@ pub(super) fn compile_f32_powi<'ctx>(
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 {
-        return Err("powi requires 1 argument".into());
+        return Err(TlError::from(CodegenErrorKind::Internal("powi requires 1 argument".to_string())));
     }
     let obj_f32 = cast_value_to_f32(codegen, obj_val, &obj_ty)?;
     let (arg_val, arg_ty) = &args[0];
@@ -1621,20 +1621,20 @@ pub(super) fn compile_f32_powi<'ctx>(
         Type::I32 | Type::Bool => codegen
             .builder
             .build_int_z_extend(arg_val.into_int_value(), i64_type, "powi_i64")
-            .map_err(|e| e.to_string())?,
-        _ => return Err(format!("powi requires integer argument, got {:?}", arg_ty).into()),
+            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?,
+        _ => return Err(TlError::from(CodegenErrorKind::TypeError(format!("powi requires integer argument, got {:?}", arg_ty)))),
     };
     let fn_val = codegen
         .module
         .get_function("tl_f32_powi")
-        .ok_or("Function tl_f32_powi not found".to_string())?;
+        .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("Function tl_f32_powi not found".to_string())))?;
     let call = codegen
         .builder
         .build_call(fn_val, &[obj_f32.into(), arg_i64.into()], "f32_powi")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     let res = match call.try_as_basic_value() {
         ValueKind::Basic(v) => v,
-        _ => return Err("Invalid powi return".into()),
+        _ => return Err(CodegenErrorKind::Internal("Invalid powi return".to_string()).into()),
     };
     Ok((res, Type::F32))
 }
@@ -1647,21 +1647,21 @@ pub(super) fn compile_f64_unary_math<'ctx>(
     op_name: &str,
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if !args.is_empty() {
-        return Err(format!("{} requires 0 arguments", op_name).into());
+        return Err(TlError::from(CodegenErrorKind::Internal(format!("{} requires 0 arguments", op_name))));
     }
     let obj_f64 = cast_value_to_f64(codegen, obj_val, &obj_ty)?;
     let fn_name = format!("tl_f64_{}", op_name);
     let fn_val = codegen
         .module
         .get_function(&fn_name)
-        .ok_or(format!("Function {} not found", fn_name))?;
+        .ok_or_else(|| TlError::from(CodegenErrorKind::Internal(format!("Function {} not found", fn_name))))?;
     let call = codegen
         .builder
         .build_call(fn_val, &[obj_f64.into()], "f64_unary")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     let res = match call.try_as_basic_value() {
         ValueKind::Basic(v) => v,
-        _ => return Err(format!("Invalid {} return", op_name).into()),
+        _ => return Err(TlError::from(CodegenErrorKind::Internal(format!("Invalid {} return", op_name)))),
     };
     Ok((res, Type::F64))
 }
@@ -1674,7 +1674,7 @@ pub(super) fn compile_f64_binary_math<'ctx>(
     op_name: &str,
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 {
-        return Err(format!("{} requires 1 argument", op_name).into());
+        return Err(TlError::from(CodegenErrorKind::Internal(format!("{} requires 1 argument", op_name))));
     }
     let obj_f64 = cast_value_to_f64(codegen, obj_val, &obj_ty)?;
     let (arg_val, arg_ty) = &args[0];
@@ -1683,14 +1683,14 @@ pub(super) fn compile_f64_binary_math<'ctx>(
     let fn_val = codegen
         .module
         .get_function(&fn_name)
-        .ok_or(format!("Function {} not found", fn_name))?;
+        .ok_or_else(|| TlError::from(CodegenErrorKind::Internal(format!("Function {} not found", fn_name))))?;
     let call = codegen
         .builder
         .build_call(fn_val, &[obj_f64.into(), arg_f64.into()], "f64_binary")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     let res = match call.try_as_basic_value() {
         ValueKind::Basic(v) => v,
-        _ => return Err(format!("Invalid {} return", op_name).into()),
+        _ => return Err(TlError::from(CodegenErrorKind::Internal(format!("Invalid {} return", op_name)))),
     };
     Ok((res, Type::F64))
 }
@@ -1702,7 +1702,7 @@ pub(super) fn compile_f64_powi<'ctx>(
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 {
-        return Err("powi requires 1 argument".into());
+        return Err(TlError::from(CodegenErrorKind::Internal("powi requires 1 argument".to_string())));
     }
     let obj_f64 = cast_value_to_f64(codegen, obj_val, &obj_ty)?;
     let (arg_val, arg_ty) = &args[0];
@@ -1712,20 +1712,20 @@ pub(super) fn compile_f64_powi<'ctx>(
         Type::I32 | Type::Bool => codegen
             .builder
             .build_int_z_extend(arg_val.into_int_value(), i64_type, "powi_i64")
-            .map_err(|e| e.to_string())?,
-        _ => return Err(format!("powi requires integer argument, got {:?}", arg_ty).into()),
+            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?,
+        _ => return Err(TlError::from(CodegenErrorKind::TypeError(format!("powi requires integer argument, got {:?}", arg_ty)))),
     };
     let fn_val = codegen
         .module
         .get_function("tl_f64_powi")
-        .ok_or("Function tl_f64_powi not found".to_string())?;
+        .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("Function tl_f64_powi not found".to_string())))?;
     let call = codegen
         .builder
         .build_call(fn_val, &[obj_f64.into(), arg_i64.into()], "f64_powi")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     let res = match call.try_as_basic_value() {
         ValueKind::Basic(v) => v,
-        _ => return Err("Invalid powi return".into()),
+        _ => return Err(CodegenErrorKind::Internal("Invalid powi return".to_string()).into()),
     };
     Ok((res, Type::F64))
 }
@@ -1738,21 +1738,21 @@ pub(super) fn compile_i64_unary_math<'ctx>(
     op_name: &str,
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if !args.is_empty() {
-        return Err(format!("{} requires 0 arguments", op_name).into());
+        return Err(TlError::from(CodegenErrorKind::Internal(format!("{} requires 0 arguments", op_name))));
     }
     let obj_i64 = cast_value_to_i64(codegen, obj_val, &obj_ty)?;
     let fn_name = format!("tl_i64_{}", op_name);
     let fn_val = codegen
         .module
         .get_function(&fn_name)
-        .ok_or(format!("Function {} not found", fn_name))?;
+        .ok_or_else(|| TlError::from(CodegenErrorKind::Internal(format!("Function {} not found", fn_name))))?;
     let call = codegen
         .builder
         .build_call(fn_val, &[obj_i64.into()], "i64_unary")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     let res = match call.try_as_basic_value() {
         ValueKind::Basic(v) => v,
-        _ => return Err(format!("Invalid {} return", op_name).into()),
+        _ => return Err(TlError::from(CodegenErrorKind::Internal(format!("Invalid {} return", op_name)))),
     };
     Ok((res, Type::I64))
 }
@@ -1765,7 +1765,7 @@ pub(super) fn compile_i64_binary_math<'ctx>(
     op_name: &str,
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 {
-        return Err(format!("{} requires 1 argument", op_name).into());
+        return Err(TlError::from(CodegenErrorKind::Internal(format!("{} requires 1 argument", op_name))));
     }
     let obj_i64 = cast_value_to_i64(codegen, obj_val, &obj_ty)?;
     let (arg_val, arg_ty) = &args[0];
@@ -1774,14 +1774,14 @@ pub(super) fn compile_i64_binary_math<'ctx>(
     let fn_val = codegen
         .module
         .get_function(&fn_name)
-        .ok_or(format!("Function {} not found", fn_name))?;
+        .ok_or_else(|| TlError::from(CodegenErrorKind::Internal(format!("Function {} not found", fn_name))))?;
     let call = codegen
         .builder
         .build_call(fn_val, &[obj_i64.into(), arg_i64.into()], "i64_binary")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     let res = match call.try_as_basic_value() {
         ValueKind::Basic(v) => v,
-        _ => return Err(format!("Invalid {} return", op_name).into()),
+        _ => return Err(TlError::from(CodegenErrorKind::Internal(format!("Invalid {} return", op_name)))),
     };
     Ok((res, Type::I64))
 }
@@ -1793,7 +1793,7 @@ pub(super) fn compile_i64_pow<'ctx>(
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 {
-        return Err("pow requires 1 argument".into());
+        return Err(TlError::from(CodegenErrorKind::Internal("pow requires 1 argument".to_string())));
     }
     let obj_i64 = cast_value_to_i64(codegen, obj_val, &obj_ty)?;
     let (arg_val, arg_ty) = &args[0];
@@ -1801,14 +1801,14 @@ pub(super) fn compile_i64_pow<'ctx>(
     let fn_val = codegen
         .module
         .get_function("tl_i64_pow")
-        .ok_or("Function tl_i64_pow not found".to_string())?;
+        .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("Function tl_i64_pow not found".to_string())))?;
     let call = codegen
         .builder
         .build_call(fn_val, &[obj_i64.into(), exp_i64.into()], "i64_pow")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     let res = match call.try_as_basic_value() {
         ValueKind::Basic(v) => v,
-        _ => return Err("Invalid pow return".into()),
+        _ => return Err(CodegenErrorKind::Internal("Invalid pow return".to_string()).into()),
     };
     Ok((res, Type::I64))
 }
@@ -1820,20 +1820,20 @@ pub(super) fn compile_i64_is_positive<'ctx>(
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if !args.is_empty() {
-        return Err("is_positive requires 0 arguments".into());
+        return Err(TlError::from(CodegenErrorKind::Internal("is_positive requires 0 arguments".to_string())));
     }
     let obj_i64 = cast_value_to_i64(codegen, obj_val, &obj_ty)?;
     let fn_val = codegen
         .module
         .get_function("tl_i64_is_positive")
-        .ok_or("Function tl_i64_is_positive not found".to_string())?;
+        .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("Function tl_i64_is_positive not found".to_string())))?;
     let call = codegen
         .builder
         .build_call(fn_val, &[obj_i64.into()], "i64_is_positive")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     let res = match call.try_as_basic_value() {
         ValueKind::Basic(v) => v,
-        _ => return Err("Invalid is_positive return".into()),
+        _ => return Err(CodegenErrorKind::Internal("Invalid is_positive return".to_string()).into()),
     };
     Ok((res, Type::Bool))
 }
@@ -1845,20 +1845,20 @@ pub(super) fn compile_i64_is_negative<'ctx>(
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if !args.is_empty() {
-        return Err("is_negative requires 0 arguments".into());
+        return Err(TlError::from(CodegenErrorKind::Internal("is_negative requires 0 arguments".to_string())));
     }
     let obj_i64 = cast_value_to_i64(codegen, obj_val, &obj_ty)?;
     let fn_val = codegen
         .module
         .get_function("tl_i64_is_negative")
-        .ok_or("Function tl_i64_is_negative not found".to_string())?;
+        .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("Function tl_i64_is_negative not found".to_string())))?;
     let call = codegen
         .builder
         .build_call(fn_val, &[obj_i64.into()], "i64_is_negative")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     let res = match call.try_as_basic_value() {
         ValueKind::Basic(v) => v,
-        _ => return Err("Invalid is_negative return".into()),
+        _ => return Err(CodegenErrorKind::Internal("Invalid is_negative return".to_string()).into()),
     };
     Ok((res, Type::Bool))
 }
@@ -1871,21 +1871,21 @@ pub(super) fn compile_i32_unary_math<'ctx>(
     op_name: &str,
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if !args.is_empty() {
-        return Err(format!("{} requires 0 arguments", op_name).into());
+        return Err(TlError::from(CodegenErrorKind::Internal(format!("{} requires 0 arguments", op_name))));
     }
     let obj_i32 = cast_value_to_i32(codegen, obj_val, &obj_ty)?;
     let fn_name = format!("tl_i32_{}", op_name);
     let fn_val = codegen
         .module
         .get_function(&fn_name)
-        .ok_or(format!("Function {} not found", fn_name))?;
+        .ok_or_else(|| TlError::from(CodegenErrorKind::Internal(format!("Function {} not found", fn_name))))?;
     let call = codegen
         .builder
         .build_call(fn_val, &[obj_i32.into()], "i32_unary")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     let res = match call.try_as_basic_value() {
         ValueKind::Basic(v) => v,
-        _ => return Err(format!("Invalid {} return", op_name).into()),
+        _ => return Err(TlError::from(CodegenErrorKind::Internal(format!("Invalid {} return", op_name)))),
     };
     Ok((res, Type::I32))
 }
@@ -1898,7 +1898,7 @@ pub(super) fn compile_i32_binary_math<'ctx>(
     op_name: &str,
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 {
-        return Err(format!("{} requires 1 argument", op_name).into());
+        return Err(TlError::from(CodegenErrorKind::Internal(format!("{} requires 1 argument", op_name))));
     }
     let obj_i32 = cast_value_to_i32(codegen, obj_val, &obj_ty)?;
     let (arg_val, arg_ty) = &args[0];
@@ -1907,14 +1907,14 @@ pub(super) fn compile_i32_binary_math<'ctx>(
     let fn_val = codegen
         .module
         .get_function(&fn_name)
-        .ok_or(format!("Function {} not found", fn_name))?;
+        .ok_or_else(|| TlError::from(CodegenErrorKind::Internal(format!("Function {} not found", fn_name))))?;
     let call = codegen
         .builder
         .build_call(fn_val, &[obj_i32.into(), arg_i32.into()], "i32_binary")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     let res = match call.try_as_basic_value() {
         ValueKind::Basic(v) => v,
-        _ => return Err(format!("Invalid {} return", op_name).into()),
+        _ => return Err(TlError::from(CodegenErrorKind::Internal(format!("Invalid {} return", op_name)))),
     };
     Ok((res, Type::I32))
 }
@@ -1926,7 +1926,7 @@ pub(super) fn compile_i32_pow<'ctx>(
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 {
-        return Err("pow requires 1 argument".into());
+        return Err(TlError::from(CodegenErrorKind::Internal("pow requires 1 argument".to_string())));
     }
     let obj_i32 = cast_value_to_i32(codegen, obj_val, &obj_ty)?;
     let (arg_val, arg_ty) = &args[0];
@@ -1934,14 +1934,14 @@ pub(super) fn compile_i32_pow<'ctx>(
     let fn_val = codegen
         .module
         .get_function("tl_i32_pow")
-        .ok_or("Function tl_i32_pow not found".to_string())?;
+        .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("Function tl_i32_pow not found".to_string())))?;
     let call = codegen
         .builder
         .build_call(fn_val, &[obj_i32.into(), exp_i32.into()], "i32_pow")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     let res = match call.try_as_basic_value() {
         ValueKind::Basic(v) => v,
-        _ => return Err("Invalid pow return".into()),
+        _ => return Err(CodegenErrorKind::Internal("Invalid pow return".to_string()).into()),
     };
     Ok((res, Type::I32))
 }
@@ -1953,20 +1953,20 @@ pub(super) fn compile_i32_is_positive<'ctx>(
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if !args.is_empty() {
-        return Err("is_positive requires 0 arguments".into());
+        return Err(TlError::from(CodegenErrorKind::Internal("is_positive requires 0 arguments".to_string())));
     }
     let obj_i32 = cast_value_to_i32(codegen, obj_val, &obj_ty)?;
     let fn_val = codegen
         .module
         .get_function("tl_i32_is_positive")
-        .ok_or("Function tl_i32_is_positive not found".to_string())?;
+        .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("Function tl_i32_is_positive not found".to_string())))?;
     let call = codegen
         .builder
         .build_call(fn_val, &[obj_i32.into()], "i32_is_positive")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     let res = match call.try_as_basic_value() {
         ValueKind::Basic(v) => v,
-        _ => return Err("Invalid is_positive return".into()),
+        _ => return Err(CodegenErrorKind::Internal("Invalid is_positive return".to_string()).into()),
     };
     Ok((res, Type::Bool))
 }
@@ -1978,20 +1978,20 @@ pub(super) fn compile_i32_is_negative<'ctx>(
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if !args.is_empty() {
-        return Err("is_negative requires 0 arguments".into());
+        return Err(TlError::from(CodegenErrorKind::Internal("is_negative requires 0 arguments".to_string())));
     }
     let obj_i32 = cast_value_to_i32(codegen, obj_val, &obj_ty)?;
     let fn_val = codegen
         .module
         .get_function("tl_i32_is_negative")
-        .ok_or("Function tl_i32_is_negative not found".to_string())?;
+        .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("Function tl_i32_is_negative not found".to_string())))?;
     let call = codegen
         .builder
         .build_call(fn_val, &[obj_i32.into()], "i32_is_negative")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     let res = match call.try_as_basic_value() {
         ValueKind::Basic(v) => v,
-        _ => return Err("Invalid is_negative return".into()),
+        _ => return Err(CodegenErrorKind::Internal("Invalid is_negative return".to_string()).into()),
     };
     Ok((res, Type::Bool))
 }

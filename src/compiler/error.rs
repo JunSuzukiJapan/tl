@@ -327,24 +327,6 @@ pub enum CodegenErrorKind {
     Generic(String),
 }
 
-impl From<String> for TlError {
-    fn from(s: String) -> Self {
-        TlError::Codegen {
-            kind: CodegenErrorKind::Generic(s),
-            span: None,
-        }
-    }
-}
-
-impl From<&str> for TlError {
-    fn from(s: &str) -> Self {
-        TlError::Codegen {
-            kind: CodegenErrorKind::Generic(s.to_string()),
-            span: None,
-        }
-    }
-}
-
 impl From<CodegenErrorKind> for TlError {
     fn from(kind: CodegenErrorKind) -> Self {
         TlError::Codegen { kind, span: None }

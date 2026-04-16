@@ -1,4 +1,4 @@
-use crate::compiler::error::TlError;
+use crate::compiler::error::{TlError, CodegenErrorKind};
 use crate::compiler::codegen::type_manager::{CodeGenType, TypeManager};
 use crate::compiler::codegen::CodeGenerator;
 use crate::compiler::ast::{Type};
@@ -13,11 +13,11 @@ pub fn register_param_types(manager: &mut TypeManager) {
     
     // save(tensor: Tensor, path: String) -> Void
     // save(struct: Struct, path: String) -> Void
-    param.register_evaluated_static_method("save", compile_param_save, vec![any_tensor.clone(), Type::String("String".into())], Type::Void);
+    param.register_evaluated_static_method("save", compile_param_save, vec![any_tensor.clone(), Type::String("String".to_string())], Type::Void);
     
     // load(path) -> Tensor 
     // load(struct, path) -> Void
-    param.register_evaluated_static_method("load", compile_param_load, vec![Type::String("String".into())], any_tensor.clone());
+    param.register_evaluated_static_method("load", compile_param_load, vec![Type::String("String".to_string())], any_tensor.clone());
 
     manager.register_type(param);
 }
@@ -28,31 +28,31 @@ fn compile_param_save<'ctx>(
     _target: Option<&Type>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 2 {
-        return Err("Param::save requires 2 arguments".into());
+        return Err(TlError::from(CodegenErrorKind::Internal("Param::save requires 2 arguments".to_string())));
     }
     
     let (arg0_val, arg0_ty) = &args[0];
     let (path_val, _) = &args[1]; 
     
     // 1. Create Map
-    let map_new_fn = codegen.module.get_function("tl_tensor_map_new").ok_or("tl_tensor_map_new not found")?;
-    let map_call = codegen.builder.build_call(map_new_fn, &[], "map").map_err(|e| e.to_string())?;
+    let map_new_fn = codegen.module.get_function("tl_tensor_map_new").ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_tensor_map_new not found".to_string())))?;
+    let map_call = codegen.builder.build_call(map_new_fn, &[], "map").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     
     let map_ptr = match map_call.try_as_basic_value() {
         ValueKind::Basic(v) => v,
-        _ => return Err("tl_tensor_map_new returned void".into()),
+        _ => return Err(CodegenErrorKind::Internal("tl_tensor_map_new returned void".to_string()).into()),
     };
 
     // 2. Traverse and Insert
     traverse_and_save(codegen, *arg0_val, arg0_ty.clone(), "".to_string(), map_ptr)?;
 
     // 3. Save Map
-    let save_fn = codegen.module.get_function("tl_tensor_map_save").ok_or("tl_tensor_map_save not found")?;
-    codegen.builder.build_call(save_fn, &[map_ptr.into(), (*path_val).into()], "").map_err(|e| e.to_string())?;
+    let save_fn = codegen.module.get_function("tl_tensor_map_save").ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_tensor_map_save not found".to_string())))?;
+    codegen.builder.build_call(save_fn, &[map_ptr.into(), (*path_val).into()], "").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
     // 4. Free Map
-    let free_fn = codegen.module.get_function("tl_tensor_map_free").ok_or("tl_tensor_map_free not found")?;
-    codegen.builder.build_call(free_fn, &[map_ptr.into()], "").map_err(|e| e.to_string())?;
+    let free_fn = codegen.module.get_function("tl_tensor_map_free").ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_tensor_map_free not found".to_string())))?;
+    codegen.builder.build_call(free_fn, &[map_ptr.into()], "").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
     Ok((codegen.context.i64_type().const_int(0, false).into(), Type::Void))
 }
@@ -69,20 +69,20 @@ fn traverse_and_save<'ctx>(
             // Insert into map
             // key = prefix
             let key_str = if prefix.is_empty() { "tensor".to_string() } else { prefix };
-            let key_global_ptr = codegen.builder.build_global_string_ptr(&key_str, "key_str").map_err(|e| e.to_string())?; // i8*
+            let key_global_ptr = codegen.builder.build_global_string_ptr(&key_str, "key_str").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?; // i8*
             
             // tl_string_new(i8*) -> StringStruct*
-            let str_new_fn = codegen.module.get_function("tl_string_new").ok_or("tl_string_new not found")?;
-            let key_struct_call = codegen.builder.build_call(str_new_fn, &[key_global_ptr.as_pointer_value().into()], "key_struct").map_err(|e| e.to_string())?;
+            let str_new_fn = codegen.module.get_function("tl_string_new").ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_string_new not found".to_string())))?;
+            let key_struct_call = codegen.builder.build_call(str_new_fn, &[key_global_ptr.as_pointer_value().into()], "key_struct").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
             
             let key_struct_ptr = match key_struct_call.try_as_basic_value() {
                 ValueKind::Basic(v) => v,
-                _ => return Err("tl_string_new returned void".into()),
+                _ => return Err(CodegenErrorKind::Internal("tl_string_new returned void".to_string()).into()),
             };
 
             // tl_tensor_map_insert(map, key, val)
-            let insert_fn = codegen.module.get_function("tl_tensor_map_insert").ok_or("tl_tensor_map_insert not found")?;
-            codegen.builder.build_call(insert_fn, &[map_ptr.into(), key_struct_ptr.into(), val.into()], "").map_err(|e| e.to_string())?;
+            let insert_fn = codegen.module.get_function("tl_tensor_map_insert").ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_tensor_map_insert not found".to_string())))?;
+            codegen.builder.build_call(insert_fn, &[map_ptr.into(), key_struct_ptr.into(), val.into()], "").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
         }
         Type::Struct(name, generics) => {
             // Note: We need a copy of struct_def. Cloning from codegen.struct_defs requires borrowing codegen.
@@ -103,7 +103,7 @@ fn traverse_and_save<'ctx>(
                     // But usually passed by pointer.
                     // Or if Type::Struct is treated as value by inkwell?
                     // In TL, structs are passed by pointer in LLVM IR mostly.
-                    return Err(format!("Expected pointer for struct {}, got {:?}", name, val).into());
+                    return Err(TlError::from(CodegenErrorKind::Internal(format!("Expected pointer for struct {}, got {:?}", name, val))));
                 }
                 let ptr = val.into_pointer_value();
 
@@ -115,20 +115,20 @@ fn traverse_and_save<'ctx>(
                          format!("{}.{}", prefix, field_name)
                      };
                      
-                     let struct_llvm_type = *codegen.struct_types.get(&name).ok_or(format!("LLVM type for {} not found", name))?;
+                     let struct_llvm_type = *codegen.struct_types.get(&name).ok_or_else(|| TlError::from(CodegenErrorKind::Internal(format!("LLVM type for {} not found", name))))?;
                      
-                     let field_ptr = codegen.builder.build_struct_gep(struct_llvm_type, ptr, idx as u32, "field_ptr").map_err(|e| e.to_string())?;
+                     let field_ptr = codegen.builder.build_struct_gep(struct_llvm_type, ptr, idx as u32, "field_ptr").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                      
                      match concrete_type {
                          Type::Tensor(_,_) => {
                              // Load the OpaqueTensor*
-                             let loaded_val = codegen.builder.build_load(codegen.context.ptr_type(inkwell::AddressSpace::default()), field_ptr, "tensor_val").map_err(|e| e.to_string())?;
+                             let loaded_val = codegen.builder.build_load(codegen.context.ptr_type(inkwell::AddressSpace::default()), field_ptr, "tensor_val").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                              traverse_and_save(codegen, loaded_val, concrete_type, new_prefix, map_ptr)?;
                          },
                          Type::Struct(_,_) => {
                              // Recurse with pointer to the sub-struct
                              // Structs are reference types/pointers in this backend, so we must load the pointer from the field.
-                             let loaded_val = codegen.builder.build_load(codegen.context.ptr_type(inkwell::AddressSpace::default()), field_ptr, "struct_ptr").map_err(|e| e.to_string())?;
+                             let loaded_val = codegen.builder.build_load(codegen.context.ptr_type(inkwell::AddressSpace::default()), field_ptr, "struct_ptr").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                              traverse_and_save(codegen, loaded_val, concrete_type, new_prefix, map_ptr)?;
                          },
                          _ => {
@@ -137,7 +137,7 @@ fn traverse_and_save<'ctx>(
                      }
                 }
             } else {
-                return Err(format!("Struct definition for {} not found", name).into());
+                return Err(TlError::from(CodegenErrorKind::Internal(format!("Struct definition for {} not found", name))));
             }
         }
         _ => {
@@ -171,12 +171,12 @@ fn compile_param_load<'ctx>(
     if args.len() == 1 {
         // load(path) -> Tensor
         let (path_val, _) = &args[0];
-        let fn_val = codegen.module.get_function("tl_tensor_load").ok_or("tl_tensor_load not found")?;
-        let call = codegen.builder.build_call(fn_val, &[(*path_val).into()], "load_res").map_err(|e| e.to_string())?;
+        let fn_val = codegen.module.get_function("tl_tensor_load").ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_tensor_load not found".to_string())))?;
+        let call = codegen.builder.build_call(fn_val, &[(*path_val).into()], "load_res").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
         
         let res = match call.try_as_basic_value() {
              ValueKind::Basic(v) => v,
-             _ => return Err("Invalid return from load".into()),
+             _ => return Err(CodegenErrorKind::Internal("Invalid return from load".to_string()).into()),
         };
         return Ok((res, Type::Tensor(Box::new(Type::F32), 1))); 
     } else if args.len() == 2 {
@@ -184,22 +184,22 @@ fn compile_param_load<'ctx>(
         let (arg0_val, arg0_ty) = &args[0];
         let (path_val, _) = &args[1]; 
         
-        let load_fn = codegen.module.get_function("tl_tensor_map_load").ok_or("tl_tensor_map_load not found")?;
-        let map_call = codegen.builder.build_call(load_fn, &[(*path_val).into()], "map_loaded").map_err(|e| e.to_string())?;
+        let load_fn = codegen.module.get_function("tl_tensor_map_load").ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_tensor_map_load not found".to_string())))?;
+        let map_call = codegen.builder.build_call(load_fn, &[(*path_val).into()], "map_loaded").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
         
         let map_ptr = match map_call.try_as_basic_value() {
              ValueKind::Basic(v) => v,
-             _ => return Err("tl_tensor_map_load returned void".into()),
+             _ => return Err(CodegenErrorKind::Internal("tl_tensor_map_load returned void".to_string()).into()),
         };
 
         traverse_and_load(codegen, *arg0_val, arg0_ty.clone(), "".to_string(), map_ptr)?;
 
-        let free_fn = codegen.module.get_function("tl_tensor_map_free").ok_or("tl_tensor_map_free not found")?;
-        codegen.builder.build_call(free_fn, &[map_ptr.into()], "").map_err(|e| e.to_string())?;
+        let free_fn = codegen.module.get_function("tl_tensor_map_free").ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_tensor_map_free not found".to_string())))?;
+        codegen.builder.build_call(free_fn, &[map_ptr.into()], "").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
         
         return Ok((arg0_val.clone(), arg0_ty.clone()));
     } else {
-         return Err("Param::load requires 1 or 2 args".into());
+         return Err(TlError::from(CodegenErrorKind::Internal("Param::load requires 1 or 2 args".to_string())));
     }
 }
 
@@ -214,27 +214,27 @@ fn traverse_and_load<'ctx>(
         Type::Tensor(_, _) => {
             // key = prefix
             let key_str = if prefix.is_empty() { "tensor".to_string() } else { prefix };
-            let key_global_ptr = codegen.builder.build_global_string_ptr(&key_str, "key_str").map_err(|e| e.to_string())?; 
+            let key_global_ptr = codegen.builder.build_global_string_ptr(&key_str, "key_str").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?; 
             
-            let str_new_fn = codegen.module.get_function("tl_string_new").ok_or("tl_string_new not found")?;
-            let key_struct_call = codegen.builder.build_call(str_new_fn, &[key_global_ptr.as_pointer_value().into()], "key_struct").map_err(|e| e.to_string())?;
+            let str_new_fn = codegen.module.get_function("tl_string_new").ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_string_new not found".to_string())))?;
+            let key_struct_call = codegen.builder.build_call(str_new_fn, &[key_global_ptr.as_pointer_value().into()], "key_struct").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
             
             let key_struct_ptr = match key_struct_call.try_as_basic_value() {
                 ValueKind::Basic(v) => v,
-                _ => return Err("tl_string_new returned void".into()),
+                _ => return Err(CodegenErrorKind::Internal("tl_string_new returned void".to_string()).into()),
             };
 
             // get(map, key) -> *mut Tensor
-            let get_fn = codegen.module.get_function("tl_tensor_map_get").ok_or("tl_tensor_map_get not found")?;
-            let get_call = codegen.builder.build_call(get_fn, &[map_ptr.into(), key_struct_ptr.into()], "loaded_tensor").map_err(|e| e.to_string())?;
+            let get_fn = codegen.module.get_function("tl_tensor_map_get").ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_tensor_map_get not found".to_string())))?;
+            let get_call = codegen.builder.build_call(get_fn, &[map_ptr.into(), key_struct_ptr.into()], "loaded_tensor").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
             
             let loaded_tensor_ptr = match get_call.try_as_basic_value() {
                  ValueKind::Basic(v) => v,
-                 _ => return Err("tl_tensor_map_get returned void".into()),
+                 _ => return Err(CodegenErrorKind::Internal("tl_tensor_map_get returned void".to_string()).into()),
             };
             
-            let replace_fn = codegen.module.get_function("tl_tensor_replace_data").ok_or("tl_tensor_replace_data not found")?;
-            codegen.builder.build_call(replace_fn, &[val.into(), loaded_tensor_ptr.into()], "").map_err(|e| e.to_string())?;
+            let replace_fn = codegen.module.get_function("tl_tensor_replace_data").ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_tensor_replace_data not found".to_string())))?;
+            codegen.builder.build_call(replace_fn, &[val.into(), loaded_tensor_ptr.into()], "").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
         }
         Type::Struct(name, generics) => {
             let struct_def = codegen.struct_defs.get(&name).cloned();
@@ -248,10 +248,10 @@ fn traverse_and_load<'ctx>(
                 }
 
                 if !val.is_pointer_value() {
-                    return Err(format!("Expected pointer for struct {}, got {:?}", name, val).into());
+                    return Err(TlError::from(CodegenErrorKind::Internal(format!("Expected pointer for struct {}, got {:?}", name, val))));
                 }
                 let ptr = val.into_pointer_value();
-                let struct_llvm_type = *codegen.struct_types.get(&name).ok_or(format!("LLVM type for {} not found", name))?;
+                let struct_llvm_type = *codegen.struct_types.get(&name).ok_or_else(|| TlError::from(CodegenErrorKind::Internal(format!("LLVM type for {} not found", name))))?;
 
                 for (idx, (field_name, field_type)) in def.fields.iter().enumerate() {
                      let concrete_type = substitute(&field_type, &subst);
@@ -261,15 +261,15 @@ fn traverse_and_load<'ctx>(
                          format!("{}.{}", prefix, field_name)
                      };
                      
-                     let field_ptr = codegen.builder.build_struct_gep(struct_llvm_type, ptr, idx as u32, "field_ptr").map_err(|e| e.to_string())?;
+                     let field_ptr = codegen.builder.build_struct_gep(struct_llvm_type, ptr, idx as u32, "field_ptr").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                      
                      match concrete_type {
                          Type::Tensor(_,_) => {
-                             let loaded_val = codegen.builder.build_load(codegen.context.ptr_type(inkwell::AddressSpace::default()), field_ptr, "tensor_val").map_err(|e| e.to_string())?;
+                             let loaded_val = codegen.builder.build_load(codegen.context.ptr_type(inkwell::AddressSpace::default()), field_ptr, "tensor_val").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                              traverse_and_load(codegen, loaded_val, concrete_type, new_prefix, map_ptr)?;
                          },
                          Type::Struct(_,_) => {
-                             let loaded_val = codegen.builder.build_load(codegen.context.ptr_type(inkwell::AddressSpace::default()), field_ptr, "struct_ptr").map_err(|e| e.to_string())?;
+                             let loaded_val = codegen.builder.build_load(codegen.context.ptr_type(inkwell::AddressSpace::default()), field_ptr, "struct_ptr").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                              traverse_and_load(codegen, loaded_val, concrete_type, new_prefix, map_ptr)?;
                          },
                          _ => {}

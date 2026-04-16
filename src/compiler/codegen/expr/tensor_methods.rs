@@ -2,7 +2,7 @@
 //!
 //! Tensor 操作のコンパイル関数群。
 //! compile_tensor_get, compile_tensor_backward, compile_tensor_sum 等。
-use crate::compiler::error::TlError;
+use crate::compiler::error::{TlError, CodegenErrorKind};
 
 use inkwell::values::*;
 
@@ -18,7 +18,7 @@ pub(super) fn compile_tensor_get<'ctx>(
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     // args: index1, index2, ...
     if args.is_empty() {
-        return Err("get requires at least 1 argument (index...)".into());
+        return Err(TlError::from(CodegenErrorKind::Internal("get requires at least 1 argument (index...)".to_string())));
     }
     let rank = args.len();
 
@@ -29,8 +29,8 @@ pub(super) fn compile_tensor_get<'ctx>(
 
     // Move to entry block for alloca to avoid stack overflow in loops
     let current_block = codegen.current_block()?;
-    let func = current_block.get_parent().ok_or_else(|| "block has no parent function".to_string())?;
-    let entry_block = func.get_first_basic_block().ok_or_else(|| "function has no entry block".to_string())?;
+    let func = current_block.get_parent().ok_or_else(|| TlError::from(CodegenErrorKind::Internal("block has no parent function".to_string())))?;
+    let entry_block = func.get_first_basic_block().ok_or_else(|| TlError::from(CodegenErrorKind::Internal("function has no entry block".to_string())))?;
 
     if let Some(first_inst) = entry_block.get_first_instruction() {
         codegen.builder.position_before(&first_inst);
@@ -41,7 +41,7 @@ pub(super) fn compile_tensor_get<'ctx>(
     let index_array_ptr = codegen
         .builder
         .build_alloca(index_array_type, "index_array")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
     // Move back to current block
     codegen.builder.position_at_end(current_block);
@@ -53,8 +53,8 @@ pub(super) fn compile_tensor_get<'ctx>(
             crate::compiler::ast::Type::I32 => codegen
                 .builder
                 .build_int_z_extend(idx_val.into_int_value(), i64_type, "idx_ext")
-                .map_err(|e| e.to_string())?,
-            _ => return Err(format!("Index {} must be integer", i).into()),
+                .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?,
+            _ => return Err(TlError::from(CodegenErrorKind::TypeError(format!("Index {} must be integer", i)))),
         };
 
         let ptr = unsafe {
@@ -69,12 +69,12 @@ pub(super) fn compile_tensor_get<'ctx>(
                     ],
                     "idx_ptr",
                 )
-                .map_err(|e| e.to_string())?
+                .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?
         };
         codegen
             .builder
             .build_store(ptr, idx_i64)
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     }
 
     // Cast array ptr to i64 ptr (use i8 ptr generic)
@@ -85,12 +85,12 @@ pub(super) fn compile_tensor_get<'ctx>(
             codegen.context.ptr_type(inkwell::AddressSpace::default()),
             "indices_ptr_cast",
         )
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
     let fn_val = codegen
         .module
         .get_function("tl_tensor_get_f32_md")
-        .ok_or("tl_tensor_get_f32_md not found")?;
+        .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_tensor_get_f32_md not found".to_string())))?;
 
     let rank_val = codegen.context.i64_type().const_int(rank as u64, false);
 
@@ -101,11 +101,11 @@ pub(super) fn compile_tensor_get<'ctx>(
             &[obj_val.into(), indices_ptr.into(), rank_val.into()],
             "get_res",
         )
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
     let res = match call.try_as_basic_value() {
         inkwell::values::ValueKind::Basic(v) => v,
-        _ => return Err("Invalid get return".into()),
+        _ => return Err(CodegenErrorKind::Internal("Invalid get return".to_string()).into()),
     };
 
     Ok((res, crate::compiler::ast::Type::F32))
@@ -121,7 +121,7 @@ pub(super) fn compile_tensor_backward<'ctx>(
     codegen
         .builder
         .build_call(fn_val, &[obj_val.into()], "backward_call")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
     Ok((
         codegen.context.i64_type().const_int(0, false).into(),
@@ -139,7 +139,7 @@ pub(super) fn compile_tensor_clone<'ctx>(
     let call = codegen
         .builder
         .build_call(fn_val, &[obj_val.into()], "clone_res")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
     let res = codegen.check_tensor_result(call, "clone_error")?;
 
@@ -165,7 +165,7 @@ pub(super) fn compile_tensor_detach<'ctx>(
     let call = codegen
         .builder
         .build_call(fn_val, &[obj_val.into(), req_grad.into()], "detach_res")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
     let res = codegen.check_tensor_result(call, "detach_error")?;
 
@@ -183,7 +183,7 @@ pub(super) fn compile_tensor_grad<'ctx>(
     let call = codegen
         .builder
         .build_call(fn_val, &[obj_val.into()], "grad_res")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
     let res = codegen.check_tensor_result(call, "grad_error")?;
 
@@ -201,11 +201,11 @@ pub(super) fn compile_tensor_contiguous<'ctx>(
     let call = codegen
         .builder
         .build_call(fn_val, &[obj_val.into()], "contiguous_res")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
     let res = match call.try_as_basic_value() {
         inkwell::values::ValueKind::Basic(v) => v,
-        _ => return Err("Invalid contiguous return".into()),
+        _ => return Err(CodegenErrorKind::Internal("Invalid contiguous return".to_string()).into()),
     };
 
     // codegen.emit_register_tensor(res, &obj_ty)?;
@@ -219,7 +219,7 @@ pub(super) fn compile_tensor_save<'ctx>(
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 {
-        return Err("save requires 1 argument (path)".into());
+        return Err(TlError::from(CodegenErrorKind::Internal("save requires 1 argument (path)".to_string())));
     }
     let fn_val = codegen.get_fn("tl_tensor_save")?;
     let (path_val, _) = args[0].clone();
@@ -227,7 +227,7 @@ pub(super) fn compile_tensor_save<'ctx>(
     codegen
         .builder
         .build_call(fn_val, &[path_val.into(), obj_val.into()], "save_call")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
     Ok((
         codegen.context.i64_type().const_int(0, false).into(),
@@ -246,12 +246,12 @@ pub(super) fn compile_tensor_sum<'ctx>(
         let fn_val = codegen
             .module
             .get_function("tl_tensor_sum")
-            .ok_or("tl_tensor_sum not found")?;
+            .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_tensor_sum not found".to_string())))?;
         let call = codegen
             .builder
             .build_call(fn_val, &[obj_val.into()], "sum_res");
 
-        let res = codegen.check_tensor_result(call.map_err(|e| e.to_string())?, "sum_error")?;
+        let res = codegen.check_tensor_result(call.map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?, "sum_error")?;
         Ok((
             res,
             crate::compiler::ast::Type::Tensor(Box::new(crate::compiler::ast::Type::F32), 0),
@@ -259,7 +259,7 @@ pub(super) fn compile_tensor_sum<'ctx>(
     } else {
         // Sum with dim
         if args.len() != 1 {
-            return Err("sum takes at most 1 argument".into());
+            return Err(TlError::from(CodegenErrorKind::Internal("sum takes at most 1 argument".to_string())));
         }
         let (dim_val, dim_ty) = args[0].clone();
         let dim_i64 = match dim_ty {
@@ -271,14 +271,14 @@ pub(super) fn compile_tensor_sum<'ctx>(
                     codegen.context.i64_type(),
                     "dim_ext",
                 )
-                .map_err(|e| e.to_string())?,
-            _ => return Err("Dimension must be integer".into()),
+                .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?,
+            _ => return Err(TlError::from(CodegenErrorKind::TypeError("Dimension must be integer".to_string()))),
         };
 
         let fn_val = codegen
             .module
             .get_function("tl_tensor_sum_dim")
-            .ok_or("tl_tensor_sum_dim not found")?;
+            .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_tensor_sum_dim not found".to_string())))?;
 
         let call = codegen.builder.build_call(
             fn_val,
@@ -290,7 +290,7 @@ pub(super) fn compile_tensor_sum<'ctx>(
             "sum_dim_res",
         );
 
-        let res = codegen.check_tensor_result(call.map_err(|e| e.to_string())?, "sum_dim_error")?;
+        let res = codegen.check_tensor_result(call.map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?, "sum_dim_error")?;
         // Ideally we subtract 1 from rank, but 0 is safe generic guess for now if we don't track rank strictly
         Ok((
             res,
@@ -312,16 +312,16 @@ pub(super) fn compile_tensor_slice2<'ctx>(
     let start = args[0].0.into_int_value();
     let len = args[1].0.into_int_value();
     let end = codegen.builder.build_int_add(start, len, "slice_end")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     let step = i64_ty.const_int(1, false);
 
     let fn_val = codegen.get_fn("tl_tensor_slice")?;
     let call = codegen.builder
         .build_call(fn_val, &[obj_val.into(), dim.into(), start.into(), end.into(), step.into()], "slice_res")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     let res = match call.try_as_basic_value() {
         inkwell::values::ValueKind::Basic(v) => v,
-        _ => return Err("Invalid slice return".into()),
+        _ => return Err(CodegenErrorKind::Internal("Invalid slice return".to_string()).into()),
     };
     Ok((res, obj_ty))
 }
@@ -341,16 +341,16 @@ pub(super) fn compile_tensor_slice3<'ctx>(
     let start = args[1].0.into_int_value();
     let len = args[2].0.into_int_value();
     let end = codegen.builder.build_int_add(start, len, "slice_end")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     let step = i64_ty.const_int(1, false);
 
     let fn_val = codegen.get_fn("tl_tensor_slice")?;
     let call = codegen.builder
         .build_call(fn_val, &[obj_val.into(), dim.into(), start.into(), end.into(), step.into()], "slice_res")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     let res = match call.try_as_basic_value() {
         inkwell::values::ValueKind::Basic(v) => v,
-        _ => return Err("Invalid slice return".into()),
+        _ => return Err(CodegenErrorKind::Internal("Invalid slice return".to_string()).into()),
     };
     Ok((res, obj_ty))
 }
@@ -365,26 +365,26 @@ pub(super) fn compile_tensor_to<'ctx>(
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 {
-        return Err("to/to_device requires 1 argument (device name string)".into());
+        return Err(TlError::from(CodegenErrorKind::Internal("to/to_device requires 1 argument (device name string)".to_string())));
     }
     let (dev_val, dev_ty) = args[0].clone();
     if !matches!(&dev_ty, Type::String(_)) {
-        return Err("Device name must be a string".into());
+        return Err(TlError::from(CodegenErrorKind::TypeError("Device name must be a string".to_string())));
     }
 
     let fn_val = codegen
         .module
         .get_function("tl_tensor_to_device")
-        .ok_or("Runtime fn tl_tensor_to_device not found")?;
+        .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("Runtime fn tl_tensor_to_device not found".to_string())))?;
 
     let call = codegen
         .builder
         .build_call(fn_val, &[obj_val.into(), dev_val.into()], "to_dev_res")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
     let res = match call.try_as_basic_value() {
         inkwell::values::ValueKind::Basic(v) => v,
-        _ => return Err("Invalid return from to_device".into()),
+        _ => return Err(CodegenErrorKind::Internal("Invalid return from to_device".to_string()).into()),
     };
 
     Ok((res, obj_ty))
@@ -401,7 +401,7 @@ pub(super) fn compile_tensor_assign_op<'ctx>(
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 {
-        return Err(format!("{}_assign requires 1 argument", op).into());
+        return Err(TlError::from(CodegenErrorKind::Internal(format!("{}_assign requires 1 argument", op))));
     }
     let (rhs_val, rhs_ty) = args[0].clone();
 
@@ -410,11 +410,11 @@ pub(super) fn compile_tensor_assign_op<'ctx>(
         let fn_val = codegen
             .module
             .get_function(&ffi_name)
-            .ok_or_else(|| format!("{} not found in module", ffi_name))?;
+            .ok_or_else(|| TlError::from(CodegenErrorKind::Internal(format!("{} not found in module", ffi_name))))?;
         codegen
             .builder
             .build_call(fn_val, &[obj_val.into(), rhs_val.into()], "assign_res")
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     } else if matches!(rhs_ty, Type::F32 | Type::F64 | Type::I64 | Type::I32) {
         let scalar_f32 = match rhs_ty {
             Type::F32 => rhs_val.into_float_value(),
@@ -425,7 +425,7 @@ pub(super) fn compile_tensor_assign_op<'ctx>(
                     codegen.context.f32_type(),
                     "f64_to_f32",
                 )
-                .map_err(|e| e.to_string())?,
+                .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?,
             Type::I64 | Type::I32 => codegen
                 .builder
                 .build_signed_int_to_float(
@@ -433,23 +433,23 @@ pub(super) fn compile_tensor_assign_op<'ctx>(
                     codegen.context.f32_type(),
                     "int_to_f32",
                 )
-                .map_err(|e| e.to_string())?,
-            _ => return Err(format!("{}_assign scalar: unsupported type {:?}", op, rhs_ty).into()),
+                .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?,
+            _ => return Err(TlError::from(CodegenErrorKind::UnsupportedOperation(format!("{}_assign scalar: unsupported type {:?}", op, rhs_ty)))),
         };
         let ffi_name = format!("tl_tensor_{}_assign_scalar_f32", op);
         let fn_val = codegen
             .module
             .get_function(&ffi_name)
-            .ok_or_else(|| format!("{} not found in module", ffi_name))?;
+            .ok_or_else(|| TlError::from(CodegenErrorKind::Internal(format!("{} not found in module", ffi_name))))?;
         codegen
             .builder
             .build_call(fn_val, &[obj_val.into(), scalar_f32.into()], "assign_res")
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     } else {
-        return Err(format!(
+        return Err(TlError::from(CodegenErrorKind::Internal(format!(
             "{}_assign requires Tensor or scalar argument, got {:?}",
             op, rhs_ty
-        ).into());
+        ))));
     }
 
     Ok((
@@ -501,7 +501,7 @@ pub(super) fn compile_tensor_pow<'ctx>(
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 {
-        return Err("pow requires 1 argument (exponent)".into());
+        return Err(TlError::from(CodegenErrorKind::Internal("pow requires 1 argument (exponent)".to_string())));
     }
     let (exp_val, exp_ty) = args[0].clone();
 
@@ -511,12 +511,12 @@ pub(super) fn compile_tensor_pow<'ctx>(
         let fn_val = codegen
             .module
             .get_function("tl_tensor_pow")
-            .ok_or("tl_tensor_pow not found")?;
+            .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_tensor_pow not found".to_string())))?;
         let call = codegen
             .builder
             .build_call(fn_val, &[obj_val.into(), exp_val.into()], "pow_res");
 
-        let res = codegen.check_tensor_result(call.map_err(|e| e.to_string())?, "pow_error")?;
+        let res = codegen.check_tensor_result(call.map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?, "pow_error")?;
         codegen.emit_register_tensor(res, &obj_ty)?;
         Ok((res, obj_ty))
     } else {
@@ -530,7 +530,7 @@ pub(super) fn compile_tensor_pow<'ctx>(
                     codegen.context.f32_type(),
                     "exp_i64_to_f32",
                 )
-                .map_err(|e| e.to_string())?,
+                .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?,
             Type::I32 => codegen
                 .builder
                 .build_signed_int_to_float(
@@ -538,26 +538,26 @@ pub(super) fn compile_tensor_pow<'ctx>(
                     codegen.context.f32_type(),
                     "exp_i32_to_f32",
                 )
-                .map_err(|e| e.to_string())?,
+                .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?,
             _ => {
-                return Err(format!(
+                return Err(TlError::from(CodegenErrorKind::Internal(format!(
                     "pow exponent must be Tensor or Number, got {:?}",
                     exp_ty
-                ).into())
+                ))))
             }
         };
 
         let fn_val = codegen
             .module
             .get_function("tl_tensor_pow_scalar")
-            .ok_or("tl_tensor_pow_scalar not found")?;
+            .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_tensor_pow_scalar not found".to_string())))?;
         let call =
             codegen
                 .builder
                 .build_call(fn_val, &[obj_val.into(), exp_f32.into()], "pow_scalar_res");
 
         let res =
-            codegen.check_tensor_result(call.map_err(|e| e.to_string())?, "pow_scalar_error")?;
+            codegen.check_tensor_result(call.map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?, "pow_scalar_error")?;
         
         // Fix: Result is always a Tensor (Rank 0), even if invoked on Scalar
         let res_ty = Type::Tensor(Box::new(Type::F32), 0);
@@ -585,7 +585,7 @@ pub(super) fn compile_transpose<'ctx>(
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     // transpose(tensor, d0, d1)
     if args.len() != 3 {
-        return Err("transpose requires 3 arguments: tensor, dim0, dim1".into());
+        return Err(TlError::from(CodegenErrorKind::Internal("transpose requires 3 arguments: tensor, dim0, dim1".to_string())));
     }
     let (t_val, t_ty) = &args[0];
     let (d0_val, _) = &args[1];
@@ -595,12 +595,12 @@ pub(super) fn compile_transpose<'ctx>(
         || matches!(t_ty, Type::Struct(name, _) if name == "Tensor");
         
     if !is_tensor {
-        return Err(format!("First argument to transpose must be a tensor. Found: {:?}", t_ty).into());
+        return Err(TlError::from(CodegenErrorKind::Internal(format!("First argument to transpose must be a tensor. Found: {:?}", t_ty))));
     }
     let transpose_fn = codegen
         .module
         .get_function("tl_tensor_transpose")
-        .ok_or("tl_tensor_transpose not found")?;
+        .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_tensor_transpose not found".to_string())))?;
 
     let t_arg = if let Type::Struct(name, _) = t_ty {
         if name == "Tensor" {
@@ -608,16 +608,16 @@ pub(super) fn compile_transpose<'ctx>(
             let handle_i64 = if t_val.is_pointer_value() {
                 let ptr = t_val.into_pointer_value();
                 let i64_type = codegen.context.i64_type();
-                let cast_ptr = codegen.builder.build_pointer_cast(ptr, codegen.context.ptr_type(inkwell::AddressSpace::default()), "cast_tensor_handle").map_err(|e| e.to_string())?;
-                codegen.builder.build_load(i64_type, cast_ptr, "tensor_handle").map_err(|e| e.to_string())?.into_int_value()
+                let cast_ptr = codegen.builder.build_pointer_cast(ptr, codegen.context.ptr_type(inkwell::AddressSpace::default()), "cast_tensor_handle").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+                codegen.builder.build_load(i64_type, cast_ptr, "tensor_handle").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?.into_int_value()
             } else if t_val.is_struct_value() {
-                codegen.builder.build_extract_value(t_val.into_struct_value(), 0, "tensor_handle").map_err(|e| e.to_string())?.into_int_value()
+                codegen.builder.build_extract_value(t_val.into_struct_value(), 0, "tensor_handle").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?.into_int_value()
             } else {
-                return Err(format!("Unexpected value kind for Struct Tensor: {:?}", t_val).into());
+                return Err(TlError::from(CodegenErrorKind::Internal(format!("Unexpected value kind for Struct Tensor: {:?}", t_val))));
             };
             
             // Cast i64 handle to Pointer
-            codegen.builder.build_int_to_ptr(handle_i64, codegen.context.ptr_type(inkwell::AddressSpace::default()), "handle_ptr").map_err(|e| e.to_string())?.into()
+            codegen.builder.build_int_to_ptr(handle_i64, codegen.context.ptr_type(inkwell::AddressSpace::default()), "handle_ptr").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?.into()
         } else {
             *t_val
         }
@@ -632,38 +632,38 @@ pub(super) fn compile_transpose<'ctx>(
             &[t_arg.into(), (*d0_val).into(), (*d1_val).into()],
             "transpose_res",
         )
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     let res = match call.try_as_basic_value() {
         inkwell::values::ValueKind::Basic(v) => v,
-        _ => return Err("Invalid transpose return".into()),
+        _ => return Err(CodegenErrorKind::Internal("Invalid transpose return".to_string()).into()),
     };
 
     if let Type::Struct(name, _) = t_ty {
         if name == "Tensor" {
             // Wrap primitive result (ptr) into Struct { handle: i64 }
             let current_block = codegen.current_block()?;
-            let parent_fn = current_block.get_parent().ok_or_else(|| "block has no parent function".to_string())?;
+            let parent_fn = current_block.get_parent().ok_or_else(|| TlError::from(CodegenErrorKind::Internal("block has no parent function".to_string())))?;
             
             // Alloca struct
             let i64_type = codegen.context.i64_type();
             let struct_type = codegen.context.struct_type(&[i64_type.into()], false);
             
             // Manual entry block alloca
-            let entry = parent_fn.get_first_basic_block().ok_or_else(|| "function has no entry block".to_string())?;
+            let entry = parent_fn.get_first_basic_block().ok_or_else(|| TlError::from(CodegenErrorKind::Internal("function has no entry block".to_string())))?;
             let builder = codegen.context.create_builder();
             if let Some(first_instr) = entry.get_first_instruction() {
                 builder.position_before(&first_instr);
             } else {
                 builder.position_at_end(entry);
             }
-            let struct_alloca = builder.build_alloca(struct_type, "tensor_struct_res").map_err(|e| e.to_string())?;
+            let struct_alloca = builder.build_alloca(struct_type, "tensor_struct_res").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
             
             // Convert ptr -> i64
-            let handle_i64 = codegen.builder.build_ptr_to_int(res.into_pointer_value(), i64_type, "handle_i64").map_err(|e| e.to_string())?;
+            let handle_i64 = codegen.builder.build_ptr_to_int(res.into_pointer_value(), i64_type, "handle_i64").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
             
             // Store handle (field 0)
-            let handle_ptr = codegen.builder.build_struct_gep(struct_type, struct_alloca, 0, "handle_ptr").map_err(|e| e.to_string())?;
-            codegen.builder.build_store(handle_ptr, handle_i64).map_err(|e| e.to_string())?;
+            let handle_ptr = codegen.builder.build_struct_gep(struct_type, struct_alloca, 0, "handle_ptr").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+            codegen.builder.build_store(handle_ptr, handle_i64).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
             
             // Return pointer to struct
             return Ok((struct_alloca.into(), t_ty.clone()));
@@ -681,7 +681,7 @@ pub(super) fn compile_tensor_reshape_uneval<'ctx>(
     args: &[Expr],
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 {
-        return Err("reshape method requires exactly 1 argument (shape array)".into());
+        return Err(TlError::from(CodegenErrorKind::Internal("reshape method requires exactly 1 argument (shape array)".to_string())));
     }
 
     // 1. Compile Receiver
@@ -703,15 +703,15 @@ pub(super) fn compile_tensor_reshape_uneval<'ctx>(
     let reshape_fn = codegen
         .module
         .get_function("tl_tensor_reshape_new")
-        .ok_or("tl_tensor_reshape_new not found")?;
+        .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_tensor_reshape_new not found".to_string())))?;
     let call = codegen
         .builder
         .build_call(reshape_fn, &[obj_val.into(), s_val.into()], "reshape_res")
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
     let res = match call.try_as_basic_value() {
         inkwell::values::ValueKind::Basic(v) => v,
-        _ => return Err("Invalid reshape return".into()),
+        _ => return Err(CodegenErrorKind::Internal("Invalid reshape return".to_string()).into()),
     };
 
     // 5. Construct return type

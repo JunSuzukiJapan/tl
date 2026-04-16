@@ -2,7 +2,7 @@
 //!
 //! メソッドレジストリ: register_all_methods, emit_trait_object_upcast 等。
 //! CodeGenerator にインスタンスメソッド・静的メソッドを登録する。
-use crate::compiler::error::TlError;
+use crate::compiler::error::{TlError, CodegenErrorKind};
 
 use super::tensor_methods::*;
 use super::builtin_fns::*;
@@ -21,16 +21,16 @@ impl<'ctx> CodeGenerator<'ctx> {
         let fat_ptr_type = self.context.struct_type(&[ptr_type.into(), ptr_type.into()], false);
 
         let data_ptr = if val.is_pointer_value() {
-            self.builder.build_pointer_cast(val.into_pointer_value(), ptr_type, "trait_data_cast").map_err(|e| e.to_string())?
+            self.builder.build_pointer_cast(val.into_pointer_value(), ptr_type, "trait_data_cast").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?
         } else {
-            return Err("Expected pointer value for upcast".to_string().into());
+            return Err(TlError::from(CodegenErrorKind::Internal("Expected pointer value for upcast".to_string())));
         };
 
         let vtable_name = format!("vtable_{}_for_{}", trait_name, struct_name);
         let vtable_global = if let Some(global) = self.module.get_global(&vtable_name) {
             global
         } else {
-            let trait_def = self.trait_defs.get(trait_name).ok_or_else(|| format!("Trait {} not found in registry", trait_name))?.clone();
+            let trait_def = self.trait_defs.get(trait_name).ok_or_else(|| TlError::from(CodegenErrorKind::Internal(format!("Trait {} not found in registry", trait_name))))?.clone();
             let vtable_ty = ptr_type.array_type(trait_def.methods.len() as u32);
             let global = self.module.add_global(vtable_ty, Some(inkwell::AddressSpace::default()), &vtable_name);
             global.set_linkage(inkwell::module::Linkage::Internal);
@@ -39,7 +39,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             let mut fn_ptrs = Vec::new();
             for m in &trait_def.methods {
                 let mangled_name = format!("tl_{}_{}", struct_name, m.name);
-                let fn_val = self.module.get_function(&mangled_name).ok_or_else(|| format!("Missing implementation of {} for trait {} in struct {}: looking for {}", m.name, trait_name, struct_name, mangled_name))?;
+                let fn_val = self.module.get_function(&mangled_name).ok_or_else(|| TlError::from(CodegenErrorKind::Internal(format!("Missing implementation of {} for trait {} in struct {}: looking for {}", m.name, trait_name, struct_name, mangled_name))))?;
                 fn_ptrs.push(fn_val.as_global_value().as_pointer_value());
             }
             global.set_initializer(&ptr_type.const_array(&fn_ptrs));
@@ -48,8 +48,8 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         let vtable_ptr = vtable_global.as_pointer_value();
         let mut fat_ptr_val = fat_ptr_type.const_zero();
-        fat_ptr_val = self.builder.build_insert_value(fat_ptr_val, data_ptr, 0, "fat_d").map_err(|e| e.to_string())?.into_struct_value();
-        fat_ptr_val = self.builder.build_insert_value(fat_ptr_val, vtable_ptr, 1, "fat_v").map_err(|e| e.to_string())?.into_struct_value();
+        fat_ptr_val = self.builder.build_insert_value(fat_ptr_val, data_ptr, 0, "fat_d").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?.into_struct_value();
+        fat_ptr_val = self.builder.build_insert_value(fat_ptr_val, vtable_ptr, 1, "fat_v").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?.into_struct_value();
         Ok(fat_ptr_val.into())
     }
     pub(super) fn substitute_type_generic(&self, ty: &Type, generics: &[String], args: &[Type]) -> Type {

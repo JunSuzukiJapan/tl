@@ -1,4 +1,4 @@
-use crate::compiler::error::TlError;
+use crate::compiler::error::{TlError, CodegenErrorKind};
 use super::expr::cast_value_to_i64;
 use super::CodeGenerator;
 use crate::compiler::ast::*;
@@ -74,11 +74,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                         let count = self
                             .builder
                             .build_int_sub(end_i64, start_i64, "count")
-                            .map_err(|e| e.to_string())?;
+                            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                         index_bounds.insert(name.clone(), count);
                     }
-                    ExprKind::Range(_, _) => return Err("Generator range must be a closed range (start..end)".into()),
-                    _ => return Err("Generator range must be start..end".into()),
+                    ExprKind::Range(_, _) => return Err(CodegenErrorKind::Internal("Generator range must be a closed range (start..end)".to_string()).into()),
+                    _ => return Err(CodegenErrorKind::Internal("Generator range must be start..end".to_string()).into()),
                 }
             }
         }
@@ -90,7 +90,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         for idx in indices {
             if !bound_vars.contains(idx) {
                 if !index_bounds.contains_key(idx) {
-                    return Err(format!("Implicit bound not found for index {}", idx).into());
+                    return Err(TlError::from(CodegenErrorKind::Internal(format!("Implicit bound not found for index {}", idx))));
                 }
                 let limit = *index_bounds.get(idx).expect("index_bounds key was just verified");
                 loop_ranges.insert(idx.clone(), (i64_type.const_int(0, false), limit));
@@ -105,7 +105,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 if !index_bounds.contains_key(idx) {
                     // Try to infer from explicit intersection analysis from stmt.rs
                     // If not found in index_bounds (which comes from body traversal), it's an error.
-                     return Err(format!("Implicit bound not found for reduction index {}", idx).into());
+                     return Err(TlError::from(CodegenErrorKind::Internal(format!("Implicit bound not found for reduction index {}", idx))));
                 }
                 let limit = *index_bounds.get(idx).expect("index_bounds key was just verified");
                 loop_ranges.insert(idx.clone(), (i64_type.const_int(0, false), limit));
@@ -118,12 +118,12 @@ impl<'ctx> CodeGenerator<'ctx> {
         for idx in indices {
             let (start, end) = loop_ranges
                 .get(idx)
-                .ok_or(format!("Missing range for output index {}", idx))?;
-            let dim_size = self.builder.build_int_sub(*end, *start, "dim_sz").map_err(|e| e.to_string())?;
+                .ok_or_else(|| TlError::from(CodegenErrorKind::Internal(format!("Missing range for output index {}", idx))))?;
+            let dim_size = self.builder.build_int_sub(*end, *start, "dim_sz").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
             total_size = self
                 .builder
                 .build_int_mul(total_size, dim_size, "sz_acc")
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
         }
 
         // Allocate Buffer
@@ -135,11 +135,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                 &[total_size.into(), i64_type.const_int(4, false).into()],
                 "buf_void",
             )
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
         let buffer_void = match call_result.try_as_basic_value() {
             inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
-            _ => return Err("calloc returned void".into()),
+            _ => return Err(CodegenErrorKind::Internal("calloc returned void".to_string()).into()),
         };
 
         let buffer_ptr = self
@@ -149,7 +149,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 self.context.ptr_type(inkwell::AddressSpace::default()),
                 "buf_f32",
             )
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
         let parent_fn = self.current_function()?;
 
@@ -190,7 +190,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         let (start, end) = loop_ranges.get(name).expect("loop_ranges key was just inserted for generator");
                         let (cond, body_bb, aft, phi, alloca) = self
                             .build_loop_start(parent_fn, current_bb, name, *start, *end)
-                            .map_err(|e| e.to_string())?;
+                            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                         current_bb = body_bb;
                         active_loops.push((name.clone(), cond, aft, phi));
                         loop_skip_stack.push(Vec::new());
@@ -205,7 +205,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                  let (start, end) = loop_ranges.get(idx).expect("loop_ranges key was just inserted for implicit output loop");
                  let (cond, body_bb, aft, phi, alloca) = self
                         .build_loop_start(parent_fn, current_bb, idx, *start, *end)
-                        .map_err(|e| e.to_string())?;
+                        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                  current_bb = body_bb;
                  active_loops.push((idx.clone(), cond, aft, phi));
                  loop_skip_stack.push(Vec::new());
@@ -225,7 +225,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         for idx_name in indices.iter().rev() {
             let (start, end) = loop_ranges.get(idx_name).expect("loop_ranges key exists for output index");
-            let limit = self.builder.build_int_sub(*end, *start, "lim").map_err(|e| e.to_string())?;
+            let limit = self.builder.build_int_sub(*end, *start, "lim").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
             // Find phi for this index
             let (_, _, _, phi) = active_loops
@@ -233,18 +233,18 @@ impl<'ctx> CodeGenerator<'ctx> {
                 .find(|(n, _, _, _)| n == idx_name)
                 .expect("active_loops entry exists for each output index");
             let iv = phi.as_basic_value().into_int_value();
-            let relative_idx = self.builder.build_int_sub(iv, *start, "rel_idx").map_err(|e| e.to_string())?; // i - start
+            let relative_idx = self.builder.build_int_sub(iv, *start, "rel_idx").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?; // i - start
 
             let term = self
                 .builder
                 .build_int_mul(relative_idx, stride, "term")
-                .map_err(|e| e.to_string())?;
-            offset = self.builder.build_int_add(offset, term, "off").map_err(|e| e.to_string())?;
+                .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+            offset = self.builder.build_int_add(offset, term, "off").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
             stride = self
                 .builder
                 .build_int_mul(stride, limit, "new_str")
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
         }
 
         // Initialize Accumulator (if reduction exists)
@@ -259,13 +259,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                  let elem_offset = self
                     .builder
                     .build_int_add(offset, i64_type.const_int(k as u64, false), "elem_off")
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                 let ptr_bound = unsafe {
                     self.builder
                         .build_gep(f32_type, buffer_ptr, &[elem_offset], "ptr_init")
                 }
-                .map_err(|e| e.to_string())?;
-                self.builder.build_store(ptr_bound, f32_type.const_float(0.0)).map_err(|e| e.to_string())?;
+                .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+                self.builder.build_store(ptr_bound, f32_type.const_float(0.0)).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
             }
         }
 
@@ -288,7 +288,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         let (start, end) = loop_ranges.get(name).expect("loop_ranges key was just inserted for explicit reduction generator");
                         let (cond, body_bb, aft, phi, alloca) = self
                             .build_loop_start(parent_fn, current_bb, name, *start, *end)
-                            .map_err(|e| e.to_string())?;
+                            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                         current_bb = body_bb;
                         active_loops.push((name.clone(), cond, aft, phi));
                         loop_skip_stack.push(Vec::new());
@@ -303,7 +303,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     let (start, end) = loop_ranges.get(name).expect("loop_ranges key was just inserted for implicit reduction loop");
                     let (cond, body_bb, aft, phi, alloca) = self
                         .build_loop_start(parent_fn, current_bb, name, *start, *end)
-                        .map_err(|e| e.to_string())?;
+                        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                     current_bb = body_bb;
                     active_loops.push((name.clone(), cond, aft, phi));
                     loop_skip_stack.push(Vec::new());
@@ -330,17 +330,17 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let c_bool = if let Type::Bool = c_ty {
                     c_val.into_int_value()
                 } else {
-                    return Err(format!("Condition must be bool, found {:?}", c_ty).into());
+                    return Err(TlError::from(CodegenErrorKind::Internal(format!("Condition must be bool, found {:?}", c_ty))));
                 };
                 final_cond = match final_cond {
                     None => Some(c_bool),
-                    Some(prev) => Some(self.builder.build_and(prev, c_bool, "cond_and").map_err(|e| e.to_string())?),
+                    Some(prev) => Some(self.builder.build_and(prev, c_bool, "cond_and").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?),
                 };
             }
             if let Some(cond_val) = final_cond {
                 let skip_bb = self.context.append_basic_block(parent_fn, "cond_fail_skip");
                 let body_eval_bb = self.context.append_basic_block(parent_fn, "body_eval");
-                self.builder.build_conditional_branch(cond_val, body_eval_bb, skip_bb).map_err(|e| e.to_string())?;
+                self.builder.build_conditional_branch(cond_val, body_eval_bb, skip_bb).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
                 // Add skip_bb to the INNERMOST loop's skip stack
                 if let Some(skips) = loop_skip_stack.last_mut() {
@@ -350,7 +350,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     // If condition fails, we should jump to end.
                     // But for scalar comprehension, skip_stack is empty.
                     // Let's just create a dummy end block if needed, but it's an edge case.
-                    return Err("Condition outside of any loop generator in tensor comprehension".into());
+                    return Err(TlError::from(CodegenErrorKind::Internal("Condition outside of any loop generator in tensor comprehension".to_string())));
                 }
 
                 self.builder.position_at_end(body_eval_bb);
@@ -384,7 +384,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let tensor_ptr = self
                     .builder
                     .build_pointer_cast(rhs_val.into_pointer_value(), ptr_type, "t_ptr")
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
                 let mut elems = Vec::new();
                 for k in 0..body_elem_count {
@@ -392,10 +392,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                     let call_res = self
                         .builder
                         .build_call(get_fn, &[tensor_ptr.into(), idx_val.into()], "val_call")
-                        .map_err(|e| e.to_string())?;
+                        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                     let val = match call_res.try_as_basic_value() {
                         inkwell::values::ValueKind::Basic(v) => v,
-                        _ => return Err("tl_tensor_get returned void?".into()),
+                        _ => return Err(CodegenErrorKind::Internal("tl_tensor_get returned void?".to_string()).into()),
                     };
                     elems.push(val);
                 }
@@ -407,10 +407,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let f_val = self
                     .builder
                     .build_signed_int_to_float(i_val, self.context.f32_type(), "f32_cast")
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                 vec![f_val.into()]
             }
-            _ => return Err(format!("Unsupported body type: {:?}", rhs_ty).into()),
+            _ => return Err(TlError::from(CodegenErrorKind::UnsupportedOperation(format!("Unsupported body type: {:?}", rhs_ty)))),
         };
 
         // Store Elements (Accumulate or Overwrite)
@@ -418,32 +418,32 @@ impl<'ctx> CodeGenerator<'ctx> {
             let elem_offset = self
                 .builder
                 .build_int_add(offset, i64_type.const_int(k as u64, false), "elem_off")
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
             let ptr_bound = unsafe {
                 self.builder
                     .build_gep(f32_type, buffer_ptr, &[elem_offset], "ptr_bound")
             }
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
             let val_to_store = if has_reduction {
                 // Load Accumulator
                 let current_acc = self
                     .builder
                     .build_load(f32_type, ptr_bound, "acc_load")
-                    .map_err(|e| e.to_string())?
+                    .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?
                     .into_float_value();
 
                 // Add
                 self.builder
                     .build_float_add(current_acc, val.into_float_value(), "acc_add")
-                    .map_err(|e| e.to_string())?
+                    .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?
             } else {
                 // Direct Store (Overwrite)
                 val.into_float_value()
             };
 
-            self.builder.build_store(ptr_bound, val_to_store).map_err(|e| e.to_string())?;
+            self.builder.build_store(ptr_bound, val_to_store).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
         }
 
         // Loop End Logic (no changes needed)
@@ -457,12 +457,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                 .append_basic_block(parent_fn, &format!("loop_latch_{}", loop_name));
 
             self.builder.position_at_end(last_processed_bb);
-            self.builder.build_unconditional_branch(latch_bb).map_err(|e| e.to_string())?;
+            self.builder.build_unconditional_branch(latch_bb).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
             let skips = loop_skip_stack.pop().expect("stack always has matching push");
             for skip_bb in skips {
                 self.builder.position_at_end(skip_bb);
-                self.builder.build_unconditional_branch(latch_bb).map_err(|e| e.to_string())?;
+                self.builder.build_unconditional_branch(latch_bb).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
             }
 
             self.builder.position_at_end(latch_bb);
@@ -470,16 +470,16 @@ impl<'ctx> CodeGenerator<'ctx> {
             let iv = self
                 .builder
                 .build_load(i64_type, alloca_val.into_pointer_value(), "iv")
-                .map_err(|e| e.to_string())?
+                .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?
                 .into_int_value();
             let next = self
                 .builder
                 .build_int_add(iv, i64_type.const_int(1, false), "next")
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
             phi.add_incoming(&[(&next, latch_bb)]);
             self.builder
                 .build_unconditional_branch(*cond_bb)
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
             last_processed_bb = *aft_bb;
         }
@@ -493,12 +493,12 @@ impl<'ctx> CodeGenerator<'ctx> {
         let shape_alloca = self
             .builder
             .build_alloca(i64_type.array_type(rank as u32), "shape")
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
         // Fill Loop Dimensions
         for (i, idx) in indices.iter().enumerate() {
             let (start, end) = loop_ranges.get(idx).expect("loop_ranges key exists for output index");
-            let dim_size = self.builder.build_int_sub(*end, *start, "dim").map_err(|e| e.to_string())?;
+            let dim_size = self.builder.build_int_sub(*end, *start, "dim").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
             let elem_ptr = unsafe {
                 self.builder
@@ -511,11 +511,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                         ],
                         "shape_ptr",
                     )
-                    .map_err(|e| e.to_string())?
+                    .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?
             };
             self.builder
                 .build_store(elem_ptr, dim_size)
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
         }
 
         // Fill Body Dimensions
@@ -531,11 +531,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                         ],
                         "body_shape_ptr",
                     )
-                    .map_err(|e| e.to_string())?
+                    .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?
             };
             self.builder
                 .build_store(elem_ptr, i64_type.const_int(*dim as u64, false))
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
         }
 
         let shape_ptr = self
@@ -545,7 +545,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 self.context.ptr_type(inkwell::AddressSpace::default()),
                 "sptr",
             )
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
         let call_result = self
             .builder
             .build_call(
@@ -557,7 +557,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 ],
                 "t",
             )
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
         let tptr = self.check_tensor_result(call_result, "tl_tensor_new")?;
 
         let v_alloca = self.create_entry_block_alloca(
@@ -567,7 +567,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         )?;
         self.builder
             .build_store(v_alloca, tptr)
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
         self.variables.last_mut().expect("variables scope always non-empty").insert(
             name.to_string(),
             (
@@ -598,14 +598,14 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let cast_val = if let Type::I64 = ty {
                     self.builder
                         .build_signed_int_to_float(val.into_int_value(), f32_type, "cast_i64_f32")
-                        .map_err(|e| e.to_string())?
+                        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?
                 } else {
                     val.into_float_value()
                 };
 
                 self.builder
                     .build_store(data_ptr, cast_val)
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
                 let rank_val = self.context.i64_type().const_int(0, false);
                 let shape_ptr =
@@ -614,7 +614,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let tensor_new_fn = self
                     .module
                     .get_function("tl_tensor_new")
-                    .ok_or("tl_tensor_new not found")?;
+                    .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_tensor_new not found".to_string())))?;
 
                 let call_site_value = self
                     .builder
@@ -623,13 +623,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                         &[data_ptr.into(), rank_val.into(), shape_ptr.into()],
                         "scalar_tensor",
                     )
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
                 let tensor_ptr = self.check_tensor_result(call_site_value, "tl_tensor_new")?;
 
                 Ok((tensor_ptr, Type::Tensor(Box::new(Type::F32), 0)))
             }
-            _ => Err(format!("Cannot convert {:?} to Tensor", ty).into()),
+            _ => Err(TlError::from(CodegenErrorKind::Internal(format!("Cannot convert {:?} to Tensor", ty)))),
         }
     }
 
@@ -655,12 +655,12 @@ impl<'ctx> CodeGenerator<'ctx> {
                     let loaded = self
                         .builder
                         .build_load(ptr_type, ptr_to_ptr, "load_tensor_ptr")
-                        .map_err(|e| e.to_string())?;
+                        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                     return Ok(loaded.into_pointer_value());
                 }
             }
         }
-        Err(format!("Variable {} not found or not a tensor", name).into())
+        Err(TlError::from(CodegenErrorKind::VariableNotFound(format!("Variable {} not found or not a tensor", name))))
     }
 
     fn build_loop_start(
@@ -693,24 +693,24 @@ impl<'ctx> CodeGenerator<'ctx> {
             .append_basic_block(parent_fn, &format!("loop_aft_{}", name));
 
         self.builder.position_at_end(current_bb);
-        self.builder.build_unconditional_branch(cond_bb).map_err(|e| e.to_string())?;
+        self.builder.build_unconditional_branch(cond_bb).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
         self.builder.position_at_end(cond_bb);
-        let phi = self.builder.build_phi(i64_type, name).map_err(|e| e.to_string())?;
+        let phi = self.builder.build_phi(i64_type, name).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
         phi.add_incoming(&[(&start, current_bb)]);
 
         let iv = phi.as_basic_value().into_int_value();
         let cmp = self
             .builder
             .build_int_compare(inkwell::IntPredicate::SLT, iv, end, "cmp")
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
         self.builder
             .build_conditional_branch(cmp, body_bb, aft_bb)
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
         self.builder.position_at_end(body_bb);
         let alloca = self.create_entry_block_alloca(parent_fn, name, &Type::I64)?;
-        self.builder.build_store(alloca, iv).map_err(|e| e.to_string())?;
+        self.builder.build_store(alloca, iv).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
         Ok((cond_bb, body_bb, aft_bb, phi, alloca))
     }

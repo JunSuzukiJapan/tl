@@ -1,4 +1,4 @@
-use crate::compiler::error::TlError;
+use crate::compiler::error::{TlError, CodegenErrorKind};
 use crate::compiler::codegen::type_manager::{CodeGenType, TypeManager};
 use crate::compiler::codegen::CodeGenerator;
 use crate::compiler::ast::Type;
@@ -134,13 +134,13 @@ pub fn register_llm_types(manager: &mut TypeManager) {
     // VarBuilder (for loading model weights from safetensors)
     let mut var_builder = CodeGenType::new("VarBuilder");
     // VarBuilder::new(path: String) -> VarBuilder
-    var_builder.register_static_signature("new", vec![string_type.clone()], Type::Struct("VarBuilder".into(), vec![]));
+    var_builder.register_static_signature("new", vec![string_type.clone()], Type::Struct("VarBuilder".to_string(), vec![]));
     // vb.get(name: String) -> Tensor
     var_builder.register_instance_signature("get", vec![string_type.clone()], tensor_type.clone());
     // vb.get_or_zeros(name: String, shape: Vec<i64>) -> Tensor
-    var_builder.register_instance_signature("get_or_zeros", vec![string_type.clone(), Type::Struct("Vec".into(), vec![Type::I64])], tensor_type.clone());
+    var_builder.register_instance_signature("get_or_zeros", vec![string_type.clone(), Type::Struct("Vec".to_string(), vec![Type::I64])], tensor_type.clone());
     // vb.child(prefix: String) -> VarBuilder
-    var_builder.register_instance_signature("child", vec![string_type.clone()], Type::Struct("VarBuilder".into(), vec![]));
+    var_builder.register_instance_signature("child", vec![string_type.clone()], Type::Struct("VarBuilder".to_string(), vec![]));
     // vb.grad(tensor: Tensor) -> Tensor
     var_builder.register_instance_signature("grad", vec![tensor_type.clone()], tensor_type.clone());
     // vb.update() -> Void
@@ -162,10 +162,10 @@ fn compile_kv_cache_update<'ctx>(
     _instance_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
-    if args.len() != 3 { return Err("KVCache::update requires 3 arguments".into()); }
+    if args.len() != 3 { return Err(CodegenErrorKind::Internal("KVCache::update requires 3 arguments".to_string()).into()); }
     
     // Convert instance (ptr) to ptr
-    if !instance_val.is_pointer_value() { return Err("Instance update requires pointer".into()); }
+    if !instance_val.is_pointer_value() { return Err(CodegenErrorKind::Internal("Instance update requires pointer".to_string()).into()); }
     
     let (layer_val, _) = args[0];
     let (k_val, k_ty) = &args[1];
@@ -176,18 +176,18 @@ fn compile_kv_cache_update<'ctx>(
         let ptr_val = if let Type::Struct(name, _) = ty {
             if name == "Tensor" {
                  let h = codegen.load_struct_i64_field(val, ty, "handle")?;
-                 codegen.builder.build_int_to_ptr(h.into_int_value(), codegen.context.ptr_type(inkwell::AddressSpace::default()), "handle_ptr").map_err(|e| e.to_string())?
+                 codegen.builder.build_int_to_ptr(h.into_int_value(), codegen.context.ptr_type(inkwell::AddressSpace::default()), "handle_ptr").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?
             } else {
-                 return Err("Expected Tensor argument".into());
+                 return Err(TlError::from(CodegenErrorKind::Internal("Expected Tensor argument".to_string())));
             }
         } else if let Type::Tensor(_, _) = ty {
              if val.is_pointer_value() {
                  val.into_pointer_value()
              } else {
-                 return Err("Expected Tensor pointer".into());
+                 return Err(TlError::from(CodegenErrorKind::Internal("Expected Tensor pointer".to_string())));
              }
         } else {
-             return Err(format!("Expected Tensor argument, got {:?}", ty).into());
+             return Err(TlError::from(CodegenErrorKind::Internal(format!("Expected Tensor argument, got {:?}", ty))));
         };
         Ok(ptr_val.into())
     };
@@ -195,8 +195,8 @@ fn compile_kv_cache_update<'ctx>(
     let k_ptr = get_tensor_ptr(*k_val, k_ty)?;
     let v_ptr = get_tensor_ptr(*v_val, v_ty)?;
 
-    let fn_val = codegen.module.get_function("tl_kvcache_update").ok_or("tl_kvcache_update not found")?;
-    codegen.builder.build_call(fn_val, &[instance_val.into(), layer_val.into(), k_ptr, v_ptr], "").map_err(|e| e.to_string())?;
+    let fn_val = codegen.module.get_function("tl_kvcache_update").ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_kvcache_update not found".to_string())))?;
+    codegen.builder.build_call(fn_val, &[instance_val.into(), layer_val.into(), k_ptr, v_ptr], "").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     
     Ok((codegen.context.i64_type().const_int(0, false).into(), Type::Void))
 }
@@ -207,7 +207,7 @@ fn compile_tokenizer_new<'ctx>(
     _target_type: Option<&Type>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 {
-        return Err("Tokenizer::new requires 1 argument".into());
+        return Err(TlError::from(CodegenErrorKind::Internal("Tokenizer::new requires 1 argument".to_string())));
     }
     let (path_val, path_ty) = &args[0];
     
@@ -217,46 +217,46 @@ fn compile_tokenizer_new<'ctx>(
              codegen.load_struct_i64_field(*path_val, path_ty, "ptr")?
                 .into_int_value()
         },
-        _ => return Err(format!("Tokenizer::new expects String argument, got {:?}", path_ty).into()),
+        _ => return Err(TlError::from(CodegenErrorKind::Internal(format!("Tokenizer::new expects String argument, got {:?}", path_ty)))),
     };
 
-    let path_ptr_val = codegen.builder.build_int_to_ptr(path_ptr, codegen.context.ptr_type(inkwell::AddressSpace::default()), "path_str_ptr").map_err(|e| e.to_string())?;
+    let path_ptr_val = codegen.builder.build_int_to_ptr(path_ptr, codegen.context.ptr_type(inkwell::AddressSpace::default()), "path_str_ptr").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
-    let fn_val = codegen.module.get_function("tl_tokenizer_new").ok_or("tl_tokenizer_new not found")?;
-    let call = codegen.builder.build_call(fn_val, &[inkwell::values::BasicMetadataValueEnum::from(path_ptr_val)], "tok_new").map_err(|e| e.to_string())?;
+    let fn_val = codegen.module.get_function("tl_tokenizer_new").ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_tokenizer_new not found".to_string())))?;
+    let call = codegen.builder.build_call(fn_val, &[inkwell::values::BasicMetadataValueEnum::from(path_ptr_val)], "tok_new").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     let handle = match call.try_as_basic_value() {
         inkwell::values::ValueKind::Basic(v) => v,
-        _ => return Err("Invalid return from Tokenizer::new".into()),
+        _ => return Err(CodegenErrorKind::Internal("Invalid return from Tokenizer::new".to_string()).into()),
     };
 
-    let struct_type = *codegen.struct_types.get("Tokenizer").ok_or("Struct type Tokenizer not found")?;
-    let struct_def = codegen.struct_defs.get("Tokenizer").ok_or("Struct definition Tokenizer not found")?;
-    let size = struct_type.size_of().ok_or("Cannot determine size of Tokenizer")?;
+    let struct_type = *codegen.struct_types.get("Tokenizer").ok_or_else(|| TlError::from(CodegenErrorKind::Internal("Struct type Tokenizer not found".to_string())))?;
+    let struct_def = codegen.struct_defs.get("Tokenizer").ok_or_else(|| TlError::from(CodegenErrorKind::Internal("Struct definition Tokenizer not found".to_string())))?;
+    let size = struct_type.size_of().ok_or_else(|| TlError::from(CodegenErrorKind::Internal("Cannot determine size of Tokenizer".to_string())))?;
     
     let size_int = size;
     let size_i64 = if size_int.get_type() == codegen.context.i32_type() {
-        codegen.builder.build_int_z_extend(size_int, codegen.context.i64_type(), "size_i64").map_err(|e| e.to_string())?
+        codegen.builder.build_int_z_extend(size_int, codegen.context.i64_type(), "size_i64").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?
     } else {
         size_int
     };
 
-    let malloc_fn = codegen.module.get_function("malloc").ok_or("malloc not found (declare in builtins)")?;
-    let call = codegen.builder.build_call(malloc_fn, &[size_i64.into()], "tokenizer_malloc").map_err(|e| e.to_string())?;
+    let malloc_fn = codegen.module.get_function("malloc").ok_or_else(|| TlError::from(CodegenErrorKind::Internal("malloc not found (declare in builtins)".to_string())))?;
+    let call = codegen.builder.build_call(malloc_fn, &[size_i64.into()], "tokenizer_malloc").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     let raw_ptr = match call.try_as_basic_value() {
         inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
-        _ => return Err("malloc returned invalid value".into()),
+        _ => return Err(CodegenErrorKind::Internal("malloc returned invalid value".to_string()).into()),
     };
     
     if let Some(register_fn) = codegen.module.get_function("tl_mem_register_struct") {
-        let cast_ptr = codegen.builder.build_pointer_cast(raw_ptr, codegen.context.ptr_type(inkwell::AddressSpace::default()), "cast_ptr").map_err(|e| e.to_string())?;
-        codegen.builder.build_call(register_fn, &[cast_ptr.into()], "").map_err(|e| e.to_string())?;
+        let cast_ptr = codegen.builder.build_pointer_cast(raw_ptr, codegen.context.ptr_type(inkwell::AddressSpace::default()), "cast_ptr").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+        codegen.builder.build_call(register_fn, &[cast_ptr.into()], "").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     }
     
-    let struct_ptr = codegen.builder.build_pointer_cast(raw_ptr, codegen.context.ptr_type(inkwell::AddressSpace::default()), "tokenizer_ptr").map_err(|e| e.to_string())?;
+    let struct_ptr = codegen.builder.build_pointer_cast(raw_ptr, codegen.context.ptr_type(inkwell::AddressSpace::default()), "tokenizer_ptr").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     
-    let field_idx = struct_def.fields.iter().position(|(n, _)| n == "handle").ok_or("Field handle not found in Tokenizer")?;
-    let field_ptr = codegen.builder.build_struct_gep(struct_type, struct_ptr, field_idx as u32, "tokenizerhandle").map_err(|e| e.to_string())?;
-    codegen.builder.build_store(field_ptr, handle).map_err(|e| e.to_string())?;
+    let field_idx = struct_def.fields.iter().position(|(n, _)| n == "handle").ok_or_else(|| TlError::from(CodegenErrorKind::Internal("Field handle not found in Tokenizer".to_string())))?;
+    let field_ptr = codegen.builder.build_struct_gep(struct_type, struct_ptr, field_idx as u32, "tokenizerhandle").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+    codegen.builder.build_store(field_ptr, handle).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     
     Ok((struct_ptr.into(), Type::Struct("Tokenizer".to_string(), vec![])))
 }
@@ -268,7 +268,7 @@ fn compile_tokenizer_encode<'ctx>(
     instance_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
-    if args.len() != 1 { return Err("Tokenizer::encode requires 1 argument".into()); }
+    if args.len() != 1 { return Err(CodegenErrorKind::Internal("Tokenizer::encode requires 1 argument".to_string()).into()); }
     let handle = codegen.load_struct_i64_field(instance_val, &instance_ty, "handle")?;
     let (prompt_val, prompt_ty) = &args[0];
     
@@ -278,11 +278,11 @@ fn compile_tokenizer_encode<'ctx>(
              codegen.load_struct_i64_field(*prompt_val, prompt_ty, "ptr")?
                 .into_int_value()
         },
-        _ => return Err("Tokenizer::encode expects String argument".into()),
+        _ => return Err(CodegenErrorKind::Internal("Tokenizer::encode expects String argument".to_string()).into()),
     };
-    let prompt_ptr_val = codegen.builder.build_int_to_ptr(prompt_ptr, codegen.context.ptr_type(inkwell::AddressSpace::default()), "prompt_str_ptr").map_err(|e| e.to_string())?;
-    let fn_val = codegen.module.get_function("tl_tokenizer_encode").ok_or("tl_tokenizer_encode not found")?;
-    let call = codegen.builder.build_call(fn_val, &[handle.into(), inkwell::values::BasicMetadataValueEnum::from(prompt_ptr_val)], "tok_encode").map_err(|e| e.to_string())?;
+    let prompt_ptr_val = codegen.builder.build_int_to_ptr(prompt_ptr, codegen.context.ptr_type(inkwell::AddressSpace::default()), "prompt_str_ptr").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+    let fn_val = codegen.module.get_function("tl_tokenizer_encode").ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_tokenizer_encode not found".to_string())))?;
+    let call = codegen.builder.build_call(fn_val, &[handle.into(), inkwell::values::BasicMetadataValueEnum::from(prompt_ptr_val)], "tok_encode").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     // check_tensor_result(val, msg) is method of codegen.
     let res = codegen.check_tensor_result(call, "tok_encode_error")?;
     Ok((res, Type::Tensor(Box::new(Type::I64), 0)))
@@ -294,7 +294,7 @@ fn compile_tokenizer_encode_chat<'ctx>(
     instance_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
-    if args.len() != 1 { return Err("Tokenizer::encode_chat requires 1 argument".into()); }
+    if args.len() != 1 { return Err(CodegenErrorKind::Internal("Tokenizer::encode_chat requires 1 argument".to_string()).into()); }
     let handle = codegen.load_struct_i64_field(instance_val, &instance_ty, "handle")?;
     let (prompt_val, prompt_ty) = &args[0];
     
@@ -303,11 +303,11 @@ fn compile_tokenizer_encode_chat<'ctx>(
              codegen.load_struct_i64_field(*prompt_val, prompt_ty, "ptr")?
                 .into_int_value()
         },
-        _ => return Err("Tokenizer::encode_chat expects String argument".into()),
+        _ => return Err(CodegenErrorKind::Internal("Tokenizer::encode_chat expects String argument".to_string()).into()),
     };
-    let prompt_ptr_val = codegen.builder.build_int_to_ptr(prompt_ptr, codegen.context.ptr_type(inkwell::AddressSpace::default()), "prompt_str_ptr").map_err(|e| e.to_string())?;
-    let fn_val = codegen.module.get_function("tl_tokenizer_encode_chat").ok_or("tl_tokenizer_encode_chat not found")?;
-    let call = codegen.builder.build_call(fn_val, &[handle.into(), inkwell::values::BasicMetadataValueEnum::from(prompt_ptr_val)], "tok_encode_chat").map_err(|e| e.to_string())?;
+    let prompt_ptr_val = codegen.builder.build_int_to_ptr(prompt_ptr, codegen.context.ptr_type(inkwell::AddressSpace::default()), "prompt_str_ptr").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+    let fn_val = codegen.module.get_function("tl_tokenizer_encode_chat").ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_tokenizer_encode_chat not found".to_string())))?;
+    let call = codegen.builder.build_call(fn_val, &[handle.into(), inkwell::values::BasicMetadataValueEnum::from(prompt_ptr_val)], "tok_encode_chat").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     let res = codegen.check_tensor_result(call, "tok_encode_chat_error")?;
     Ok((res, Type::Tensor(Box::new(Type::I64), 0)))
 }
@@ -318,7 +318,7 @@ fn compile_tokenizer_encode_chat_zephyr<'ctx>(
     instance_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
-    if args.len() != 1 { return Err("Tokenizer::encode_chat_zephyr requires 1 argument".into()); }
+    if args.len() != 1 { return Err(CodegenErrorKind::Internal("Tokenizer::encode_chat_zephyr requires 1 argument".to_string()).into()); }
     let handle = codegen.load_struct_i64_field(instance_val, &instance_ty, "handle")?;
     let (prompt_val, prompt_ty) = &args[0];
     
@@ -327,11 +327,11 @@ fn compile_tokenizer_encode_chat_zephyr<'ctx>(
              codegen.load_struct_i64_field(*prompt_val, prompt_ty, "ptr")?
                 .into_int_value()
         },
-        _ => return Err("Tokenizer::encode_chat_zephyr expects String argument".into()),
+        _ => return Err(CodegenErrorKind::Internal("Tokenizer::encode_chat_zephyr expects String argument".to_string()).into()),
     };
-    let prompt_ptr_val = codegen.builder.build_int_to_ptr(prompt_ptr, codegen.context.ptr_type(inkwell::AddressSpace::default()), "prompt_str_ptr").map_err(|e| e.to_string())?;
-    let fn_val = codegen.module.get_function("tl_tokenizer_encode_chat_zephyr").ok_or("tl_tokenizer_encode_chat_zephyr not found")?;
-    let call = codegen.builder.build_call(fn_val, &[handle.into(), inkwell::values::BasicMetadataValueEnum::from(prompt_ptr_val)], "tok_encode_chat_zephyr").map_err(|e| e.to_string())?;
+    let prompt_ptr_val = codegen.builder.build_int_to_ptr(prompt_ptr, codegen.context.ptr_type(inkwell::AddressSpace::default()), "prompt_str_ptr").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+    let fn_val = codegen.module.get_function("tl_tokenizer_encode_chat_zephyr").ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_tokenizer_encode_chat_zephyr not found".to_string())))?;
+    let call = codegen.builder.build_call(fn_val, &[handle.into(), inkwell::values::BasicMetadataValueEnum::from(prompt_ptr_val)], "tok_encode_chat_zephyr").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     let res = codegen.check_tensor_result(call, "tok_encode_chat_zephyr_error")?;
     Ok((res, Type::Tensor(Box::new(Type::I64), 0)))
 }
@@ -342,22 +342,22 @@ fn compile_tokenizer_decode<'ctx>(
     instance_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
-    if args.len() != 1 { return Err("Tokenizer::decode requires 1 argument".into()); }
+    if args.len() != 1 { return Err(CodegenErrorKind::Internal("Tokenizer::decode requires 1 argument".to_string()).into()); }
     let handle = codegen.load_struct_i64_field(instance_val, &instance_ty, "handle")?;
     let (ids_val, _) = args[0];
-    let fn_val = codegen.module.get_function("tl_tokenizer_decode").ok_or("tl_tokenizer_decode not found")?;
-    let call = codegen.builder.build_call(fn_val, &[handle.into(), ids_val.into()], "tok_decode").map_err(|e| e.to_string())?;
+    let fn_val = codegen.module.get_function("tl_tokenizer_decode").ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_tokenizer_decode not found".to_string())))?;
+    let call = codegen.builder.build_call(fn_val, &[handle.into(), ids_val.into()], "tok_decode").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     let char_ptr = match call.try_as_basic_value() {
         inkwell::values::ValueKind::Basic(v) => v,
-        _ => return Err("Invalid return from Tokenizer::decode".into()),
+        _ => return Err(CodegenErrorKind::Internal("Invalid return from Tokenizer::decode".to_string()).into()),
     };
     
     // Wrap char* in String struct using tl_string_new
-    let string_new_fn = codegen.module.get_function("tl_string_new").ok_or("tl_string_new not found")?;
-    let str_call = codegen.builder.build_call(string_new_fn, &[char_ptr.into()], "tok_decode_str").map_err(|e| e.to_string())?;
+    let string_new_fn = codegen.module.get_function("tl_string_new").ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_string_new not found".to_string())))?;
+    let str_call = codegen.builder.build_call(string_new_fn, &[char_ptr.into()], "tok_decode_str").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     let res = match str_call.try_as_basic_value() {
         inkwell::values::ValueKind::Basic(v) => v,
-        _ => return Err("Invalid return from tl_string_new".into()),
+        _ => return Err(CodegenErrorKind::Internal("Invalid return from tl_string_new".to_string()).into()),
     };
 
     Ok((res, Type::String("String".to_string())))
@@ -370,11 +370,11 @@ fn compile_kv_cache_new<'ctx>(
     _target_type: Option<&Type>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 {
-        return Err("KVCache::new requires 1 argument".into());
+        return Err(TlError::from(CodegenErrorKind::Internal("KVCache::new requires 1 argument".to_string())));
     }
     let layers_val = args[0].0;
 
-    let fn_val = codegen.module.get_function("tl_kvcache_new").ok_or("tl_kvcache_new not found")?;
+    let fn_val = codegen.module.get_function("tl_kvcache_new").ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_kvcache_new not found".to_string())))?;
     
     // Alloc stack slot for return value SRET
     // CodeGenerator usually manages alloca in entry block but here we do it ad-hoc?
@@ -385,9 +385,9 @@ fn compile_kv_cache_new<'ctx>(
     let i64_type = codegen.context.i64_type();
     let struct_ty = codegen.context.struct_type(&[i64_type.into()], false);
     
-    let alloca = codegen.builder.build_alloca(struct_ty, "kv_new_sret").map_err(|e| e.to_string())?;
+    let alloca = codegen.builder.build_alloca(struct_ty, "kv_new_sret").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     
-    codegen.builder.build_call(fn_val, &[alloca.into(), layers_val.into()], "").map_err(|e| e.to_string())?;
+    codegen.builder.build_call(fn_val, &[alloca.into(), layers_val.into()], "").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
     // Return the POINTER to the struct (standard for Struct return types in TL Codegen)
     Ok((alloca.into(), Type::Struct("KVCache".to_string(), vec![])))
@@ -403,10 +403,10 @@ fn compile_kv_cache_free<'ctx>(
     // KVCache.free(self) -> self is ptr
     // tl_kvcache_free(ptr)
     if !instance_val.is_pointer_value() {
-         return Err("Instance not pointer in free".into());
+         return Err(TlError::from(CodegenErrorKind::Internal("Instance not pointer in free".to_string())));
     }
-    let fn_val = codegen.module.get_function("tl_kvcache_free").ok_or("tl_kvcache_free not found")?;
-    codegen.builder.build_call(fn_val, &[instance_val.into()], "").map_err(|e| e.to_string())?;
+    let fn_val = codegen.module.get_function("tl_kvcache_free").ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_kvcache_free not found".to_string())))?;
+    codegen.builder.build_call(fn_val, &[instance_val.into()], "").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     Ok((codegen.context.i64_type().const_int(0, false).into(), Type::Void))
 }
 
@@ -417,12 +417,12 @@ fn compile_kv_cache_get_k<'ctx>(
     _instance_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
-    if args.len() != 1 { return Err("KVCache::get_k requires 1 argument".into()); }
+    if args.len() != 1 { return Err(CodegenErrorKind::Internal("KVCache::get_k requires 1 argument".to_string()).into()); }
     let (layer_val, _) = args[0];
     
     // tl_kvcache_get_k(ptr, layer)
-    let fn_val = codegen.module.get_function("tl_kvcache_get_k").ok_or("tl_kvcache_get_k not found")?;
-    let call = codegen.builder.build_call(fn_val, &[instance_val.into(), layer_val.into()], "kv_get_k").map_err(|e| e.to_string())?;
+    let fn_val = codegen.module.get_function("tl_kvcache_get_k").ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_kvcache_get_k not found".to_string())))?;
+    let call = codegen.builder.build_call(fn_val, &[instance_val.into(), layer_val.into()], "kv_get_k").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     let res = codegen.check_tensor_result(call, "kv_get_k_error")?;
     Ok((res, Type::Tensor(Box::new(Type::F32), 2))) // Assuming 2D tensor
 }
@@ -434,12 +434,12 @@ fn compile_kv_cache_get_v<'ctx>(
     _instance_ty: Type,
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
-    if args.len() != 1 { return Err("KVCache::get_v requires 1 argument".into()); }
+    if args.len() != 1 { return Err(CodegenErrorKind::Internal("KVCache::get_v requires 1 argument".to_string()).into()); }
     let (layer_val, _) = args[0];
     
     // tl_kvcache_get_v(ptr, layer)
-    let fn_val = codegen.module.get_function("tl_kvcache_get_v").ok_or("tl_kvcache_get_v not found")?;
-    let call = codegen.builder.build_call(fn_val, &[instance_val.into(), layer_val.into()], "kv_get_v").map_err(|e| e.to_string())?;
+    let fn_val = codegen.module.get_function("tl_kvcache_get_v").ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_kvcache_get_v not found".to_string())))?;
+    let call = codegen.builder.build_call(fn_val, &[instance_val.into(), layer_val.into()], "kv_get_v").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     let res = codegen.check_tensor_result(call, "kv_get_v_error")?;
     Ok((res, Type::Tensor(Box::new(Type::F32), 2))) // Assuming 2D tensor
 }
@@ -451,10 +451,10 @@ fn compile_kv_cache_clear<'ctx>(
     _args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if !instance_val.is_pointer_value() {
-         return Err("Instance not pointer in clear".into());
+         return Err(TlError::from(CodegenErrorKind::Internal("Instance not pointer in clear".to_string())));
     }
-    let fn_val = codegen.module.get_function("tl_kvcache_clear").ok_or("tl_kvcache_clear not found")?;
-    codegen.builder.build_call(fn_val, &[instance_val.into()], "").map_err(|e| e.to_string())?;
+    let fn_val = codegen.module.get_function("tl_kvcache_clear").ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_kvcache_clear not found".to_string())))?;
+    codegen.builder.build_call(fn_val, &[instance_val.into()], "").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     Ok((codegen.context.i64_type().const_int(0, false).into(), Type::Void))
 }
 
@@ -465,14 +465,14 @@ fn compile_kv_cache_len<'ctx>(
     _args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if !instance_val.is_pointer_value() {
-         return Err("Instance not pointer in len".into());
+         return Err(TlError::from(CodegenErrorKind::Internal("Instance not pointer in len".to_string())));
     }
-    let fn_val = codegen.module.get_function("tl_kvcache_len").ok_or("tl_kvcache_len not found")?;
-    let call = codegen.builder.build_call(fn_val, &[instance_val.into()], "kv_len").map_err(|e| e.to_string())?;
+    let fn_val = codegen.module.get_function("tl_kvcache_len").ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_kvcache_len not found".to_string())))?;
+    let call = codegen.builder.build_call(fn_val, &[instance_val.into()], "kv_len").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     
     let res = match call.try_as_basic_value() {
         ValueKind::Basic(v) => v,
-        _ => return Err("Invalid return from kv_len".into()),
+        _ => return Err(CodegenErrorKind::Internal("Invalid return from kv_len".to_string()).into()),
     };
     Ok((res, Type::I64))
 }
@@ -484,12 +484,12 @@ fn compile_kv_cache_resize<'ctx>(
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if !instance_val.is_pointer_value() {
-         return Err("Instance not pointer in resize".into());
+         return Err(TlError::from(CodegenErrorKind::Internal("Instance not pointer in resize".to_string())));
     }
-    if args.len() != 1 { return Err("KVCache::resize requires 1 argument (max_len)".into()); }
+    if args.len() != 1 { return Err(CodegenErrorKind::Internal("KVCache::resize requires 1 argument (max_len)".to_string()).into()); }
     let (max_len_val, _) = args[0];
 
-    let fn_val = codegen.module.get_function("tl_kvcache_resize").ok_or("tl_kvcache_resize not found")?;
-    codegen.builder.build_call(fn_val, &[instance_val.into(), max_len_val.into()], "").map_err(|e| e.to_string())?;
+    let fn_val = codegen.module.get_function("tl_kvcache_resize").ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_kvcache_resize not found".to_string())))?;
+    codegen.builder.build_call(fn_val, &[instance_val.into(), max_len_val.into()], "").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     Ok((codegen.context.i64_type().const_int(0, false).into(), Type::Void))
 }
