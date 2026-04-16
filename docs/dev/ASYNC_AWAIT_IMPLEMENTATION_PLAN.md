@@ -323,7 +323,7 @@ state_done:
 
 **対象ファイル**: `src/compiler/codegen/builtin_types/` 以下（新規ファイル群）
 
-- [ ] **5.1** `sleep(ms: i64) -> impl Future<Output = ()>` — タイマー Future
+- [x] **5.1** `sleep(ms: i64) -> impl Future<Output = ()>` — タイマー Future
 - [ ] **5.2** `AsyncChannel<T>` — 非同期チャネル
   - [ ] **5.2.1** `async fn send(val: T)` — バッファが満杯なら suspend
   - [ ] **5.2.2** `async fn recv() -> T` — データがなければ suspend

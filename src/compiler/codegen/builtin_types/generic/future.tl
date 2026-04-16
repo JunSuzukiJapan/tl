@@ -45,3 +45,26 @@ trait Future {
     type Output;
     fn poll(self) -> Poll<Self::Output>;
 }
+
+// ─── 組み込み非同期プリミティブ ─────────────────────────────────────────────
+
+/// 指定ミリ秒スリープする Future。
+/// poll() を呼ぶとブロッキングスリープを行い、完了後 Poll::Ready(0) を返す。
+struct SleepFuture {
+    millis: i64,
+}
+
+impl Future for SleepFuture {
+    type Output = i64;
+
+    fn poll(self) -> Poll<i64> {
+        System::sleep_ms(self.millis);
+        Poll::Ready(0)
+    }
+}
+
+/// `ms` ミリ秒後に完了する Future を生成する。
+/// 用例: let elapsed = sleep(100).await;
+fn sleep(ms: i64) -> SleepFuture {
+    SleepFuture { millis: ms }
+}
