@@ -167,9 +167,9 @@ pub enum ExprKind {
 
 ### 2.1 組み込みトレイト定義
 
-- [ ] **2.1.1** `Poll<T>` を組み込み enum として TL ランタイムに追加
-- [ ] **2.1.2** `Future` トレイトを組み込みトレイトとして登録（`SemanticAnalyzer` 初期化時）
-- [ ] **2.1.3** `Future` の組み込み TL 定義ファイルを作成（`builtin_types/future.tl`）
+- [x] **2.1.1** `Poll<T>` を組み込み enum として TL ランタイムに追加
+- [x] **2.1.2** `Future` トレイトを組み込みトレイトとして登録（`SemanticAnalyzer` 初期化時）
+- [x] **2.1.3** `Future` の組み込み TL 定義ファイルを作成（`builtin_types/future.tl`）
 
 ```tl
 // builtin_types/future.tl（コンパイラが自動ロード）
@@ -192,11 +192,11 @@ trait Future {
 
 ### 2.3 `.await` の型推論
 
-- [ ] **2.3.1** `SemanticAnalyzer` に `in_async_fn: bool` コンテキストフラグを追加
-- [ ] **2.3.2** `expr.await` の型推論: `expr` の型 `T` が `Future` を実装しているか確認
-- [ ] **2.3.3** `T::Output`（`<T as Future>::Output`）を解決して `.await` 式の型とする（Phase 0.2 依存）
-- [ ] **2.3.4** `async fn` 外での `.await` 使用をエラーとして報告
-- [ ] **2.3.5** `Future` を実装しない型への `.await` 適用をエラーとして報告
+- [x] **2.3.1** `SemanticAnalyzer` に `in_async_fn: bool` コンテキストフラグを追加
+- [x] **2.3.2** `expr.await` の型推論: `expr` の型 `T` が `Future` を実装しているか確認
+- [x] **2.3.3** `T::Output`（`<T as Future>::Output`）を解決して `.await` 式の型とする（Phase 0.2 依存）
+- [x] **2.3.4** `async fn` 外での `.await` 使用をエラーとして報告
+- [x] **2.3.5** `Future` を実装しない型への `.await` 適用をエラーとして報告
 - [ ] **2.3.6** `async fn foo() -> Result<T, E>` + `?` 演算子の組み合わせ検証
 
 ---
