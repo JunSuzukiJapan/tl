@@ -3063,8 +3063,6 @@ impl SemanticAnalyzer {
                                 generics: final_generics.clone(),
                                 payload,
                             };
-                            println!("SEMANTICS PARSED ENUMINIT: enum={}, final_generics.len()={}", enum_name, final_generics.len());
-
                             return Ok(Type::Enum(enum_name.clone(), final_generics));
                         }
                     }

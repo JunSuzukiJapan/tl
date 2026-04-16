@@ -296,6 +296,7 @@ impl TypeManager {
 mod tests {
     use super::*;
     use crate::compiler::codegen::CodeGenerator;
+    use crate::compiler::error::TlError;
     use inkwell::values::BasicValueEnum;
 
     // Mock function matching InstanceMethodEval signature
