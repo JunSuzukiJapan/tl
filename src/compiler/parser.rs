@@ -727,8 +727,15 @@ fn parse_postfix(input: Input, allow_struct: bool) -> IResult<Input, Expr, Parse
             continue;
         }
         
-        // Check for . (Field/Method/Tuple)
+        // Check for . (Field/Method/Tuple/Await)
         if let Ok((rest, _)) = expect_token(Token::Dot)(input) {
+            // .await — Future の後置 await 演算子
+            if let Ok((rest2, _)) = expect_token(Token::Await)(rest) {
+                let span = crate::compiler::error::Span::default();
+                expr = Spanned::new(ExprKind::Await(Box::new(expr)), span);
+                input = rest2;
+                continue;
+            }
             // Identifier or IntLiteral (tuple)
             if let Ok((rest2, field)) = identifier(rest) {
                 let span = crate::compiler::error::Span::default();
@@ -1722,10 +1729,11 @@ fn parse_pattern(input: Input) -> IResult<Input, Pattern, ParserError> {
 }
 
 fn parse_function_def(input: Input) -> IResult<Input, crate::compiler::ast::FunctionDef, ParserError> {
-    // [extern] fn name<T>(args) [: Ret] { body }
+    // [async] [extern] fn name<T>(args) [-> Ret] { body }
+    let (input, is_async) = map(opt(expect_token(Token::Async)), |o| o.is_some())(input)?;
     let (input, is_extern) = map(opt(expect_token(Token::Extern)), |o| o.is_some())(input)?;
     let (input, _) = expect_token(Token::Fn)(input)?;
-    
+
     // Commit
     cut(move |input| {
         let (input, name) = identifier(input)?;
@@ -1804,6 +1812,7 @@ fn parse_function_def(input: Input) -> IResult<Input, crate::compiler::ast::Func
             where_clause,
             is_extern,
             is_pub: false,
+            is_async,
         }))
     })(input)
 }

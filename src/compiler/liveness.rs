@@ -281,7 +281,7 @@ impl LivenessAnalyzer {
                     self.visit_expr(arg);
                 }
             }
-            ExprKind::Try(inner) => {
+            ExprKind::Try(inner) | ExprKind::Await(inner) => {
                 self.visit_expr(inner);
             }
             ExprKind::Closure { body, .. } => {

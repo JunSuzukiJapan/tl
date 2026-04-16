@@ -1635,6 +1635,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 where_clause: None,
                 is_extern: false,
                 is_pub: false,
+                is_async: false,
             };
             synthetic_main = Some(syn_main);
             // We can't push reference to local variable easily here due to lifetimes.

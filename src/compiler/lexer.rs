@@ -73,6 +73,10 @@ pub enum Token {
     Where,
     #[token("type")]
     TypeKw,
+    #[token("async")]
+    Async,
+    #[token("await")]
+    Await,
 
     // Types (primitive types also act as keywords in some context)
     #[token("f32")]

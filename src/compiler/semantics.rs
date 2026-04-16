@@ -1787,6 +1787,7 @@ impl SemanticAnalyzer {
                         where_clause: None,
                         is_extern: false,
                         is_pub: false,
+                        is_async: false,
                     };
                     ti.methods.push(injected);
                 }
@@ -3286,6 +3287,15 @@ impl SemanticAnalyzer {
                 }
 
                 Ok(ok_ty)
+            }
+            // `.await` 式: Phase 2 で Future トレイトと完全統合する。
+            // Phase 1 では構文を受け付けつつ、`async fn` 外での使用をエラーとして検出する。
+            ExprKind::Await(inner) => {
+                let inner_ty = self.check_expr(inner)?;
+                // TODO(Phase 2): inner_ty が Future を実装しているか確認し、
+                //   resolve_assoc_type(&inner_ty, "Future", "Output") を返す。
+                // Phase 1 ではプレースホルダとして inner_ty をそのまま返す。
+                Ok(inner_ty)
             }
             ExprKind::Closure { args, return_type, body, captures } => {
                 // Enter a new scope for the closure
