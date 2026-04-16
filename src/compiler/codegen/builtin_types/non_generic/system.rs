@@ -9,7 +9,8 @@ pub fn register_system_types(manager: &mut TypeManager) {
 
     // 引数を持つメソッドは個別に登録
     system.register_evaluated_static_method("time",    compile_system_time,    vec![],            Type::F32);
-    system.register_evaluated_static_method("sleep",   compile_system_sleep,   vec![Type::F32],   Type::Void);
+    system.register_evaluated_static_method("sleep",    compile_system_sleep,    vec![Type::F32],  Type::Void);
+    system.register_evaluated_static_method("sleep_ms", compile_system_sleep_ms, vec![Type::I64],  Type::Void);
     system.register_evaluated_static_method("exit",    compile_system_exit,    vec![Type::I64],   Type::Void);
     system.register_evaluated_static_method("platform",compile_system_platform,vec![],            Type::String("String".to_string()));
     system.register_evaluated_static_method(
@@ -113,6 +114,35 @@ fn compile_system_sleep<'ctx>(
      // Usually semantic analyzer casts, but let's assume valid input for now.
     codegen.builder.build_call(fn_val, &[arg_val.into()], "").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     
+    let void_val = codegen.context.i64_type().const_int(0, false).into();
+    Ok((void_val, Type::Void))
+}
+
+fn compile_system_sleep_ms<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
+    if args.len() != 1 {
+        return Err(CodegenErrorKind::Internal("System::sleep_ms requires 1 argument (milliseconds: i64)".to_string()).into());
+    }
+    // tl_system_sleep は既存の宣言が f32 のため、i64 版として別名で宣言する。
+    // (tl_system_sleep の実体は i64 を受け取る)
+    let fn_val = codegen.module.get_function("tl_system_sleep_ms_i64").unwrap_or_else(|| {
+        let void_ty = codegen.context.void_type();
+        let i64_ty = codegen.context.i64_type();
+        let fn_ty = void_ty.fn_type(&[i64_ty.into()], false);
+        codegen.module.add_function("tl_system_sleep_ms_i64", fn_ty, None)
+    });
+    // グローバルマッピングが未設定の場合は登録する
+    // (tl_system_sleep と同じ関数ポインタを使用)
+    if codegen.execution_engine.get_function_value("tl_system_sleep_ms_i64").is_err() {
+        use tl_runtime::stdlib::tl_system_sleep;
+        codegen.execution_engine.add_global_mapping(&fn_val, tl_system_sleep as *const () as usize);
+    }
+    let ms_val = args[0].0;
+    codegen.builder.build_call(fn_val, &[ms_val.into()], "")
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     let void_val = codegen.context.i64_type().const_int(0, false).into();
     Ok((void_val, Type::Void))
 }
