@@ -205,9 +205,9 @@ trait Future {
 
 **対象ファイル**: `crates/tl_runtime/src/executor_ffi.rs`（新規）
 
-- [ ] **3.1** `tl_executor_block_on(poll_fn, state) -> u64` を tl_runtime に実装（スピンループ）
-- [ ] **3.2** `tl_task_spawn(poll_fn, state) -> i64` を tl_runtime に実装（タスクID を返す）
-- [ ] **3.3** `tl_task_join(task_id) -> u64` を tl_runtime に実装
+- [x] **3.1** `tl_executor_block_on(poll_fn, state) -> u64` を tl_runtime に実装（スピンループ）
+- [x] **3.2** `tl_task_spawn(poll_fn, state) -> i64` を tl_runtime に実装（タスクID を返す）
+- [x] **3.3** `tl_task_join(task_id) -> u64` を tl_runtime に実装
 - [ ] **3.4** `TASK_REGISTRY: HashMap<i64, TaskState>` グローバル管理（`THREAD_REGISTRY` パターンに倣う）
 - [ ] **3.5** `AsyncRuntime` 組み込み型の TL 定義ファイルを作成（`builtin_types/async_runtime.tl`）
 - [ ] **3.6** `AsyncRuntime::block_on` を codegen のビルトイン関数として登録

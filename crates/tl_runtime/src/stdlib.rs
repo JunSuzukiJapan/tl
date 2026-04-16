@@ -59,6 +59,12 @@ pub use crate::thread_ffi::{
     tl_thread_join,
 };
 
+pub use crate::executor_ffi::{
+    tl_executor_block_on,
+    tl_task_spawn,
+    tl_task_join,
+};
+
 pub use crate::mutex_ffi::{
     tl_mutex_new,
     tl_mutex_modify,

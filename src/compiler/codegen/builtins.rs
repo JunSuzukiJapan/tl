@@ -3660,6 +3660,28 @@ pub fn declare_runtime_functions<'ctx>(
         execution_engine.add_global_mapping(&f, runtime::stdlib::tl_thread_join as *const () as usize);
     }
 
+    // Executor FFI (async/await runtime)
+    // tl_executor_block_on(poll_fn: *void, state: *void) -> u64
+    let fn_block_on_type = i64_type.fn_type(&[void_ptr.into(), void_ptr.into()], false);
+    add_fn("tl_executor_block_on", fn_block_on_type);
+    if let Some(f) = module.get_function("tl_executor_block_on") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_executor_block_on as *const () as usize);
+    }
+
+    // tl_task_spawn(poll_fn: *void, state: *void) -> i64
+    let fn_task_spawn_type = i64_type.fn_type(&[void_ptr.into(), void_ptr.into()], false);
+    add_fn("tl_task_spawn", fn_task_spawn_type);
+    if let Some(f) = module.get_function("tl_task_spawn") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_task_spawn as *const () as usize);
+    }
+
+    // tl_task_join(task_id: i64) -> u64
+    let fn_task_join_type = i64_type.fn_type(&[i64_type.into()], false);
+    add_fn("tl_task_join", fn_task_join_type);
+    if let Some(f) = module.get_function("tl_task_join") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_task_join as *const () as usize);
+    }
+
     // Mutex FFI
     let fn_mutex_new_type = i64_type.fn_type(&[i64_type.into(), void_ptr.into()], false);
     add_fn("tl_mutex_new", fn_mutex_new_type);
