@@ -405,9 +405,13 @@ def run_pipeline(
     )
     print(f"     {result.infer.status.value} ({result.infer.duration:.1f}s)")
 
-    if result.infer.status != StepStatus.PASS:
-        if args.verbose and result.infer.error:
-            print(f"     Error: {result.infer.error[:300]}")
+    # 推論の出力を常に表示
+    if result.infer.output and result.infer.output.strip():
+        for line in result.infer.output.strip().splitlines():
+            print(f"     {line}")
+    if result.infer.status != StepStatus.PASS and result.infer.error:
+        for line in result.infer.error.strip().splitlines():
+            print(f"     {line}")
 
     return result
 
