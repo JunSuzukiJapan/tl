@@ -218,8 +218,8 @@ fn train_epoch(state: TrainState, lr: f32, steps: i64) -> TrainState {
         
         loss.backward();
         
-        // Gradient accumulation over 4 steps
-        if s % 4 == 3 {
+        // Gradient accumulation over 8 steps
+        if s % 8 == 7 {
             st.model = st.model.step(st.global_step, lr);
             Tensor::clear_grads();
             st.global_step = st.global_step + 1;
@@ -246,8 +246,8 @@ fn main() {
         }
     }
     
-    let lr = 0.0002;
-    let epochs = 500;
+    let lr = 0.0003;
+    let epochs = 1000;
 
     print("Training Heavy Model: ignore_index + grad_accum_8");
 
