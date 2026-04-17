@@ -237,15 +237,6 @@ fn main() {
     let d_model = 128; 
     let mut state = TrainState(1, GPTHeavy::new(vocab_size, d_model));
     
-    if File::exists("model_heavy.safetensors") {
-        Param::load(state.model, "model_heavy.safetensors");
-        print("Loaded parameters from model_heavy.safetensors");
-        if File::exists("model_heavy_step.txt") {
-            state.global_step = File::read("model_heavy_step.txt").to_i64();
-            print("Restored global_step to: "); print(state.global_step);
-        }
-    }
-    
     let lr = 0.0003;
     let epochs = 1000;
 
