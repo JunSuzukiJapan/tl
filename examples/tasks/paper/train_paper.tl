@@ -201,7 +201,7 @@ fn train_step(model: GPT2, lr: f32, i: i64, j: i64) -> GPT2 {
 }
 
 fn train_epoch(model: GPT2, lr: f32, epoch: i64) -> GPT2 {
-    let total_steps = 10;
+    let total_steps = 30;
     let stride = 137;
     let offset = epoch * 79; 
 
@@ -256,10 +256,10 @@ fn main() {
         Param::load(model, "model_paper.safetensors");
     }
     
-    let lr = 0.001;
-    let epochs = 200;
+    let lr = 0.003;
+    let epochs = 2000;
 
-    print("Paper-based Training: 2-layer GPT, d_model=256, lr=0.001");
+    print("Paper-based Training: 2-layer GPT, d_model=256, lr=0.003, epochs=2000");
 
     for epoch in range(0, epochs) {
         model = train_epoch(model, lr, epoch);
