@@ -39,15 +39,17 @@ impl LayerNorm {
     fn new(d: i64) -> LayerNorm { 
         LayerNorm((Tensor::randn([d], true)*0.0+1.0).detach(true), (Tensor::randn([d], true)*0.0).detach(true)) 
     } 
-    fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
-        x + self.b 
-    } 
-    fn step(self, lr: f32) -> LayerNorm { 
-        let mut s = self; 
-        let gb = s.b.grad(); 
-        s.b = (s.b - gb * lr).detach(true); 
-        s 
-    } 
+    fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> {
+        x.layer_norm(self.w, self.b, 0.00001 as f64)
+    }
+    fn step(self, lr: f32) -> LayerNorm {
+        let mut s = self;
+        let gw = s.w.grad();
+        let gb = s.b.grad();
+        s.w = (s.w - gw * lr).detach(true);
+        s.b = (s.b - gb * lr).detach(true);
+        s
+    }
 }
 
 struct CausalSelfAttention { q_proj: Linear, k_proj: Linear, v_proj: Linear, p_proj: Linear }

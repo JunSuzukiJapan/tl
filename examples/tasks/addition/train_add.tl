@@ -246,20 +246,15 @@ fn train_epoch(state: TrainState, lr: f32, steps: i64) -> TrainState {
             12.0, 12.0, 12.0
         ];
         
-        let target = [
-            v_i_d10, 10.0, 
-            v_j_d1, v_j_d10, 11.0, 
-            v_s_d1, v_s_d10, v_s_d100, 
-            12.0, 12.0, 12.0, 12.0
-        ];
-        
         let X = data.reshape([1, 12]);
-        let Y = target.reshape([1, 12]);
-        
         let logits = st.model.forward(X);
         let logits_flat = logits.reshape([12, 13]);
-        let Y_flat = Y.reshape([12]);
-        let loss = logits_flat.cross_entropy(Y_flat);
+
+        // 位置5-7(答えのdigit)のみで損失計算
+        let logits_ans = logits_flat.slice(0, 5, 8, 1);
+        let Y_ans = [v_s_d1, v_s_d10, v_s_d100];
+        let Y_flat = Y_ans.reshape([3]);
+        let loss = logits_ans.cross_entropy(Y_flat);
         
         loss.backward();
         

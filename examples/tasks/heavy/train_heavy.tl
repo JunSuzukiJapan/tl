@@ -206,23 +206,15 @@ fn train_epoch(state: TrainState, lr: f32, steps: i64) -> TrainState {
             12.0, 12.0, 12.0
         ];
         
-        // Target: ignore_index=-1 で入力位置を除外
-        // 位置0-4: 入力の次のトークン予測 → -1 (ignore)
-        // 位置5-7: 答え予測 → s_d1, s_d10, s_d100
-        // 位置8-11: PAD → -1 (ignore)
-        let target = [
-            -1.0, -1.0, -1.0, -1.0, -1.0,
-            v_s_d1, v_s_d10, v_s_d100, 
-            -1.0, -1.0, -1.0, -1.0
-        ];
-        
         let X = data.reshape([1, 12]);
-        let Y = target.reshape([1, 12]);
-        
         let logits = st.model.forward(X);
         let logits_flat = logits.reshape([12, 13]);
-        let Y_flat = Y.reshape([12]);
-        let loss = logits_flat.cross_entropy(Y_flat);
+
+        // 位置5-7(答えのdigit)のみで損失計算
+        let logits_ans = logits_flat.slice(0, 5, 8, 1);
+        let Y_ans = [v_s_d1, v_s_d10, v_s_d100];
+        let Y_flat = Y_ans.reshape([3]);
+        let loss = logits_ans.cross_entropy(Y_flat);
         
         loss.backward();
         

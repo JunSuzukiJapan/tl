@@ -18,7 +18,7 @@ impl Linear { fn new(i: i64, o: i64) -> Linear { Linear((Tensor::randn([i, o], t
 struct Embedding { w: Tensor<f32, 2> }
 impl Embedding { fn new(v: i64, d: i64) -> Embedding { Embedding((Tensor::randn([v, d], true)*0.1).detach(true)) } fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> { i.embedding(self.w) } }
 struct LayerNorm { w: Tensor<f32, 1>, b: Tensor<f32, 1> }
-impl LayerNorm { fn new(d: i64) -> LayerNorm { LayerNorm((Tensor::randn([d], true)*0.0+1.0).detach(true), (Tensor::randn([d], true)*0.0).detach(true)) } fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { x + self.b } }
+impl LayerNorm { fn new(d: i64) -> LayerNorm { LayerNorm((Tensor::randn([d], true)*0.0+1.0).detach(true), (Tensor::randn([d], true)*0.0).detach(true)) } fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { x.layer_norm(self.w, self.b, 0.00001 as f64) } }
 struct CausalSelfAttention { q_proj: Linear, k_proj: Linear, v_proj: Linear, p_proj: Linear }
 impl CausalSelfAttention { fn new(d: i64) -> CausalSelfAttention { CausalSelfAttention(Linear::new(d, d), Linear::new(d, d), Linear::new(d, d), Linear::new(d, d)) } fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { let q = self.q_proj.forward(x); let k = self.k_proj.forward(x); let v = self.v_proj.forward(x); let k_t = k.transpose(1, 2); let qk = q.matmul(k_t) * 0.0625; let ones = Tensor::ones_like(qk); let upper_tri = ones - ones.tril(0); let masked = qk.masked_fill(upper_tri, -f32::INFINITY); let attn = masked.softmax(2); let y = attn.matmul(v); self.p_proj.forward(y) } }
 struct MLP { f: Linear, p: Linear }

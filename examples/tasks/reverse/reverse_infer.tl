@@ -41,13 +41,13 @@ impl CausalSelfAttention {
         let K = self.k_proj.forward(x);
         let V = self.v_proj.forward(x);
 
-        let Q_split = Q.reshape([10, 4, 32]); 
-        let Q_heads = Q_split.transpose(0, 1); 
-        
-        let K_split = K.reshape([10, 4, 32]);
-        let K_heads = K_split.transpose(0, 1); 
-        
-        let V_split = V.reshape([10, 4, 32]);
+        let Q_split = Q.reshape([9, 4, 32]);
+        let Q_heads = Q_split.transpose(0, 1);
+
+        let K_split = K.reshape([9, 4, 32]);
+        let K_heads = K_split.transpose(0, 1);
+
+        let V_split = V.reshape([9, 4, 32]);
         let V_heads = V_split.transpose(0, 1); 
         
         let K_heads_T = K_heads.transpose(1, 2);
@@ -67,7 +67,7 @@ impl CausalSelfAttention {
         let y_heads = probs_cont.matmul(V_cont);
         
         let y_trans = y_heads.transpose(0, 1); 
-        let y_out = y_trans.reshape([1, 10, 128]);
+        let y_out = y_trans.reshape([1, 9, 128]);
         self.o_proj.forward(y_out) 
     } 
 }
@@ -145,11 +145,11 @@ fn inference(model: Transformer, tests: i64) {
     let SEP = 10.0;
     let PAD = 11.0;
     
-    // Positions 0..9
+    // Positions 0..8 (seq_len=9, matching training)
     let p0 = 0.0; let p1 = 1.0; let p2 = 2.0; let p3 = 3.0; let p4 = 4.0;
-    let p5 = 5.0; let p6 = 6.0; let p7 = 7.0; let p8 = 8.0; let p9 = 9.0;
-    let P_arr = [p0, p1, p2, p3, p4, p5, p6, p7, p8, p9];
-    let P_t = P_arr.reshape([1, 10]);
+    let p5 = 5.0; let p6 = 6.0; let p7 = 7.0; let p8 = 8.0;
+    let P_arr = [p0, p1, p2, p3, p4, p5, p6, p7, p8];
+    let P_t = P_arr.reshape([1, 9]);
 
     let mut correct_count = 0;
 
@@ -159,14 +159,14 @@ fn inference(model: Transformer, tests: i64) {
         let d3 = get_random_digit();
         let d4 = get_random_digit();
         
-        let input = [d1, d2, d3, d4, SEP, d4, d3, d2, d1, PAD];
+        let input = [d1, d2, d3, d4, SEP, d4, d3, d2, d1];
         print("======== Test Case ========");
         print("Input (d1..d4):");
         print([d1, d2, d3, d4]);
-        
-        let X = input.reshape([1, 10]);
-        let logits = model.forward(X, P_t); // [1, 10, Vocab]
-        let logits_flat = logits.reshape([10, 12]);
+
+        let X = input.reshape([1, 9]);
+        let logits = model.forward(X, P_t); // [1, 9, Vocab]
+        let logits_flat = logits.reshape([9, 12]);
         
         let p4_logits = logits_flat.slice(0, 4, 5, 1).reshape([12]);
         let p5_logits = logits_flat.slice(0, 5, 6, 1).reshape([12]);
