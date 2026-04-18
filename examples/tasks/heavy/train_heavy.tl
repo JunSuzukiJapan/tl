@@ -23,7 +23,7 @@ impl Linear {
     } 
     fn step(self, step_n: i64, lr: f32) -> Linear { 
         let mut s = self; 
-        s.W.adam_step(s.W.grad(), s.mW, s.vW, step_n, lr, 0.9, 0.999, 1e-8, 0.01);
+        s.W.adam_step(s.W.grad(), s.mW, s.vW, step_n, lr, 0.9, 0.999, 1e-8, 1.0);
         s.b.adam_step(s.b.grad(), s.mb, s.vb, step_n, lr, 0.9, 0.999, 1e-8, 0.0);
         s
     }
@@ -218,8 +218,8 @@ fn train_epoch(state: TrainState, lr: f32, steps: i64) -> TrainState {
         
         loss.backward();
         
-        // Gradient accumulation over 8 steps
-        if s % 8 == 7 {
+        // Gradient accumulation over 4 steps
+        if s % 4 == 3 {
             st.model = st.model.step(st.global_step, lr);
             Tensor::clear_grads();
             st.global_step = st.global_step + 1;

@@ -22,7 +22,7 @@ impl Linear {
     }
     fn step(self, step_n: i64, lr: f32) -> Linear {
         let mut s = self;
-        s.W.adam_step(s.W.grad(), s.mW, s.vW, step_n, lr, 0.9, 0.999, 1e-8, 0.01);
+        s.W.adam_step(s.W.grad(), s.mW, s.vW, step_n, lr, 0.9, 0.999, 1e-8, 1.0);
         s.b.adam_step(s.b.grad(), s.mb, s.vb, step_n, lr, 0.9, 0.999, 1e-8, 0.0);
         s
     }
@@ -243,7 +243,7 @@ fn main() {
     }
 
     let lr = 0.0005;
-    let epochs = 1500;
+    let epochs = 2500;
 
     print("Paper Training: 2-layer GPT, d_model=256, Adam, lr=0.0005, epochs=1500");
 
