@@ -195,12 +195,6 @@ PIPELINES: Dict[str, PipelineConfig] = {
         model_files=["model_add.safetensors"],
         cwd="examples/tasks/addition",
     ),
-    "heavy": PipelineConfig(
-        train_file="examples/tasks/heavy/train_heavy.tl",
-        infer_file="examples/tasks/heavy/infer_heavy.tl",
-        model_files=["model_heavy.safetensors"],
-        cwd="examples/tasks/heavy",
-    ),
     "paper": PipelineConfig(
         train_file="examples/tasks/paper/train_paper.tl",
         infer_file="examples/tasks/paper/infer_paper.tl",
