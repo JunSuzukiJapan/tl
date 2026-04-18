@@ -258,7 +258,7 @@ fn main() {
     let mut model = Transformer::new(vocab_size, max_len, d_model);
     
     let lr = 0.001;
-    let epochs = 400;
+    let epochs = 600;
 
     print("Training Sequence Reversal (Generalized)...");
 
