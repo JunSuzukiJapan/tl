@@ -733,11 +733,11 @@ pub extern "C" fn tl_handle_runtime_error(msg: *mut StringStruct) {
 
 // ========== オプティマイザ ==========
 
-/// Adam optimizer step:
-/// param = param - lr * m_hat / (sqrt(v_hat) + eps)
+/// Adam optimizer step (GPU ネイティブ — ゼロコピーインプレース更新):
 /// m = beta1 * m + (1 - beta1) * grad
 /// v = beta2 * v + (1 - beta2) * grad^2
 /// weight_decay > 0 の場合は AdamW: param -= lr * weight_decay * param
+/// param -= lr * m_hat / (sqrt(v_hat) + eps)
 /// @ffi_sig (Tensor*, Tensor*, Tensor*, Tensor*, i64, f32, f32, f32, f32, f32) -> void
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_adam_step(
@@ -755,89 +755,132 @@ pub extern "C" fn tl_adam_step(
     if param.is_null() || grad.is_null() || m.is_null() || v.is_null() {
         return;
     }
-    use std::ffi::c_void;
-    let param_ptr = param as *mut c_void;
-    let grad_ptr = grad as *mut c_void;
-    let m_ptr = m as *mut c_void;
-    let v_ptr = v as *mut c_void;
-
-    let param_data = crate::device_ffi::read_runtime_tensor_to_f32_vec(param_ptr);
-    let grad_data = crate::device_ffi::read_runtime_tensor_to_f32_vec(grad_ptr);
-    let mut m_data = crate::device_ffi::read_runtime_tensor_to_f32_vec(m_ptr);
-    let mut v_data = crate::device_ffi::read_runtime_tensor_to_f32_vec(v_ptr);
 
     let t = step as f32 + 1.0;
     let bc1 = 1.0 - beta1.powf(t);
     let bc2 = 1.0 - beta2.powf(t);
 
-    let n = param_data.len().min(grad_data.len()).min(m_data.len()).min(v_data.len());
-    let mut new_param = param_data[..n].to_vec();
-
-    // AdamW: weight decay は直接 param に適用
-    if weight_decay > 0.0 {
-        for i in 0..n {
-            new_param[i] -= lr * weight_decay * new_param[i];
-        }
-    }
-
-    for i in 0..n {
-        m_data[i] = beta1 * m_data[i] + (1.0 - beta1) * grad_data[i];
-        v_data[i] = beta2 * v_data[i] + (1.0 - beta2) * grad_data[i] * grad_data[i];
-        let m_hat = m_data[i] / bc1;
-        let v_hat = v_data[i] / bc2;
-        new_param[i] -= lr * m_hat / (v_hat.sqrt() + eps);
-    }
-
-    // m, v のデータを更新 (インプレース)
-    // 形状を保存するため、元の shape を取得して適用
-    let shape_t = crate::device_ffi::tl_device_tensor_get_shape(param_ptr);
-    let rank = crate::device_ffi::tl_device_tensor_numel(shape_t) as usize;
-    let shape_data_ptr = crate::device_ffi::tl_device_tensor_data(shape_t);
-    let dims_f32 = unsafe { std::slice::from_raw_parts(shape_data_ptr, rank) };
-    let shape: Vec<usize> = dims_f32.iter().map(|&x| x as usize).collect();
-    crate::device_ffi::tl_device_tensor_free(shape_t);
-
-    let new_m_tensor = crate::device_ffi::create_runtime_tensor_f32(&m_data, &shape);
-    let new_v_tensor = crate::device_ffi::create_runtime_tensor_f32(&v_data, &shape);
-    let new_param_tensor = crate::device_ffi::create_runtime_tensor_f32(&new_param, &shape);
-
-    crate::device_ffi::tl_device_tensor_replace_data(param_ptr, new_param_tensor);
-    crate::device_ffi::tl_device_tensor_replace_data(m_ptr, new_m_tensor);
-    crate::device_ffi::tl_device_tensor_replace_data(v_ptr, new_v_tensor);
-
-    // 一時テンソルを解放
-    crate::device_ffi::tl_device_tensor_free(new_param_tensor);
-    crate::device_ffi::tl_device_tensor_free(new_m_tensor);
-    crate::device_ffi::tl_device_tensor_free(new_v_tensor);
-
-    // param の grad をゼロクリア (grad 蓄積を防止)
-    // backward() は grad_fn のみクリアし grad データは保持するため、
-    // 明示的にクリアしないと次の backward で累積してしまう
     if crate::device_ffi::is_cpu() {
+        // ── CPU: CpuTensor の data を直接操作 ──
         unsafe {
-            let cpu_param = &mut *(param as *mut tl_cpu::CpuTensor<f32>);
-            cpu_param.zero_grad();
+            let p = &mut *(param as *mut tl_cpu::CpuTensor<f32>);
+            let g = &*(grad as *const tl_cpu::CpuTensor<f32>);
+            let m_t = &mut *(m as *mut tl_cpu::CpuTensor<f32>);
+            let v_t = &mut *(v as *mut tl_cpu::CpuTensor<f32>);
+
+            let p_data = p.data_mut();
+            let g_data = g.data();
+            let m_data = m_t.data_mut();
+            let v_data = v_t.data_mut();
+
+            let n = p_data.len().min(g_data.len()).min(m_data.len()).min(v_data.len());
+
+            // AdamW: weight decay を直接 param に適用
+            if weight_decay > 0.0 {
+                for i in 0..n {
+                    p_data[i] -= lr * weight_decay * p_data[i];
+                }
+            }
+
+            for i in 0..n {
+                m_data[i] = beta1 * m_data[i] + (1.0 - beta1) * g_data[i];
+                v_data[i] = beta2 * v_data[i] + (1.0 - beta2) * g_data[i] * g_data[i];
+                let m_hat = m_data[i] / bc1;
+                let v_hat = v_data[i] / bc2;
+                p_data[i] -= lr * m_hat / (v_hat.sqrt() + eps);
+            }
+
+            p.zero_grad();
         }
     } else {
-        // GPU (CUDA / Metal): zero_grad を呼び出す
-        #[cfg(not(target_os = "macos"))]
-        {
-            unsafe {
-                let cuda_param = &mut *(param as *mut tl_cuda::tensor::CudaTensor);
-                cuda_param.zero_grad();
-            }
-        }
+        // ── GPU: Metal SharedMemory バッファを直接操作 ──
         #[cfg(target_os = "macos")]
         {
+            // GPU コマンド完了を待機してからバッファにアクセス
+            tl_metal::command_stream::sync_stream();
+
             unsafe {
-                let metal_param = &mut *(param as *mut tl_metal::MetalTensor);
-                metal_param.zero_grad();
+                let p = &mut *(param as *mut tl_metal::MetalTensor);
+                let g = &*(grad as *const tl_metal::MetalTensor);
+                let m_t = &mut *(m as *mut tl_metal::MetalTensor);
+                let v_t = &mut *(v as *mut tl_metal::MetalTensor);
+
+                let n = p.elem_count();
+                let p_ptr = p.buffer().contents() as *mut f32;
+                let g_ptr = g.buffer().contents() as *const f32;
+                let m_ptr = m_t.buffer().contents() as *mut f32;
+                let v_ptr = v_t.buffer().contents() as *mut f32;
+
+                // AdamW: weight decay を直接 param に適用
+                if weight_decay > 0.0 {
+                    for i in 0..n {
+                        *p_ptr.add(i) -= lr * weight_decay * *p_ptr.add(i);
+                    }
+                }
+
+                for i in 0..n {
+                    let gi = *g_ptr.add(i);
+                    *m_ptr.add(i) = beta1 * *m_ptr.add(i) + (1.0 - beta1) * gi;
+                    *v_ptr.add(i) = beta2 * *v_ptr.add(i) + (1.0 - beta2) * gi * gi;
+                    let m_hat = *m_ptr.add(i) / bc1;
+                    let v_hat = *v_ptr.add(i) / bc2;
+                    *p_ptr.add(i) -= lr * m_hat / (v_hat.sqrt() + eps);
+                }
+
+                p.zero_grad();
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            // CUDA: CudaTensor のバッファを直接操作
+            unsafe {
+                let p = &mut *(param as *mut tl_cuda::tensor::CudaTensor);
+                let g = &*(grad as *const tl_cuda::tensor::CudaTensor);
+                let m_t = &mut *(m as *mut tl_cuda::tensor::CudaTensor);
+                let v_t = &mut *(v as *mut tl_cuda::tensor::CudaTensor);
+
+                // CUDA: to_vec でデータ取得 → インプレース更新 → from_slice で書き戻し
+                let mut p_data = p.to_vec::<f32>();
+                let g_data = g.to_vec::<f32>();
+                let mut m_data = m_t.to_vec::<f32>();
+                let mut v_data = v_t.to_vec::<f32>();
+
+                let n = p_data.len().min(g_data.len()).min(m_data.len()).min(v_data.len());
+
+                if weight_decay > 0.0 {
+                    for i in 0..n {
+                        p_data[i] -= lr * weight_decay * p_data[i];
+                    }
+                }
+
+                for i in 0..n {
+                    m_data[i] = beta1 * m_data[i] + (1.0 - beta1) * g_data[i];
+                    v_data[i] = beta2 * v_data[i] + (1.0 - beta2) * g_data[i] * g_data[i];
+                    let m_hat = m_data[i] / bc1;
+                    let v_hat = v_data[i] / bc2;
+                    p_data[i] -= lr * m_hat / (v_hat.sqrt() + eps);
+                }
+
+                // replace_data で書き戻し
+                use std::ffi::c_void;
+                let shape = crate::device_ffi::read_runtime_tensor_shape(param as *mut c_void);
+                let new_p = crate::device_ffi::create_runtime_tensor_f32(&p_data, &shape);
+                let new_m = crate::device_ffi::create_runtime_tensor_f32(&m_data, &shape);
+                let new_v = crate::device_ffi::create_runtime_tensor_f32(&v_data, &shape);
+                crate::device_ffi::tl_device_tensor_replace_data(param as *mut c_void, new_p);
+                crate::device_ffi::tl_device_tensor_replace_data(m as *mut c_void, new_m);
+                crate::device_ffi::tl_device_tensor_replace_data(v as *mut c_void, new_v);
+                crate::device_ffi::tl_device_tensor_free(new_p);
+                crate::device_ffi::tl_device_tensor_free(new_m);
+                crate::device_ffi::tl_device_tensor_free(new_v);
+
+                p.zero_grad();
             }
         }
     }
 }
 
-/// SGD with momentum:
+/// SGD with momentum (GPU ネイティブ — ゼロコピーインプレース更新):
 /// velocity = momentum * velocity + grad + weight_decay * param
 /// param = param - lr * velocity (or nesterov variant)
 /// @ffi_sig (Tensor*, Tensor*, Tensor*, f32, f32, f32, f32, bool) -> void
@@ -855,46 +898,101 @@ pub extern "C" fn tl_sgd_step(
     if param.is_null() || grad.is_null() || velocity.is_null() {
         return;
     }
-    use std::ffi::c_void;
-    let param_ptr = param as *mut c_void;
-    let grad_ptr = grad as *mut c_void;
-    let vel_ptr = velocity as *mut c_void;
 
-    let param_data = crate::device_ffi::read_runtime_tensor_to_f32_vec(param_ptr);
-    let grad_data = crate::device_ffi::read_runtime_tensor_to_f32_vec(grad_ptr);
-    let mut vel_data = crate::device_ffi::read_runtime_tensor_to_f32_vec(vel_ptr);
+    if crate::device_ffi::is_cpu() {
+        // ── CPU: CpuTensor の data を直接操作 ──
+        unsafe {
+            let p = &mut *(param as *mut tl_cpu::CpuTensor<f32>);
+            let g = &*(grad as *const tl_cpu::CpuTensor<f32>);
+            let vel = &mut *(velocity as *mut tl_cpu::CpuTensor<f32>);
 
-    let n = param_data.len().min(grad_data.len()).min(vel_data.len());
-    let mut new_param = param_data[..n].to_vec();
+            let p_data = p.data_mut();
+            let g_data = g.data();
+            let v_data = vel.data_mut();
 
-    for i in 0..n {
-        let mut g = grad_data[i];
-        if weight_decay > 0.0 {
-            g += weight_decay * param_data[i];
+            let n = p_data.len().min(g_data.len()).min(v_data.len());
+
+            for i in 0..n {
+                let mut gi = g_data[i];
+                if weight_decay > 0.0 {
+                    gi += weight_decay * p_data[i];
+                }
+                v_data[i] = momentum * v_data[i] + (1.0 - dampening) * gi;
+                if nesterov {
+                    p_data[i] -= lr * (gi + momentum * v_data[i]);
+                } else {
+                    p_data[i] -= lr * v_data[i];
+                }
+            }
         }
-        vel_data[i] = momentum * vel_data[i] + (1.0 - dampening) * g;
-        if nesterov {
-            new_param[i] -= lr * (g + momentum * vel_data[i]);
-        } else {
-            new_param[i] -= lr * vel_data[i];
+    } else {
+        // ── GPU: Metal SharedMemory バッファを直接操作 ──
+        #[cfg(target_os = "macos")]
+        {
+            tl_metal::command_stream::sync_stream();
+
+            unsafe {
+                let p = &mut *(param as *mut tl_metal::MetalTensor);
+                let g = &*(grad as *const tl_metal::MetalTensor);
+                let vel = &mut *(velocity as *mut tl_metal::MetalTensor);
+
+                let n = p.elem_count();
+                let p_ptr = p.buffer().contents() as *mut f32;
+                let g_ptr = g.buffer().contents() as *const f32;
+                let v_ptr = vel.buffer().contents() as *mut f32;
+
+                for i in 0..n {
+                    let mut gi = *g_ptr.add(i);
+                    if weight_decay > 0.0 {
+                        gi += weight_decay * *p_ptr.add(i);
+                    }
+                    *v_ptr.add(i) = momentum * *v_ptr.add(i) + (1.0 - dampening) * gi;
+                    if nesterov {
+                        *p_ptr.add(i) -= lr * (gi + momentum * *v_ptr.add(i));
+                    } else {
+                        *p_ptr.add(i) -= lr * *v_ptr.add(i);
+                    }
+                }
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            // CUDA: to_vec → 計算 → replace_data
+            unsafe {
+                let p = &mut *(param as *mut tl_cuda::tensor::CudaTensor);
+                let g = &*(grad as *const tl_cuda::tensor::CudaTensor);
+                let vel = &mut *(velocity as *mut tl_cuda::tensor::CudaTensor);
+
+                let mut p_data = p.to_vec::<f32>();
+                let g_data = g.to_vec::<f32>();
+                let mut v_data = vel.to_vec::<f32>();
+
+                let n = p_data.len().min(g_data.len()).min(v_data.len());
+
+                for i in 0..n {
+                    let mut gi = g_data[i];
+                    if weight_decay > 0.0 {
+                        gi += weight_decay * p_data[i];
+                    }
+                    v_data[i] = momentum * v_data[i] + (1.0 - dampening) * gi;
+                    if nesterov {
+                        p_data[i] -= lr * (gi + momentum * v_data[i]);
+                    } else {
+                        p_data[i] -= lr * v_data[i];
+                    }
+                }
+
+                use std::ffi::c_void;
+                let shape = crate::device_ffi::read_runtime_tensor_shape(param as *mut c_void);
+                let new_p = crate::device_ffi::create_runtime_tensor_f32(&p_data, &shape);
+                let new_v = crate::device_ffi::create_runtime_tensor_f32(&v_data, &shape);
+                crate::device_ffi::tl_device_tensor_replace_data(param as *mut c_void, new_p);
+                crate::device_ffi::tl_device_tensor_replace_data(velocity as *mut c_void, new_v);
+                crate::device_ffi::tl_device_tensor_free(new_p);
+                crate::device_ffi::tl_device_tensor_free(new_v);
+            }
         }
     }
-
-    let shape_t = crate::device_ffi::tl_device_tensor_get_shape(param_ptr);
-    let rank = crate::device_ffi::tl_device_tensor_numel(shape_t) as usize;
-    let shape_data_ptr = crate::device_ffi::tl_device_tensor_data(shape_t);
-    let dims_f32 = unsafe { std::slice::from_raw_parts(shape_data_ptr, rank) };
-    let shape: Vec<usize> = dims_f32.iter().map(|&x| x as usize).collect();
-    crate::device_ffi::tl_device_tensor_free(shape_t);
-
-    let new_param_tensor = crate::device_ffi::create_runtime_tensor_f32(&new_param, &shape);
-    let new_vel_tensor = crate::device_ffi::create_runtime_tensor_f32(&vel_data, &shape);
-
-    crate::device_ffi::tl_device_tensor_replace_data(param_ptr, new_param_tensor);
-    crate::device_ffi::tl_device_tensor_replace_data(vel_ptr, new_vel_tensor);
-
-    crate::device_ffi::tl_device_tensor_free(new_param_tensor);
-    crate::device_ffi::tl_device_tensor_free(new_vel_tensor);
 }
 
 // ========== 学習率スケジューラ ==========
