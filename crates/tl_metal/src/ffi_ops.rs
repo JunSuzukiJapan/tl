@@ -1239,7 +1239,26 @@ pub fn tl_metal_new_causal_mask(size: usize) -> *mut OpaqueTensor {
 #[no_mangle]
 pub fn tl_metal_narrow(t: *mut OpaqueTensor, dim: usize, start: usize, len: usize) -> *mut OpaqueTensor {
     if t.is_null() { return std::ptr::null_mut(); }
-    make_tensor_safe(unsafe { (&*t).narrow(dim, start, len) })
+    let tensor = unsafe { &*t };
+    match tensor.narrow(dim, start, len) {
+        Ok(result) => {
+            let ptr = make_tensor(result);
+            if tensor.requires_grad() {
+                use crate::autograd::ops::SliceBackward;
+                unsafe { (&mut *ptr).set_grad_fn(Box::new(SliceBackward {
+                    input: tensor_ref_from_ptr(t),
+                    input_shape: tensor.shape().to_vec(),
+                    dim,
+                    start,
+                })); }
+            }
+            ptr
+        },
+        Err(e) => {
+            eprintln!("narrow failed: {}", e);
+            std::ptr::null_mut()
+        }
+    }
 }
 
 #[no_mangle]

@@ -1566,8 +1566,26 @@ pub extern "C" fn tl_cpu_tensor_narrow(
     if t.is_null() {
         return std::ptr::null_mut();
     }
-    match unsafe { (&*t).narrow_impl(dim, start, len) } {
-        Ok(res) => make_tensor(res),
+    let tensor = unsafe { &*t };
+    let input_shape = tensor.shape().to_vec();
+    match tensor.narrow_impl(dim, start, len) {
+        Ok(res) => {
+            let ptr = make_tensor(res);
+            if tensor.requires_grad() {
+                use crate::autograd::ops::SliceBackward;
+                unsafe {
+                    (&mut *ptr).set_grad_fn(Box::new(SliceBackward {
+                        input: tensor_ref_from_ptr(t),
+                        input_shape,
+                        dim,
+                        start,
+                        end: start + len,
+                        step: 1,
+                    }));
+                }
+            }
+            ptr
+        }
         Err(e) => {
             eprintln!("Runtime Error in narrow: {}", e);
             std::ptr::null_mut()
@@ -1584,8 +1602,29 @@ pub extern "C" fn tl_cpu_tensor_slice(
     if t.is_null() {
         return std::ptr::null_mut();
     }
-    match unsafe { (&*t).narrow_impl(dim as usize, start as usize, len as usize) } {
-        Ok(res) => make_tensor(res),
+    let tensor = unsafe { &*t };
+    let input_shape = tensor.shape().to_vec();
+    let dim_u = dim as usize;
+    let start_u = start as usize;
+    let len_u = len as usize;
+    match tensor.narrow_impl(dim_u, start_u, len_u) {
+        Ok(res) => {
+            let ptr = make_tensor(res);
+            if tensor.requires_grad() {
+                use crate::autograd::ops::SliceBackward;
+                unsafe {
+                    (&mut *ptr).set_grad_fn(Box::new(SliceBackward {
+                        input: tensor_ref_from_ptr(t),
+                        input_shape,
+                        dim: dim_u,
+                        start: start_u,
+                        end: start_u + len_u,
+                        step: 1,
+                    }));
+                }
+            }
+            ptr
+        }
         Err(e) => {
             eprintln!("Runtime Error in slice: {}", e);
             std::ptr::null_mut()

@@ -833,4 +833,61 @@ unsafe impl Send for DropoutBackward {}
 unsafe impl Sync for DropoutBackward {}
 unsafe impl Send for TrilBackward {}
 unsafe impl Sync for TrilBackward {}
+unsafe impl Send for SliceBackward {}
+unsafe impl Sync for SliceBackward {}
 
+/// slice/narrow の勾配:
+/// backward では入力と同じ shape のゼロテンソルを作り、
+/// slice 位置に grad_output を埋め込む（scatter）。
+pub struct SliceBackward {
+    pub input: TensorRef,
+    pub input_shape: Vec<usize>,
+    pub dim: usize,
+    pub start: usize,
+}
+
+impl GradFn for SliceBackward {
+    fn backward(&self, grad_output: &MetalTensor) -> BackendResult<Vec<MetalTensor>> {
+        let grad_input = MetalTensor::zeros(&self.input_shape, DType::F32);
+        
+        // 各次元のストライドを計算
+        let ndim = self.input_shape.len();
+        let mut strides = vec![1usize; ndim];
+        for i in (0..ndim.saturating_sub(1)).rev() {
+            strides[i] = strides[i + 1] * self.input_shape[i + 1];
+        }
+        
+        // GPU 同期してバッファに直接アクセス
+        crate::command_stream::sync_stream();
+        
+        let grad_out_shape = grad_output.shape().to_vec();
+        let slice_len = grad_out_shape[self.dim]; // slice された dim のサイズ
+        
+        // outer = prod(shape[..dim]), inner = prod(shape[dim+1..])
+        let outer: usize = self.input_shape[..self.dim].iter().product();
+        let inner: usize = self.input_shape[self.dim + 1..].iter().product();
+        let input_dim_size = self.input_shape[self.dim];
+        
+        unsafe {
+            let src_ptr = grad_output.buffer().contents() as *const f32;
+            let dst_ptr = grad_input.buffer().contents() as *mut f32;
+            
+            for o in 0..outer {
+                for s in 0..slice_len {
+                    let src_offset = o * slice_len * inner + s * inner;
+                    let dst_offset = o * input_dim_size * inner + (self.start + s) * inner;
+                    std::ptr::copy_nonoverlapping(
+                        src_ptr.add(src_offset),
+                        dst_ptr.add(dst_offset),
+                        inner,
+                    );
+                }
+            }
+        }
+        
+        Ok(vec![grad_input])
+    }
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.input.clone()]
+    }
+}
