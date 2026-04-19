@@ -1,2 +1,4 @@
 // Future trait and Poll enum source
-pub const SOURCE: &str = include_str!("future.tl");
+pub fn get_source() -> String {
+    crate::compiler::codegen::builtin_types::assets::BuiltinAssets::get_source("generic/future.tl")
+}

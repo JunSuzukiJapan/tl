@@ -1,11 +1,10 @@
 use crate::compiler::builtin_loader::BuiltinLoader;
 
-pub const SOURCE: &str = include_str!("net.tl");
-
 pub fn load_net_data() -> (crate::compiler::builtin_loader::BuiltinTypeData, crate::compiler::builtin_loader::BuiltinTypeData) {
-    let listener = BuiltinLoader::load_module_data(SOURCE, "TcpListener")
+    let source = crate::compiler::codegen::builtin_types::assets::BuiltinAssets::get_source("non_generic/net.tl");
+    let listener = BuiltinLoader::load_module_data(&source, "TcpListener")
         .expect("Failed to load non-generic builtin TcpListener (net)");
-    let stream = BuiltinLoader::load_module_data(SOURCE, "TcpStream")
+    let stream = BuiltinLoader::load_module_data(&source, "TcpStream")
         .expect("Failed to load non-generic builtin TcpStream (net)");
     (listener, stream)
 }

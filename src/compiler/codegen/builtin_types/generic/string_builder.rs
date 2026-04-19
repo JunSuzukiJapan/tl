@@ -1,10 +1,9 @@
 use crate::compiler::builtin_loader::{BuiltinLoader, BuiltinTypeData};
 use crate::compiler::ast::StructDef;
 
-pub const SOURCE: &str = include_str!("string_builder.tl");
-
 pub fn load_string_builder_data() -> BuiltinTypeData {
-    BuiltinLoader::load_builtin_type(SOURCE, "StringBuilder")
+    let source = crate::compiler::codegen::builtin_types::assets::BuiltinAssets::get_source("generic/string_builder.tl");
+    BuiltinLoader::load_builtin_type(&source, "StringBuilder")
         .expect("Failed to load StringBuilder type data")
 }
 

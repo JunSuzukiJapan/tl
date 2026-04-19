@@ -1,2 +1,4 @@
 // Standard trait definitions for TL language
-pub const SOURCE: &str = include_str!("traits.tl");
+pub fn get_source() -> String {
+    crate::compiler::codegen::builtin_types::assets::BuiltinAssets::get_source("generic/traits.tl")
+}

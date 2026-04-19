@@ -564,34 +564,35 @@ fn print_tl_error_with_source(error: &TlError, source: &str, file_hint: Option<&
 }
 
 fn load_builtins() -> Result<tl_lang::compiler::ast::Module> {
-    use tl_lang::compiler::codegen::builtin_types;
+    use tl_lang::compiler::codegen::builtin_types::assets::BuiltinAssets;
 
-    let sources = [
-        builtin_types::traits::SOURCE,
-        builtin_types::vec::SOURCE,
-        builtin_types::hashmap::SOURCE,
-        builtin_types::hashset::SOURCE,
-        builtin_types::vec_deque::SOURCE,
-        builtin_types::btreemap::SOURCE,
-        builtin_types::string_builder::SOURCE,
-        builtin_types::option::SOURCE,
-        builtin_types::result::SOURCE,
-        builtin_types::llm::SOURCE,
-        builtin_types::generic::mutex::SOURCE,
-        builtin_types::generic::channel::SOURCE,
-        builtin_types::generic::future::SOURCE,
-        builtin_types::non_generic::type_info::SOURCE,
-        builtin_types::non_generic::atomic_types::SOURCE_I64,
-        builtin_types::non_generic::atomic_types::SOURCE_I32,
-        builtin_types::non_generic::time_types::SOURCE_DURATION,
-        builtin_types::non_generic::time_types::SOURCE_INSTANT,
-        builtin_types::non_generic::time_types::SOURCE_DATETIME,
-        builtin_types::non_generic::net::SOURCE,
+    let paths = [
+        "generic/traits.tl",
+        "generic/vec.tl",
+        "generic/hashmap.tl",
+        "generic/hashset.tl",
+        "generic/vec_deque.tl",
+        "generic/btreemap.tl",
+        "generic/string_builder.tl",
+        "generic/option.tl",
+        "generic/result.tl",
+        "non_generic/llm_types.tl",
+        "generic/mutex.tl",
+        "generic/channel.tl",
+        "generic/future.tl",
+        "non_generic/type_info.tl",
+        "non_generic/atomic_i64.tl",
+        "non_generic/atomic_i32.tl",
+        "non_generic/duration.tl",
+        "non_generic/instant.tl",
+        "non_generic/datetime.tl",
+        "non_generic/net.tl",
     ];
 
     let mut combined = tl_lang::compiler::ast::Module::new();
-    for (i, src) in sources.iter().enumerate() {
-        let m = tl_lang::compiler::parser::parse_from_source(src)
+    for (i, path) in paths.iter().enumerate() {
+        let src = BuiltinAssets::get_source(path);
+        let m = tl_lang::compiler::parser::parse_from_source(&src)
             .map_err(|e| anyhow::anyhow!("Failed to parse builtin {}: {:?}", i, e))?;
         combined.merge(m);
     }

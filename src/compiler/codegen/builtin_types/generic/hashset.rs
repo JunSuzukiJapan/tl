@@ -1,15 +1,15 @@
 use crate::compiler::builtin_loader::{BuiltinLoader, BuiltinTypeData};
 use crate::compiler::ast::StructDef;
 
-pub const SOURCE: &str = include_str!("hashset.tl");
-
 pub fn load_hashset_data() -> BuiltinTypeData {
-    BuiltinLoader::load_builtin_type(SOURCE, "HashSet")
+    let source = crate::compiler::codegen::builtin_types::assets::BuiltinAssets::get_source("generic/hashset.tl");
+    BuiltinLoader::load_builtin_type(&source, "HashSet")
         .expect("Failed to load HashSet type data")
 }
 
 pub fn load_set_entry_data() -> BuiltinTypeData {
-    BuiltinLoader::load_builtin_type(SOURCE, "SetEntry")
+    let source = crate::compiler::codegen::builtin_types::assets::BuiltinAssets::get_source("generic/hashset.tl");
+    BuiltinLoader::load_builtin_type(&source, "SetEntry")
         .expect("Failed to load SetEntry type data")
 }
 

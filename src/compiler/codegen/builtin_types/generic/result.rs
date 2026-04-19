@@ -1,10 +1,9 @@
 use crate::compiler::builtin_loader::{BuiltinLoader, BuiltinTypeData};
 use crate::compiler::ast::EnumDef;
 
-pub const SOURCE: &str = include_str!("result.tl");
-
 pub fn load_result_data() -> BuiltinTypeData {
-    BuiltinLoader::load_builtin_type(SOURCE, "Result")
+    let source = crate::compiler::codegen::builtin_types::assets::BuiltinAssets::get_source("generic/result.tl");
+    BuiltinLoader::load_builtin_type(&source, "Result")
         .expect("Failed to load Result type data")
 }
 

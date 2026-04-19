@@ -1,6 +1,7 @@
 pub mod generic;
 pub mod non_generic;
 pub mod resolver;
+pub mod assets;
 
 // Re-export specific modules for easier access
 pub use generic::option;

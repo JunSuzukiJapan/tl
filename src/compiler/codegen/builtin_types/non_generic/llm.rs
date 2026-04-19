@@ -9,10 +9,9 @@ use inkwell::values::{BasicValueEnum, ValueKind};
 
 
 
-pub const SOURCE: &str = include_str!("llm_types.tl");
-
 pub fn load_llm_data() -> BuiltinTypeData {
-    BuiltinLoader::load_module_data(SOURCE, "LLM")
+    let source = crate::compiler::codegen::builtin_types::assets::BuiltinAssets::get_source("non_generic/llm_types.tl");
+    BuiltinLoader::load_module_data(&source, "LLM")
         .expect("Failed to load LLM type data")
 }
 

@@ -1,15 +1,15 @@
 use crate::compiler::builtin_loader::{BuiltinLoader, BuiltinTypeData};
 use crate::compiler::ast::StructDef;
 
-pub const SOURCE: &str = include_str!("hashmap.tl");
-
 pub fn load_hashmap_data() -> BuiltinTypeData {
-    BuiltinLoader::load_builtin_type(SOURCE, "HashMap")
+    let source = crate::compiler::codegen::builtin_types::assets::BuiltinAssets::get_source("generic/hashmap.tl");
+    BuiltinLoader::load_builtin_type(&source, "HashMap")
         .expect("Failed to load HashMap type data")
 }
 
 pub fn load_entry_data() -> BuiltinTypeData {
-    BuiltinLoader::load_builtin_type(SOURCE, "Entry")
+    let source = crate::compiler::codegen::builtin_types::assets::BuiltinAssets::get_source("generic/hashmap.tl");
+    BuiltinLoader::load_builtin_type(&source, "Entry")
         .expect("Failed to load Entry type data")
 }
 
