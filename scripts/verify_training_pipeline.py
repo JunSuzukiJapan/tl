@@ -202,7 +202,7 @@ PIPELINES: Dict[str, PipelineConfig] = {
         model_files=["model_add.safetensors"],
         cwd="examples/tasks/addition",
         quick_overrides={
-            "let epochs = 2500;": "let epochs = 10;",
+            "let epochs = 500;": "let epochs = 10;",
         },
     ),
     "paper": PipelineConfig(
@@ -230,6 +230,15 @@ PIPELINES: Dict[str, PipelineConfig] = {
         cwd="examples/tasks/mnist",
         quick_overrides={
             "let num_epochs = 30;": "let num_epochs = 2;",
+        },
+    ),
+    "linear": PipelineConfig(
+        train_file="examples/tasks/linear/train.tl",
+        infer_file="examples/tasks/linear/infer.tl",
+        model_files=["linear_model.safetensors"],
+        cwd="examples/tasks/linear",
+        quick_overrides={
+            "let epochs = 500;": "let epochs = 10;",
         },
     ),
 }
