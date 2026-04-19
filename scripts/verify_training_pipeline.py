@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: E501
 """
 学習パイプライン検証スクリプト
 
@@ -22,9 +23,11 @@ import re
 import time
 import signal
 import atexit
+import shutil
+import tempfile
 import argparse
 from pathlib import Path
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional, List, Tuple, Set, Dict
 from enum import Enum
 
@@ -180,6 +183,7 @@ class PipelineConfig:
     infer_file: str          # プロジェクトルートからの相対パス
     model_files: List[str]   # CWD からの相対パス (生成されるモデルファイル)
     cwd: str                 # プロジェクトルートからの相対パス (実行時のCWD)
+    quick_overrides: Dict[str, str] = field(default_factory=dict)  # --quick 用: {検索文字列: 置換文字列}
 
 
 PIPELINES: Dict[str, PipelineConfig] = {
@@ -188,30 +192,45 @@ PIPELINES: Dict[str, PipelineConfig] = {
         infer_file="examples/tasks/reverse/reverse_infer.tl",
         model_files=["reverse_model.safetensors"],
         cwd="examples/tasks/reverse",
+        quick_overrides={
+            "let epochs = 600;": "let epochs = 10;",
+        },
     ),
     "addition": PipelineConfig(
         train_file="examples/tasks/addition/train_add.tl",
         infer_file="examples/tasks/addition/infer_add.tl",
         model_files=["model_add.safetensors"],
         cwd="examples/tasks/addition",
+        quick_overrides={
+            "let epochs = 2500;": "let epochs = 10;",
+        },
     ),
     "paper": PipelineConfig(
         train_file="examples/tasks/paper/train_paper.tl",
         infer_file="examples/tasks/paper/infer_paper.tl",
         model_files=["model_paper.safetensors"],
         cwd="examples/tasks/paper",
+        quick_overrides={
+            "let epochs = 2500;": "let epochs = 10;",
+        },
     ),
     "recall": PipelineConfig(
         train_file="examples/tasks/recall/train_recall.tl",
         infer_file="examples/tasks/recall/infer_recall.tl",
         model_files=["recall_weights.safetensors"],
         cwd="examples/tasks/recall",
+        quick_overrides={
+            "for i in range(0, 2500)": "for i in range(0, 100)",
+        },
     ),
     "mnist": PipelineConfig(
         train_file="examples/tasks/mnist/train.tl",
         infer_file="examples/tasks/mnist/infer.tl",
         model_files=["mnist_weights.safetensors"],
         cwd="examples/tasks/mnist",
+        quick_overrides={
+            "let num_epochs = 30;": "let num_epochs = 2;",
+        },
     ),
 }
 
@@ -321,6 +340,37 @@ def run_step(
 
 # ── メインパイプライン実行 ────────────────────────────
 
+def _create_quick_train_file(
+    original: Path,
+    overrides: Dict[str, str],
+    task_cwd: Path,
+    verbose: bool,
+) -> Optional[Path]:
+    """--quick 用: .tl ファイルをコピーしてエポック数等を書き換える"""
+    if not overrides:
+        return None
+
+    content = original.read_text()
+    applied = []
+    for search, replace in overrides.items():
+        if search in content:
+            content = content.replace(search, replace)
+            applied.append(f"{search!r} → {replace!r}")
+
+    if not applied:
+        if verbose:
+            print(f"     ⚠️ quick_overrides の一致なし: {list(overrides.keys())}")
+        return None
+
+    # 一時ファイルを task_cwd に作成 (TL は CWD からの相対パスで実行)
+    quick_file = task_cwd / f"_quick_{original.name}"
+    quick_file.write_text(content)
+    if verbose:
+        for a in applied:
+            print(f"     ⚡ quick override: {a}")
+    return quick_file
+
+
 def run_pipeline(
     task_name: str,
     config: PipelineConfig,
@@ -336,8 +386,19 @@ def run_pipeline(
     train_file = project_root / config.train_file
     infer_file = project_root / config.infer_file
 
+    # --quick モード: エポック数を短縮した一時ファイルを作成
+    quick_train_file = None
+    if args.quick and config.quick_overrides:
+        quick_train_file = _create_quick_train_file(
+            train_file, config.quick_overrides, task_cwd, args.verbose
+        )
+
+    actual_train_file = quick_train_file or train_file
+    actual_train_name = actual_train_file.name
+
     # ── Step 1: 学習実行 ──
-    print(f"\n  🏋️ 学習実行: {config.train_file}")
+    quick_label = " [QUICK]" if quick_train_file else ""
+    print(f"\n  🏋️ 学習実行: {config.train_file}{quick_label}")
     print(f"     (タイムアウト: {args.train_timeout}秒)")
 
     # 既存のモデルファイルを削除（テストの独立性を確保）
@@ -349,14 +410,18 @@ def run_pipeline(
                 print(f"     🗑️ 既存モデルファイル削除: {mf}")
 
     result.train = run_step(
-        step_name=f"train({train_file.name})",
-        cmd=[str(tl_binary), train_file.name],
+        step_name=f"train({actual_train_name})",
+        cmd=[str(tl_binary), actual_train_name],
         cwd=task_cwd,
         env=env,
         timeout=args.train_timeout,
         verbose=args.verbose,
     )
     print(f"     {result.train.status.value} ({result.train.duration:.1f}s)")
+
+    # quick 用一時ファイルを削除
+    if quick_train_file and quick_train_file.exists():
+        quick_train_file.unlink()
 
     if result.train.status != StepStatus.PASS:
         if args.verbose and result.train.error:
@@ -459,6 +524,10 @@ def main():
     )
     parser.add_argument("--filter", "-f", type=str, help="特定タスクのみ実行")
     parser.add_argument(
+        "--quick", "-q", action="store_true",
+        help="高速検証モード: エポック数を自動で短縮して全パイプラインを検証"
+    )
+    parser.add_argument(
         "--cooldown", type=float, default=5.0,
         help="パイプライン間クールダウン秒数 (デフォルト: 5.0)"
     )
@@ -547,8 +616,16 @@ def main():
     else:
         selected = PIPELINES
 
+    # --quick モード時、タイムアウトを自動調整
+    if args.quick:
+        if args.train_timeout == 3600:  # デフォルト値なら短縮
+            args.train_timeout = 300
+        if args.cooldown == 5.0:
+            args.cooldown = 2.0
+
     # ヘッダー表示
-    print("🔍 学習パイプライン検証")
+    mode_label = "⚡QUICK" if args.quick else "FULL"
+    print(f"🔍 学習パイプライン検証 [{mode_label}]")
     print(f"📋 対象: {', '.join(selected.keys())}")
     print(f"⏱️ 学習タイムアウト: {args.train_timeout}秒 / 推論タイムアウト: {args.infer_timeout}秒")
     print(f"🛡️ クールダウン: {args.cooldown}秒")
