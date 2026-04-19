@@ -1,40 +1,64 @@
 // Sequence Reversal 推論 (reverse_train.tl で学習したモデルを使用)
 // Sequence Reversal Inference
 
-struct Linear { W: Tensor<f32, 2>, b: Tensor<f32, 1> }
+struct Linear { 
+    W: Tensor<f32, 2>, b: Tensor<f32, 1>,
+    mW: Tensor<f32, 2>, vW: Tensor<f32, 2>,
+    mb: Tensor<f32, 1>, vb: Tensor<f32, 1>
+}
 impl Linear { 
     fn new(i: i64, o: i64) -> Linear { 
-        Linear((Tensor::randn([i, o], true)*0.1).detach(true), (Tensor::randn([o], true)*0.0).detach(true)) 
+        Linear(
+            (Tensor::randn([i, o], true)*0.1).detach(true), 
+            (Tensor::randn([o], true)*0.0).detach(true),
+            Tensor::zeros([i, o], false), Tensor::zeros([i, o], false),
+            Tensor::zeros([o], false), Tensor::zeros([o], false)
+        ) 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
         x.matmul(self.W) + self.b 
     } 
 }
 
-struct Embedding { w: Tensor<f32, 2> }
+struct Embedding { 
+    w: Tensor<f32, 2>,
+    mw: Tensor<f32, 2>, vw: Tensor<f32, 2>
+}
 impl Embedding { 
     fn new(v: i64, d: i64) -> Embedding { 
-        Embedding((Tensor::randn([v, d], true)*0.1).detach(true)) 
+        Embedding(
+            (Tensor::randn([v, d], true)*0.02).detach(true), 
+            Tensor::zeros([v, d], false), Tensor::zeros([v, d], false)
+        ) 
     } 
     fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> { 
         i.embedding(self.w) 
     } 
 }
 
-struct LayerNorm { w: Tensor<f32, 1>, b: Tensor<f32, 1> }
+struct LayerNorm { 
+    w: Tensor<f32, 1>, b: Tensor<f32, 1>,
+    mw: Tensor<f32, 1>, vw: Tensor<f32, 1>,
+    mb: Tensor<f32, 1>, vb: Tensor<f32, 1>
+}
 impl LayerNorm { 
     fn new(d: i64) -> LayerNorm { 
-        LayerNorm((Tensor::randn([d], true)*0.0+1.0).detach(true), (Tensor::randn([d], true)*0.0).detach(true)) 
+        LayerNorm(
+            (Tensor::randn([d], true)*0.0+1.0).detach(true), 
+            (Tensor::randn([d], true)*0.0).detach(true),
+            Tensor::zeros([d], false), Tensor::zeros([d], false),
+            Tensor::zeros([d], false), Tensor::zeros([d], false)
+        ) 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
-        x * self.w + self.b 
+        x.layer_norm(self.w, self.b, 0.00001 as f64)
     } 
 }
 
 struct CausalSelfAttention { q_proj: Linear, k_proj: Linear, v_proj: Linear, o_proj: Linear }
 impl CausalSelfAttention { 
     fn new(d: i64) -> CausalSelfAttention { 
-        return CausalSelfAttention(Linear::new(d, d), Linear::new(d, d), Linear::new(d, d), Linear::new(d, d)); 
+        CausalSelfAttention(Linear::new(d, d), Linear::new(d, d), Linear::new(d, d), Linear::new(d, d)) 
     } 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> { 
         let Q = self.q_proj.forward(x); 
@@ -53,9 +77,8 @@ impl CausalSelfAttention {
         let K_heads_T = K_heads.transpose(1, 2);
         let K_scaled = (K_heads_T * 0.176).contiguous();
         let Q_cont = Q_heads.contiguous();
-        // Softmax normalization requires -Infinity for masking, but tril(0) gives 0.0
+        
         let logits = Q_cont.matmul(K_scaled);
-        // Create an algebraic mask: 0.0 for lower triangle, -10000.0 for upper triangle
         let ones = logits * 0.0 + 1.0;
         let causal_mask = ones.tril(0); 
         let neg_inf_mask = (causal_mask - 1.0) * 10000.0; 
@@ -93,17 +116,22 @@ impl Block {
     } 
 }
 
-struct PositionalEmbedding { w: Tensor<f32, 2> }
+struct PositionalEmbedding { 
+    w: Tensor<f32, 2>,
+    mw: Tensor<f32, 2>, vw: Tensor<f32, 2>
+}
 impl PositionalEmbedding {
     fn new(max_len: i64, d: i64) -> PositionalEmbedding {
-        PositionalEmbedding((Tensor::randn([max_len, d], true)*0.02).detach(true))
+        PositionalEmbedding(
+            (Tensor::randn([max_len, d], true)*0.02).detach(true),
+            Tensor::zeros([max_len, d], false), Tensor::zeros([max_len, d], false)
+        )
     }
     fn forward(self, p: Tensor<f32, 2>) -> Tensor<f32, 3> {
         p.embedding(self.w)
     }
 }
 
-// Renamed from SeqModel to Transformer to match reverse_train.tl
 struct Transformer { w: Embedding, p: PositionalEmbedding, b1: Block, b2: Block, l: LayerNorm, h: Linear }
 impl Transformer { 
     fn new(v: i64, max_len: i64, d: i64) -> Transformer { 
@@ -206,8 +234,8 @@ fn inference(model: Transformer, tests: i64) {
 
 fn main() {
     let vocab_size = 12;
-    let d_model = 128;
     let max_len = 16;
+    let d_model = 128;
     let model = Transformer::new(vocab_size, max_len, d_model);
     
     print("Loading weights...");

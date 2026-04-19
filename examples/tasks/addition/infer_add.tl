@@ -207,12 +207,12 @@ fn main() {
     print("Model loaded successfully.");
 
     let mut correct_count = 0;
-    correct_count = correct_count + inference(model, 12, 34);
-    correct_count = correct_count + inference(model, 99, 1);
-    correct_count = correct_count + inference(model, 45, 55);
+    correct_count = correct_count + inference(model, 2, 4);
+    correct_count = correct_count + inference(model, 9, 1);
+    correct_count = correct_count + inference(model, 5, 5);
     correct_count = correct_count + inference(model, 8, 9);
-    correct_count = correct_count + inference(model, 73, 27);
-    correct_count = correct_count + inference(model, 66, 88);
+    correct_count = correct_count + inference(model, 7, 2);
+    correct_count = correct_count + inference(model, 6, 8);
     
     print("Inference Complete.");
     print("Accuracy:");

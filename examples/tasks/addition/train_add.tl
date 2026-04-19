@@ -24,7 +24,7 @@ impl Linear {
     } 
     fn step(self, step_n: i64, lr: f32) -> Linear { 
         let mut s = self; 
-        s.W.adam_step(s.W.grad(), s.mW, s.vW, step_n, lr, 0.9, 0.999, 1e-8, 0.01);
+        s.W.adam_step(s.W.grad(), s.mW, s.vW, step_n, lr, 0.9, 0.999, 1e-8, 0.0);
         s.b.adam_step(s.b.grad(), s.mb, s.vb, step_n, lr, 0.9, 0.999, 1e-8, 0.0);
         s
     }
@@ -218,8 +218,8 @@ struct TrainState {
 fn train_epoch(state: TrainState, lr: f32, steps: i64) -> TrainState {
     let mut st = state;
     for s in range(0, steps) {
-        let i = get_random_digit() * 10 + get_random_digit();
-        let j = get_random_digit() * 10 + get_random_digit();
+        let i = get_random_digit();
+        let j = get_random_digit();
         
         let sum = i + j;
         let i_d10 = i / 10;
@@ -258,7 +258,7 @@ fn train_epoch(state: TrainState, lr: f32, steps: i64) -> TrainState {
         
         loss.backward();
         
-        if s % 4 == 3 {
+        if s % 16 == 15 {
             st.model = st.model.step(st.global_step, lr);
             Tensor::clear_grads();
             st.global_step = st.global_step + 1;
@@ -278,13 +278,13 @@ fn main() {
     let mut state = TrainState(1, GPT::new(vocab_size, d_model));
     
     let lr = 0.001;
-    let epochs = 2500;
+    let epochs = 500;
 
-    print("Training 2-digit addition on RANDOM inputs (2-layer GPT, Adam, d_model=128)");
+    print("Training 1-digit addition on RANDOM inputs (2-layer GPT, Adam, d_model=128)");
 
     for epoch in range(0, epochs) {
-        print("Epoch:"); print(epoch);
-        state = train_epoch(state, lr, 160); // 160 steps inside each epoch, total 240,000 steps
+        print("Epoch:"); print(epoch); 
+        state = train_epoch(state, lr, 640); // 640 steps (40 updates per epoch)
     }
     
     print("Training Complete!");

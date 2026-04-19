@@ -1,93 +1,74 @@
-// Associative Recall 推論 (train_recall.tl で学習したモデルを使用)
-// Associative Recall Task with Transformer
-// Task: Input "k1 v1 k2 v2 ... k3 ?" -> Output "v3"
-// This tests the model's ability to "attend" back to where "k3" appeared and retrieve "v3".
+// Associative Recall Task 推論スクリプト
+// train_recall.tl で学習した safetensors を読み込み、未知のシードで正答率を計測します。
 
 struct Linear {
-    W: Tensor<f32, 2>,
-    b: Tensor<f32, 1>
+    W: Tensor<f32, 2>, b: Tensor<f32, 1>,
+    mW: Tensor<f32, 2>, vW: Tensor<f32, 2>,
+    mb: Tensor<f32, 1>, vb: Tensor<f32, 1>
 }
 
 impl Linear {
     fn new(i: i64, o: i64) -> Linear {
-        // Xavier initialization-ish
-        return Linear((Tensor::randn([i, o], true) * 0.1).detach(true), (Tensor::randn([o], true) * 0.0).detach(true));
+        Linear(
+            (Tensor::randn([i, o], true) * 0.1).detach(true), 
+            (Tensor::randn([o], true) * 0.0).detach(true),
+            Tensor::zeros([i, o], false), Tensor::zeros([i, o], false),
+            Tensor::zeros([o], false), Tensor::zeros([o], false)
+        )
     }
-    
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> {
         x.matmul(self.W) + self.b
-    }
-    
-    fn step(self, lr: f32) -> Linear {
-        let mut s = self;
-        let gWg = s.W.grad();
-        let gbg = s.b.grad();
-        s.W = (s.W - gWg * lr).detach(true);
-        s.b = (s.b - gbg * lr).detach(true);
-        s
     }
 }
 
 struct Embedding {
-    w: Tensor<f32, 2>
+    w: Tensor<f32, 2>,
+    mw: Tensor<f32, 2>, vw: Tensor<f32, 2>
 }
 
 impl Embedding {
     fn new(v: i64, d: i64) -> Embedding {
-        Embedding((Tensor::randn([v, d], true) * 0.1).detach(true))
+        Embedding(
+            (Tensor::randn([v, d], true) * 0.02).detach(true),
+            Tensor::zeros([v, d], false), Tensor::zeros([v, d], false)
+        )
     }
-    
     fn forward(self, i: Tensor<f32, 2>) -> Tensor<f32, 3> {
         i.embedding(self.w)
-    }
-    
-    fn step(self, lr: f32) -> Embedding {
-        let mut s = self;
-        let g = s.w.grad();
-        s.w = (s.w - g * lr).detach(true);
-        s
     }
 }
 
 struct LayerNorm {
-    w: Tensor<f32, 1>,
-    b: Tensor<f32, 1>
+    w: Tensor<f32, 1>, b: Tensor<f32, 1>,
+    mw: Tensor<f32, 1>, vw: Tensor<f32, 1>,
+    mb: Tensor<f32, 1>, vb: Tensor<f32, 1>
 }
 
 impl LayerNorm {
     fn new(d: i64) -> LayerNorm {
-        LayerNorm((Tensor::randn([d], true)*0.0+1.0).detach(true), (Tensor::randn([d], true)*0.0).detach(true))
+        LayerNorm(
+            (Tensor::randn([d], true)*0.0+1.0).detach(true), 
+            (Tensor::randn([d], true)*0.0).detach(true),
+            Tensor::zeros([d], false), Tensor::zeros([d], false),
+            Tensor::zeros([d], false), Tensor::zeros([d], false)
+        )
     }
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> {
-        x * self.w + self.b
-    }
-    fn step(self, lr: f32) -> LayerNorm {
-        let mut s = self;
-        let gw = s.w.grad();
-        let gb = s.b.grad();
-        s.w = (s.w - gw * lr).detach(true);
-        s.b = (s.b - gb * lr).detach(true);
-        s
+        x.layer_norm(self.w, self.b, 0.00001 as f64)
     }
 }
 
 struct CausalSelfAttention {
-    c_attn: Linear,
+    c_attn: Linear, 
     q_proj: Linear,
     k_proj: Linear,
     v_proj: Linear,
-    c_proj: Linear,
+    c_proj: Linear, 
 }
 
 impl CausalSelfAttention {
     fn new(d: i64) -> CausalSelfAttention {
-        CausalSelfAttention(
-            Linear::new(1, 1),
-            Linear::new(d, d), 
-            Linear::new(d, d), 
-            Linear::new(d, d), 
-            Linear::new(d, d)
-        )
+        CausalSelfAttention(Linear::new(1, 1), Linear::new(d, d), Linear::new(d, d), Linear::new(d, d), Linear::new(d, d))
     }
 
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> {
@@ -97,20 +78,16 @@ impl CausalSelfAttention {
 
         let k_t = k.transpose(1, 2);
         let att = q.matmul(k_t) * 0.125;
-        let att = att.tril(0); 
-        let att = att.softmax(2);
-        let y = att.matmul(v);
+        
+        let ones = att * 0.0 + 1.0;
+        let causal_mask = ones.tril(0); 
+        let neg_inf_mask = (causal_mask - 1.0) * 10000.0; 
+        
+        let masked = att + neg_inf_mask;
+        let att_p = masked.softmax(2);
+        let y = att_p.matmul(v);
         
         self.c_proj.forward(y)
-    }
-
-    fn step(self, lr: f32) -> CausalSelfAttention {
-        let mut s = self;
-        s.q_proj = s.q_proj.step(lr);
-        s.k_proj = s.k_proj.step(lr);
-        s.v_proj = s.v_proj.step(lr);
-        s.c_proj = s.c_proj.step(lr);
-        s
     }
 }
 
@@ -125,14 +102,7 @@ impl MLP {
     }
     
     fn forward(self, x: Tensor<f32, 3>) -> Tensor<f32, 3> {
-        self.c_proj.forward(self.c_fc.forward(x).relu())
-    }
-    
-    fn step(self, lr: f32) -> MLP {
-        let mut s = self;
-        s.c_fc = s.c_fc.step(lr);
-        s.c_proj = s.c_proj.step(lr);
-        s
+        return self.c_proj.forward(self.c_fc.forward(x).relu());
     }
 }
 
@@ -153,21 +123,12 @@ impl Block {
         let x = x + self.mlp.forward(self.ln2.forward(x));
         x
     }
-    
-    fn step(self, lr: f32) -> Block {
-        let mut s = self;
-        s.ln1 = s.ln1.step(lr);
-        s.attn = s.attn.step(lr);
-        s.ln2 = s.ln2.step(lr);
-        s.mlp = s.mlp.step(lr);
-        s
-    }
 }
 
 struct GPT {
-    wte: Embedding,
-    wpe: Embedding,
-    bg: Block,
+    wte: Embedding, 
+    wpe: Embedding, 
+    bg: Block,      
     ln_f: LayerNorm,
     head: Linear
 }
@@ -184,7 +145,6 @@ impl GPT {
     }
     
     fn forward(self, idx: Tensor<f32, 2>) -> Tensor<f32, 3> {
-        let T = 13;
         let pos_arr = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0];
         let pos = pos_arr.reshape([1, 13]);
         
@@ -197,18 +157,7 @@ impl GPT {
         let logits = self.head.forward(x);
         logits
     }
-    
-    fn step(self, lr: f32) -> GPT {
-        let mut s = self;
-        s.wte = s.wte.step(lr);
-        s.wpe = s.wpe.step(lr);
-        s.bg = s.bg.step(lr);
-        s.ln_f = s.ln_f.step(lr);
-        s.head = s.head.step(lr);
-        s
-    }
 }
-
 
 fn gen_data(step: i64) -> Tensor<f32, 2> {
     let seed = step * 12345 + 6789;
@@ -241,23 +190,49 @@ fn gen_data(step: i64) -> Tensor<f32, 2> {
     if pick == 4 { q_k = k5; q_ans = v5; }
     if pick == 5 { q_k = k6; q_ans = v6; }
     
-    let fk1 = k1 as f32;
-    let fv1 = v1 as f32;
-    let fk2 = k2 as f32;
-    let fv2 = v2 as f32;
-    let fk3 = k3 as f32;
-    let fv3 = v3 as f32;
-    let fk4 = k4 as f32;
-    let fv4 = v4 as f32;
-    let fk5 = k5 as f32;
-    let fv5 = v5 as f32;
-    let fk6 = k6 as f32;
-    let fv6 = v6 as f32;
-    let fqk = q_k as f32;
-    let fqa = q_ans as f32;
-    
-    let arr = [fk1, fv1, fk2, fv2, fk3, fv3, fk4, fv4, fk5, fv5, fk6, fv6, fqk, fqa];
+    let arr = [
+        k1 as f32, v1 as f32, k2 as f32, v2 as f32, k3 as f32, v3 as f32, 
+        k4 as f32, v4 as f32, k5 as f32, v5 as f32, k6 as f32, v6 as f32, 
+        q_k as f32, q_ans as f32
+    ];
     arr.reshape([1, 14])
+}
+
+fn inference(model: GPT, tests: i64) {
+    let mut correct = 0;
+    for i in range(0, tests) {
+        // use an offset so test data is unseen in training (trained up to ~25000 seqs)
+        let data = gen_data(i + 1000000); 
+        
+        let in_seq = [
+             data[0, 0], data[0, 1],
+             data[0, 2], data[0, 3],
+             data[0, 4], data[0, 5],
+             data[0, 6], data[0, 7],
+             data[0, 8], data[0, 9],
+             data[0, 10], data[0, 11],
+             data[0, 12]
+        ];
+        let target = data[0, 13] as i64;
+        let X = in_seq.reshape([1, 13]);
+        
+        // forward pass
+        let logits = model.forward(X);
+        let logits_flat = logits.reshape([13, 30]);
+        // Only target the last position
+        let last_logit = logits_flat.slice(0, 12, 13, 1).reshape([30]);
+        
+        let pred = last_logit.argmax(0)[0];
+        
+        if pred == target {
+            correct = correct + 1;
+        }
+    }
+    
+    print("Inference Complete.");
+    print(correct); 
+    print("Correct out of");
+    print(tests);
 }
 
 fn main() {
@@ -267,58 +242,9 @@ fn main() {
     
     let model = GPT::new(vocab_size, d_model, max_len);
     
-    print("Loading trained model weights from recall_weights.safetensors...");
+    print("Loading weights...");
     Param::load(model, "recall_weights.safetensors");
-    print("Model loaded successfully.");
+    print("Weights loaded.");
     
-    print("Running Inference on Validation Set...");
-    print("Format: Pred / Target -> Result");
-    
-    let mut correct_count = 0;
-    let total_count = 20;
-    let start_idx = 10000;
-    
-    for i in range(start_idx, start_idx + total_count) {
-        let val_data = gen_data(i);
-        let val_in = [
-            val_data[0, 0], val_data[0, 1],
-            val_data[0, 2], val_data[0, 3],
-            val_data[0, 4], val_data[0, 5],
-            val_data[0, 6], val_data[0, 7],
-            val_data[0, 8], val_data[0, 9],
-            val_data[0, 10], val_data[0, 11],
-            val_data[0, 12]
-        ];
-        let val_X = val_in.reshape([1, 13]);
-        let val_logits = model.forward(val_X);
-        
-        let val_logits_flat = val_logits.reshape([13, 30]);
-        let val_logits_1d = val_logits_flat.reshape([390]);
-        let last_row = val_logits_1d.slice(0, 360, 390, 1); // dim=0, start=360, end=390, step=1
-        
-        // Double cast workaround for argmax U32 -> F32 issue
-        let pred_t = last_row.argmax(0);
-        let pred_t_i64 = pred_t as Tensor<i64, 1>;
-        let pred_t_f32 = pred_t_i64 as Tensor<f32, 1>;
-        let pred = pred_t_f32.item() as i64;
-        
-        let target = val_data[0, 13] as i64;
-        
-        print("Sample:"); print(i);
-        print("Pred:"); print(pred);
-        print("Target:"); print(target);
-        
-        if pred == target {
-            print("Result: Correct");
-            correct_count = correct_count + 1;
-        } else {
-            print("Result: Wrong");
-        }
-    }
-    
-    print("Inference Complete.");
-    print("Accuracy:");
-    print(correct_count);
-    print("Correct out of");
-    print(total_count);
+    inference(model, 20);
 }
