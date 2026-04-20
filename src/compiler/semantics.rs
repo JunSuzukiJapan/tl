@@ -4337,6 +4337,8 @@ impl SemanticAnalyzer {
                                 BinOp::Mul => "Mul",
                                 BinOp::Div => "Div",
                                 BinOp::Mod => "Rem",
+                                BinOp::Shl => "Shl",
+                                BinOp::Shr => "Shr",
                                 BinOp::Eq | BinOp::Neq => "Eq",
                                 BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => "PartialOrd",
                                 _ => "",

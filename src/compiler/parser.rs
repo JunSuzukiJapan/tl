@@ -852,7 +852,7 @@ fn parse_term(input: Input, allow_struct: bool) -> IResult<Input, Expr, ParserEr
 
 // Comparison: < > <= >= == !=
 fn parse_comparison(input: Input, allow_struct: bool) -> IResult<Input, Expr, ParserError> {
-    let (mut input, mut lhs) = parse_term(input, allow_struct)?;
+    let (mut input, mut lhs) = parse_shift(input, allow_struct)?;
     loop {
         if let Ok((rest, op_tok)) = satisfy_token(|t| matches!(t, 
             Token::Lt | Token::Gt | Token::Le | Token::Ge | Token::Eq | Token::Ne
@@ -866,8 +866,48 @@ fn parse_comparison(input: Input, allow_struct: bool) -> IResult<Input, Expr, Pa
                 Token::Ne => BinOp::Neq,
                 _ => unreachable!(),
             };
-            let (rest, rhs) = parse_term(rest, allow_struct)?;
+            let (rest, rhs) = parse_shift(rest, allow_struct)?;
             lhs = Spanned::new(ExprKind::BinOp(Box::new(lhs), op, Box::new(rhs)), crate::compiler::error::Span::default());
+            input = rest;
+        } else {
+            break;
+        }
+    }
+    Ok((input, lhs))
+}
+
+// Synthetic token matchers for << and >>
+fn parse_shl_tok(input: Input) -> IResult<Input, (), ParserError> {
+    let (rest1, t1) = satisfy_token(|t| matches!(t, Token::Lt))(input)?;
+    let (rest2, t2) = satisfy_token(|t| matches!(t, Token::Lt))(rest1)?;
+    if t1.span.end == t2.span.start {
+        Ok((rest2, ()))
+    } else {
+        Err(nom::Err::Error(ParserError { input, kind: ParseErrorKind::UnexpectedToken("Expected <<".to_string()) }))
+    }
+}
+
+fn parse_shr_tok(input: Input) -> IResult<Input, (), ParserError> {
+    let (rest1, t1) = satisfy_token(|t| matches!(t, Token::Gt))(input)?;
+    let (rest2, t2) = satisfy_token(|t| matches!(t, Token::Gt))(rest1)?;
+    if t1.span.end == t2.span.start {
+        Ok((rest2, ()))
+    } else {
+        Err(nom::Err::Error(ParserError { input, kind: ParseErrorKind::UnexpectedToken("Expected >>".to_string()) }))
+    }
+}
+
+// Shift: << >>
+fn parse_shift(input: Input, allow_struct: bool) -> IResult<Input, Expr, ParserError> {
+    let (mut input, mut lhs) = parse_term(input, allow_struct)?;
+    loop {
+        if let Ok((rest, _)) = parse_shl_tok(input) {
+            let (rest, rhs) = parse_term(rest, allow_struct)?;
+            lhs = Spanned::new(ExprKind::BinOp(Box::new(lhs), BinOp::Shl, Box::new(rhs)), crate::compiler::error::Span::default());
+            input = rest;
+        } else if let Ok((rest, _)) = parse_shr_tok(input) {
+            let (rest, rhs) = parse_term(rest, allow_struct)?;
+            lhs = Spanned::new(ExprKind::BinOp(Box::new(lhs), BinOp::Shr, Box::new(rhs)), crate::compiler::error::Span::default());
             input = rest;
         } else {
             break;
@@ -1062,6 +1102,8 @@ fn parse_assign_stmt(input: Input) -> IResult<Input, Stmt, ParserError> {
         value(AssignOp::MulAssign, expect_token(Token::StarAssign)),
         value(AssignOp::DivAssign, expect_token(Token::SlashAssign)),
         value(AssignOp::ModAssign, expect_token(Token::PercentAssign)),
+        value(AssignOp::ShlAssign, expect_token(Token::ShlAssign)),
+        value(AssignOp::ShrAssign, expect_token(Token::ShrAssign)),
     ))(input)?;
     
     // 3. Parse RHS

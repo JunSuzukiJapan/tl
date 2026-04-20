@@ -2154,6 +2154,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                                 AssignOp::MulAssign => BinOp::Mul,
                                 AssignOp::DivAssign => BinOp::Div,
                                 AssignOp::ModAssign => BinOp::Mod,
+                                AssignOp::ShlAssign => BinOp::Shl,
+                                AssignOp::ShrAssign => BinOp::Shr,
                                 _ => unreachable!(),
                             };
                             if let Type::Tensor(_,_) = lhs_type {
@@ -3152,6 +3154,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                     BinOp::BitAnd => self.builder.build_and(l, r, "bitandtmp"),
                     BinOp::BitOr => self.builder.build_or(l, r, "bitortmp"),
                     BinOp::BitXor => self.builder.build_xor(l, r, "bitxortmp"),
+                    BinOp::Shl => self.builder.build_left_shift(l, r, "shltmp"),
+                    BinOp::Shr => {
+                        let is_signed = matches!(lhs_type, Type::I64 | Type::I32 | Type::I16 | Type::I8);
+                        self.builder.build_right_shift(l, r, is_signed, "shrtmp")
+                    }
                 }
                 .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 

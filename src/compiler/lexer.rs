@@ -244,6 +244,10 @@ pub enum Token {
     SlashAssign,
     #[token("%=")]
     PercentAssign,
+    #[token("<<=")]
+    ShlAssign,
+    #[token(">>=")]
+    ShrAssign,
     // Error
     // Logos automatically handles errors but we can have an explicit Error variant if needed.
     // For now we rely on Result from lexer iteration.

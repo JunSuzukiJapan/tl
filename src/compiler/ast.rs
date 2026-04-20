@@ -477,6 +477,8 @@ pub enum AssignOp {
     ModAssign,
     MaxAssign,
     AvgAssign,
+    ShlAssign,
+    ShrAssign,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -603,6 +605,8 @@ pub enum BinOp {
     BitAnd, // &
     BitOr,  // |
     BitXor, // ^
+    Shl,    // <<
+    Shr,    // >>
 }
 
 
