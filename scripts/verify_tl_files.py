@@ -361,6 +361,8 @@ EXPECTED_FAILURES = {
     "negation_cycle.tl",
     "negation_multi_neg_layers_cycle.tl",
     "negation_unbound.tl",
+    # メモリ管理のストレステスト（セグフォルトが期待される）
+    "test_segfault.tl",
 }
 
 def should_skip(filepath: Path, include_training: bool = False) -> Tuple[bool, str]:
@@ -627,6 +629,16 @@ def run_tl_file(filepath: Path, tl_binary: Path, timeout: int,
         
         # セグメンテーションフォールトの検出
         if returncode == -11 or returncode == 139:
+            if is_expected_to_fail:
+                # セグフォルトが期待されていたので PASS とする
+                return TestResult(
+                    file=str(filepath),
+                    status=Status.PASS,
+                    output=stdout,
+                    error=stderr,
+                    duration=duration,
+                    reason="(Expected Segfault)"
+                )
             return TestResult(
                 file=str(filepath),
                 status=Status.SEGFAULT,

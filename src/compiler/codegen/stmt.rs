@@ -2054,15 +2054,46 @@ impl<'ctx> CodeGenerator<'ctx> {
                             
                             // Free old if needed.
                             // - Struct/Enum with CLEANUP_FULL: 旧値を emit_recursive_free で解放
-                            // - Struct/Enum with CLEANUP_NONE: 旧値はスキップ（借用値 = 解放は呼び出し元の責任）
+                            // - CLEANUP_DEC_REF: 引数の浅い dec_ref のみ（emit_recursive_free は呼ばない）
+                            // - Struct/Enum with CLEANUP_NONE: 旧値はスキップ（解放は呼び出し元の責任）
                             //   ただし代入後に CLEANUP_FULL に昇格（次回の代入で旧値を解放するため）
                             // - Tensor: CLEANUP_NONE 以外のみ解放（Arc 二重解放防止）
                             let should_free_old = match &lhs_type {
-                                Type::Struct(_, _) | Type::Enum(_, _) => lhs_cleanup_mode != super::CLEANUP_NONE,
-                                Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::GradTensor(_, _) => lhs_cleanup_mode != super::CLEANUP_NONE,
+                                Type::Struct(_, _) | Type::Enum(_, _) => lhs_cleanup_mode != super::CLEANUP_NONE && lhs_cleanup_mode != super::CLEANUP_DEC_REF,
+                                Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::GradTensor(_, _) => lhs_cleanup_mode != super::CLEANUP_NONE && lhs_cleanup_mode != super::CLEANUP_DEC_REF,
                                 _ => false,
                             };
+                            // ARC Lifecycle §2.3: CLEANUP_DEC_REF の引数が再代入された場合、
+                            // 古い値に対して浅い dec_ref を行い、cleanup mode を CLEANUP_FULL に昇格
+                            let should_dec_ref_old = lhs_cleanup_mode == super::CLEANUP_DEC_REF
+                                && super::is_arc_managed_type(&lhs_type);
                             if matches!(lhs_type, Type::Struct(_,_)) {
+                            }
+                            if should_dec_ref_old {
+                                let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                                let old_val = self.builder.build_load(load_type, lhs_ptr, "old_arg").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?.into_pointer_value();
+                                let null_ptr = load_type.const_null();
+                                let is_not_null = self.builder.build_int_compare(inkwell::IntPredicate::NE, old_val, null_ptr, "").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+                                let free_bb = self.append_bb("dec_ref_old_arg")?;
+                                let cont_bb = self.append_bb("cont_dec_ref")?;
+                                self.builder.build_conditional_branch(is_not_null, free_bb, cont_bb).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+                                self.builder.position_at_end(free_bb);
+                                if let Some(release_fn) = self.module.get_function("tl_ptr_release").or_else(|| {
+                                    let void_ty = self.context.void_type();
+                                    let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                                    let ft = void_ty.fn_type(&[ptr_ty.into()], false);
+                                    Some(self.module.add_function("tl_ptr_release", ft, None))
+                                }) {
+                                    let void_ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                                    let cast_ptr = self.builder.build_pointer_cast(old_val, void_ptr_type, "cast_dec_old_arg").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+                                    self.builder.build_call(release_fn, &[cast_ptr.into()], "").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+                                }
+                                self.builder.build_unconditional_branch(cont_bb).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+                                self.builder.position_at_end(cont_bb);
+                                // 昇格: CLEANUP_DEC_REF → CLEANUP_FULL (新しい値は Callee が所有)
+                                if let LValue::Variable(vname) = lhs {
+                                    self.promote_variable_cleanup(vname, super::CLEANUP_FULL);
+                                }
                             }
                             if should_free_old {
                                  if !val_ir.is_pointer_value() {
@@ -2092,10 +2123,10 @@ impl<'ctx> CodeGenerator<'ctx> {
                                  self.builder.position_at_end(cont_bb);
                             }
                             
-                            // CLEANUP_NONE パラメータ変数に新しい所有値が代入された場合、
+                            // CLEANUP_NONE / CLEANUP_DEC_REF パラメータ変数に新しい所有値が代入された場合、
                             // 次回の代入で旧値を解放するため cleanup mode を CLEANUP_FULL に昇格。
-                            if lhs_cleanup_mode == super::CLEANUP_NONE 
-                                && matches!(lhs_type, Type::Struct(_,_) | Type::Enum(_,_)) 
+                            if (lhs_cleanup_mode == super::CLEANUP_NONE || lhs_cleanup_mode == super::CLEANUP_DEC_REF)
+                                && matches!(lhs_type, Type::Struct(_,_) | Type::Enum(_,_) | Type::Tensor(_,_) | Type::TensorShaped(_,_) | Type::GradTensor(_,_)) 
                             {
                                 if let LValue::Variable(vname) = lhs {
                                     self.promote_variable_cleanup(vname, super::CLEANUP_FULL);

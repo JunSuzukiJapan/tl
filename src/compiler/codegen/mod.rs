@@ -18,6 +18,26 @@ pub const CLEANUP_NONE: u8 = 0;
 pub const CLEANUP_FULL: u8 = 1;
 pub const CLEANUP_FINALIZE: u8 = 2;
 pub const CLEANUP_STACK: u8 = 3;
+/// ARC Lifecycle §2.3: 引数の inc_ref に対応する浅い dec_ref のみ行う。
+/// emit_recursive_free（フィールドの再帰解放）は行わない。
+pub const CLEANUP_DEC_REF: u8 = 4;
+
+/// ARC ライフサイクル管理対象型かどうかを判定する。
+/// 対象型: Tensor, Struct, Enum, Tuple, String, SpecializedType 等のヒープ割り当て型。
+/// プリミティブ型 (i64, f32, bool 等) は値コピーのため対象外。
+pub fn is_arc_managed_type(ty: &crate::compiler::ast::Type) -> bool {
+    use crate::compiler::ast::Type;
+    matches!(ty,
+        Type::Tensor(_, _)
+        | Type::TensorShaped(_, _)
+        | Type::GradTensor(_, _)
+        | Type::Struct(_, _)
+        | Type::Enum(_, _)
+        | Type::Tuple(_)
+        | Type::String(_)
+        | Type::SpecializedType { .. }
+    )
+}
 
 pub mod builtins;
 pub mod expr;
@@ -516,6 +536,28 @@ impl<'ctx> CodeGenerator<'ctx> {
                 if let Ok(env_ptr) = self.builder.build_load(load_type, ptr, "env_to_free") {
                     if let Some(free_fn) = self.module.get_function("free") {
                         let _ = self.builder.build_call(free_fn, &[env_ptr.into()], "");
+                    }
+                }
+                continue;
+            }
+            if cleanup_mode == CLEANUP_DEC_REF {
+                // ARC Lifecycle §2.3: 引数の浅い dec_ref のみ行う
+                // emit_recursive_free は呼ばない（Caller が所有権を保持しているため）
+                if val_enum.is_pointer_value() {
+                    let ptr = val_enum.into_pointer_value();
+                    let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                    if let Ok(loaded) = self.builder.build_load(load_type, ptr, "arg_to_dec") {
+                        if let Some(release_fn) = self.module.get_function("tl_ptr_release").or_else(|| {
+                            let void_ty = self.context.void_type();
+                            let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                            let ft = void_ty.fn_type(&[ptr_ty.into()], false);
+                            Some(self.module.add_function("tl_ptr_release", ft, None))
+                        }) {
+                            let void_ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                            if let Ok(cast_ptr) = self.builder.build_pointer_cast(loaded.into_pointer_value(), void_ptr_type, "cast_dec_arg") {
+                                let _ = self.builder.build_call(release_fn, &[cast_ptr.into()], "");
+                            }
+                        }
                     }
                 }
                 continue;
@@ -1428,11 +1470,34 @@ impl<'ctx> CodeGenerator<'ctx> {
                             self.create_entry_block_alloca(function, arg_name, &resolved_ty)?;
                         self.builder.build_store(alloca, param_val).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
-                        // Register in scope
+                        // ARC Lifecycle §2.3: ARC管理対象型の引数は Callee 側で inc_ref する
+                        let cleanup_mode = if is_arc_managed_type(&resolved_ty) {
+                            if let Some(inc_fn) = self.module.get_function("tl_ptr_inc_ref").or_else(|| {
+                                let void_ty = self.context.void_type();
+                                let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                                let ft = void_ty.fn_type(&[ptr_ty.into()], false);
+                                Some(self.module.add_function("tl_ptr_inc_ref", ft, None))
+                            }) {
+                                let loaded = self.builder.build_load(
+                                    self.context.ptr_type(inkwell::AddressSpace::default()),
+                                    alloca, "arg_load_for_inc"
+                                ).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+                                let ptr = loaded.into_pointer_value();
+                                let void_ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                                let cast_ptr = self.builder.build_pointer_cast(ptr, void_ptr_type, "cast_arg_inc")
+                                    .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+                                self.builder.build_call(inc_fn, &[cast_ptr.into()], "")
+                                    .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+                            }
+                            CLEANUP_DEC_REF
+                        } else {
+                            CLEANUP_NONE
+                        };
+
                         self.variables
                             .last_mut()
                             .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("no scope available".to_string())))?
-                            .insert(arg_name.clone(), (alloca.into(), resolved_ty, CLEANUP_NONE));
+                            .insert(arg_name.clone(), (alloca.into(), resolved_ty, cleanup_mode));
                             
                         let arg_time = i + 1; // 1-indexed like visit_function
                         let last_use = if let Some(analysis) = &self.function_analysis {
@@ -1881,8 +1946,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             let (arg_name, arg_type) = &func.args[i];
             let alloca = self.create_entry_block_alloca(function, arg_name, arg_type)?;
 
-            // Borrowing Semantics: Just store the pointer/value.
-            // Do NOT Acquire/DeepClone. The caller owns the data.
+            // ARC Lifecycle §2.3: Callee側で引数を inc_ref し、スコープ脱出時に dec_ref する。
             match arg {
                 inkwell::values::BasicValueEnum::PointerValue(p) => {
                     self.builder.build_store(alloca, p).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?
@@ -1902,12 +1966,35 @@ impl<'ctx> CodeGenerator<'ctx> {
                 _ => return Err(TlError::from(CodegenErrorKind::UnsupportedOperation(format!("Unsupported arg type: {:?}", arg)))),
             };
 
-            // Insert into current scope with should_free=FALSE
-            // Arguments are BORROWED. Function must NOT free them on exit.
+            // ARC Lifecycle §2.3: ARC管理対象型の引数は Callee 側で inc_ref する
+            let cleanup_mode = if is_arc_managed_type(arg_type) {
+                // inc_ref: Callee が引数の参照カウントをインクリメント
+                if let Some(inc_fn) = self.module.get_function("tl_ptr_inc_ref").or_else(|| {
+                    let void_ty = self.context.void_type();
+                    let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                    let ft = void_ty.fn_type(&[ptr_ty.into()], false);
+                    Some(self.module.add_function("tl_ptr_inc_ref", ft, None))
+                }) {
+                    let loaded = self.builder.build_load(
+                        self.context.ptr_type(inkwell::AddressSpace::default()),
+                        alloca, "arg_load_for_inc"
+                    ).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+                    let ptr = loaded.into_pointer_value();
+                    let void_ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                    let cast_ptr = self.builder.build_pointer_cast(ptr, void_ptr_type, "cast_arg_inc")
+                        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+                    self.builder.build_call(inc_fn, &[cast_ptr.into()], "")
+                        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+                }
+                CLEANUP_DEC_REF // スコープ脱出時に浅い dec_ref のみ行う
+            } else {
+                CLEANUP_NONE // プリミティブ型は RC 操作不要
+            };
+
             self.variables
                 .last_mut()
                 .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("no scope available".to_string())))?
-                .insert(arg_name.clone(), (alloca.into(), arg_type.clone(), CLEANUP_NONE));
+                .insert(arg_name.clone(), (alloca.into(), arg_type.clone(), cleanup_mode));
 
             let last_use = if let Some(analysis) = &self.function_analysis {
                 analysis.last_use_times.get(&arg_time).copied().unwrap_or(0)
