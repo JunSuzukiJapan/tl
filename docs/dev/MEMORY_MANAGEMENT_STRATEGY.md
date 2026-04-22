@@ -1,399 +1,303 @@
 
-# TensorLogic メモリ管理戦略 V4.5 (ハイブリッド静的解析 + 厳格な参照カウント + スコープベーステンソル管理)
+# TensorLogic メモリ管理戦略 (ARC ベースのスコープ管理)
 
-本ドキュメントでは、TensorLogicに実装された **V2.1 メモリ管理戦略** について概説します。
-この戦略は、高性能なテンソル演算のための **静的解析 (Arena)** と、複雑なデータ構造（構造体/オブジェクト）のための **厳格な参照カウント (Strict RefCounting)** を組み合わせたものです。
+本ドキュメントでは、TensorLogic コンパイラのメモリ管理戦略を定義します。
+すべての参照カウント管理対象型は、**対称的な ARC（Automatic Reference Counting）ライフサイクル**に基づいて管理されます。
 
-※ ネイティブ関数 (FFI / C ABI) 境界における安全なメモリおよび型の受け渡し方（Enumのアライメントやプリミティブラッピング）については、[FFI_IMPLEMENTATION_GUIDE.md](./FFI_IMPLEMENTATION_GUIDE.md) もあわせて参照してください。
-
----
-
-## [Japanese] メモリ管理戦略 V2.1 (ハイブリッド静的解析)
-
-### 1. 中心哲学: "テンソルはゼロコスト、構造体は安全性"
-
-V2.1システムは、最も頻繁な計算（テンソル演算）を最適化しつつ、複雑なデータ構造（構造体）の安全性を担保することを目標としています。
-
--   **テンソル (Arena)**: 関数内の一時的なテンソルは **スタックライクなリニア割り当て (Arena)** を使用します。malloc/freeは発生しません。
--   **構造体 (Heap)**: ユーザー定義の構造体や長寿命なテンソルは、**参照カウント (Reference Counting)** で管理される **ヒープ割り当て** を使用します。
--   **所有権の移動**: スコープ間での所有権移動に関して厳格なルールを設け、メモリリークと二重解放を防ぎます。
-
-### 2. コンパイラパイプライン
-
-#### Phase 1: 形状推論と生存区間解析
-コンパイラは全テンソル変数の生存期間を解析します。
--   **生存区間**: 変数の「定義」から「最後の使用」までを追跡。
--   **結果**: どのテンソルがメモリ領域を共有できるかを決定します。
-
-#### Phase 2: スロット割り当て
--   **オフセット割り当て**: 一時テンソル用に関数フレーム内のオフセットを決定します。
--   **スロット共有**: 生存期間が重ならない変数は、同じオフセット（スロット）を再利用します。
--   **結果**: 関数ごとに必要な `TotalFrameSize`（スロット数）が決定されます。
-
-### 3. ランタイムメカニズムとバグ修正 (V2.1)
-
-#### A. メモリアリーナ (関数フレーム)
-各スレッドは巨大なアリーナを持ちます。
--   **関数エントリ**: `tl_mem_function_enter(slots)` を呼び出し、フレームを確保します。
--   **メソッド対応**: メソッド（`impl` 内関数）であっても、内部で一時テンソルを使う場合は必ずフレーム確保が必要です（V2.1で修正された点）。これが無いと `No function frame` エラーが発生します。
-
-#### B. 構造体と参照カウント ("Shallow Unregister" パターン)
-構造体の返却時におけるメモリ破壊（二重解放）を防ぐため、以下の戦略を採用しています。
-
-1.  **生成時 (Deep Clone)**:
-    -   構造体初期化時 (`Point { x: a }`)、フィールドに対して `emit_deep_clone` (実質的な `ptr_acquire`/参照カウント増分) を行います。
-    -   ローカル変数 `a` (RC=1) -> 構造体フィールド `.x` (RC=2)。
-    -   ローカル変数と構造体の双方が参照を保持します。
-
-2.  **スコープ脱出時 (DecRef)**:
-    -   スコープ終了時 (`exit_scope`)、登録された全てのローカル変数の参照カウントがデクリメントされます。
-    -   `a` (RC: 2 -> 1)。構造体側の参照は生き残ります。
-
-3.  **返却時 (Shallow Unregister)**:
-    -   構造体を関数から返す際、`exit_scope` が構造体自身（コンテナ）を解放しないように `unregister(struct_ptr)` を呼び出します。
-    -   **重要**: この際、フィールドに対して再帰的な unregister は **行いません**。
-    -   フィールドは「ローカル変数の参照」が `exit_scope` でデクリメントされることで、正しく所有権が構造体側（だけ）に残る状態（RC=1）に遷移します。
-    -   結果: 構造体コンテナ（Unregister済み、生存） + フィールド（RC>0、生存）となり、安全に呼び出し元へ返却されます。
+※ ネイティブ関数 (FFI / C ABI) 境界における安全なメモリおよび型の受け渡し方については、[FFI_IMPLEMENTATION_GUIDE.md](./FFI_IMPLEMENTATION_GUIDE.md) もあわせて参照してください。
 
 ---
 
-#### C. 関数引数戦略: "Borrowing" (V2.2 最適化)
-さらなるオーバーヘッド削減と責任分界の明確化のため、関数引数に対して特別な扱いを導入します。
+## 1. 中心哲学
 
--   **借用 (Borrowing)**: 関数に渡された引数は、「呼び出し元（または外部スコープ）が所有している」とみなします。
--   **登録なし (No Registration)**: 呼び出された関数（被呼者）は、引数に対して `tl_mem_register_*` を**呼び出しません**。参照カウントのインクリメントも行いません。
--   **影響とルール**:
-    -   引数は、関数呼び出し期間中は常に有効であることが保証された「参照」として扱われます。
-    -   **再代入**: 引数変数に新しい値を代入する場合、古い値（引数として渡された値）の参照カウントはデクリメント**しません**（所有していないため）。新しい値は通常通り登録（所有）します。
-    -   **返却/構造体への格納**: 引数を関数から返す場合、または構造体のフィールドにセットして永続化する場合は、明示的な `tl_ptr_acquire` (retain) を呼び出し、借用された参照を所有された参照へと昇格させる必要があります。
+### 1.1 対称的 ARC モデル
 
----
+- すべてのインクリメント（RC+1）には、**必ず 1対1 で対応するデクリメント（RC-1）が存在する**。
+- デクリメントは原則として **スコープを抜けた時** に行われる。
+- 参照カウントが 0 になった時点で、メモリが解放される。
 
-### 4. 比較 (V1 vs V2.1)
+### 1.2 管理対象型
 
-| 機能 | V1 (旧) | V2.1 (現在) |
-| :--- | :--- | :--- |
-| **テンソル割り当て** | 個別 `malloc` | **Arena ポインタ加算** (高速) |
-| **構造体管理** | 不完全な所有権管理 | **Strict RefCount + Shallow Unregister** |
-| **メソッド実行** | フレームなし (不安定) | **関数同様のフレーム確保** (安定) |
-| **スロット再利用** | なし | **あり (Liveness Analysis)** |
+以下の型は ARC の管理対象であり、**すべて同一のルール** で管理されます。
+本ドキュメントで「構造体」と記述する箇所は、これらすべてを含みます。
 
----
+- **構造体 (Struct)** — ユーザー定義のデータ型
+- **タプル (Tuple)** — 無名の複合データ型
+- **構造を持つ列挙型 (Enum with payload)** — バリアントがフィールドを持つ列挙型
+- **テンソル (Tensor)** — `Arc<UnsafeCell<CpuTensor>>` で管理される不透明ポインタ
+- **文字列 (String)** — ヒープ割り当てされる文字列型
+- **コレクション (Vec, HashMap 等)** — 内部にポインタを持つコンテナ型
 
-## [Japanese] V3.0 最適化 (実装済み)
-
-### 1. 戻り値の最適化 (RVO / DPS)
-戻り値のオーバーヘッドを排除するために、厳格な「Destination Passing Style (DPS)」が実装されました。
--   **メカニズム**: 呼び出し元が戻り値スロットの「所有者」となります。未初期化のスタックメモリ（またはスロット）を事前に確保し、そのポインタ（`*dest`）を呼び出し先（Callee）に渡します。
--   **実行**:
-    1.  呼び出し先は、結果を直接 `*dest` に構築します。
-    2.  呼び出し先内部では、`*dest` に対して `tl_ptr_cleanup` を呼び出しません（所有権は呼び出し元にあるため）。
-    3.  構造体やテンソルを返す際に、`inc_ref` 操作は一切発生しません。
--   **メリット**: 大きな構造体やテンソルのゼロコピー返却を実現。
-
-### 2. ムーブセマンティクス / ラストユース最適化 (Move Semantics)
-関数に渡されたり、代入されたりする際、それが「最後の使用（Last Use）」である変数は「移動（Move）」されます。
--   **メカニズム**:
-    1.  **生存区間解析 (V3.1)**: コンパイラは変数が最後に使用されるステートメントを特定します。
-    2.  **コード生成**: 最後の使用時点では、`inc_ref` (retain) 操作を省略します。
-    3.  **所有権**: 所有権は受信側の変数や関数に効率的に転送されます。
-    4.  **クリーンアップなし**: 元の変数はスコープ終了時にデクリメントされません（`CLEANUP_NONE` フラグ等で管理）、二重解放を防ぎます。
--   **メリット**: `inc_ref` / `dec_ref` のペアを削除し、深い呼び出しチェーンにおけるパフォーマンスを劇的に向上させます。
+プリミティブ型（`i64`, `f32`, `bool` 等）は値コピーであり、ARC の対象外です。
 
 ---
 
-## [Japanese] ZST (ゼロサイズ型) 戦略 (V3.2)
+## 2. ARC ライフサイクルペア一覧
 
-### 1. 問題点
-`struct Empty {}` や `PhantomData<T>` などのゼロサイズ型（ZST）は0バイトのメモリを占有します。
-しかし、`malloc(0)` の挙動は未定義（NULLを返すか、ユニークなポインタを返すか）であり、プラットフォームによって異なります。
-以前のコンパイラは、ZSTをポインタではなく「Aggregate値」として返す最適化を行っていました。これは「構造体＝管理ポインタ」という不変条件に違反し、ランタイムが値を無効なアドレス（`0x7`など）として解釈し、`free()` でクラッシュさせる原因となっていました。
+すべてのインクリメントが、最終的にどのタイミングでデクリメント（回収）されるのかをペアで列挙します。
 
-### 2. 解決策: "ZST = NULL"
-ZSTを安全かつ低コストに扱うため、以下の戦略を採用しました：
--   **コンパイラ**: 構造体初期化 (`compile_struct_init`) において、フィールドがない（空の）構造体の場合、**NULLポインタ** (`i8* null`) 定数を返します。`malloc` は完全にスキップされます。
--   **ランタイム**: `MemoryManager` の各関数 (`inc_ref`, `dec_ref`, `register`, `release`) は、`ptr == NULL` を検知すると **即座にリターン（何もしない）** します。
-    -   ZSTの参照カウントは実質的に存在しません。
-    -   NULLの解放は安全であるため、二重解放は発生しません。
-    -   マップアクセス前にリターンするため、参照カウントマップでのキー衝突も回避されます。
+### 2.1 変数の初期化と代入
 
-### 3. なぜNULLか？ (Rationale)
--   **パフォーマンス**: 割り当てコストも追跡コストもゼロです。
--   **安全性**: 有効なヒープポインタがNULLになることはありません。
--   **単純性**: 「グローバルZSTシングルトン」や「1バイト割り当て」のような複雑な仕組みをランタイムに導入する必要がありません。
+```text
+インクリメント：変数の初期化と代入 (Variable Assignment / Initialization)
+デクリメント：その変数のスコープを抜けた時
+```
 
----
+変数に別な値が再代入された場合、古い値は「名前のない暗黙の一時ローカル変数」として現在のスコープに登録し直され、スコープを抜ける時に一括してデクリメントされます。
 
-## [Japanese] Autograd メモリリーク修正 (V3.3) — ※ V5.0 で置換済み
+### 2.2 一時変数の生成
 
-> [!NOTE]
-> V3.3 の `emit_retain` 制限と `tl_clear_grads` 自動挿入は、V5.0 の Arc ベース統一所有権モデルにより不要となりました。
-> 以下は歴史的な経緯として残しています。
+```text
+インクリメント：メソッドや関数の戻り値・一時変数の生成 (Temporary Expression)
+デクリメント：その一時変数のスコープを抜けた時
+```
 
-### 1. 問題点
-Autograd を多用するワークロード（例: N-Queens の勾配降下法）において、訓練イテレーションごとにメモリ使用量が線形に増加していました。
+変数に代入されなかった一時変数（式の評価結果など）も、「名前のない暗黙の一時ローカル変数」として現在のスコープに登録・管理され、すべてスコープを抜ける時に一括してデクリメントされます。
 
-### 2. 解決策
-1. **`emit_retain()` でのテンソル Acquire を無効化**
-2. **ループ内での自動 `tl_clear_grads()`**
+### 2.3 関数引数（Callee 側でインクリメント）
 
-### 3. V5.0 での置換
-Arc ベースの所有権統一により、テンソルも構造体と同様に参照カウントで管理されるようになりました。詳細は V5.0 セクションを参照。
+```text
+インクリメント：関数が呼び出された際、呼び出された関数側（引数を受け取った時）
+デクリメント：呼び出された関数の実行が終了し、関数内の引数スコープを抜けた時
+```
 
----
+引数のインクリメントは **呼び出し側（Caller）ではなく、呼び出された関数側（Callee）** で行われます。
+`self` 引数も他の引数とまったく同じルールで処理されます。
 
-## [Japanese] Persistent GPU Pool 戦略 (V4.0)
+### 2.4 コレクション・構造体への格納
 
-### 1. 問題: Metal の RSS 膨張
-Metal デバイスでは、GPU メモリの確保と解放を繰り返すと、TL ランタイム内部のバッファプールが安定していても **Resident Set Size (RSS)** が継続的に増加します。これは Metal ドライバの既知の挙動で、解放されたメモリが常に OS に返されるわけではありません。
+```text
+インクリメント：コレクション・配列・構造体への格納 (Storing in Collection / Struct)
+デクリメント：親となるコレクションや構造体が破棄された（親のスコープを抜けた）時
+```
 
-### 2. 解決策: GPU メモリを解放しない
-V4.0 戦略は、GPU メモリを OS に解放しない **Persistent GPU Pool** を実装します：
+コレクション自体がスコープを抜けて破棄される際に、内部要素も連鎖的にデクリメントされます。途中で `pop` などで削除されてどこにも代入されなかった値も、一時的に暗黙の変数に入れられ、最終的に親ブロックのスコープを抜けた時にデクリメントされます。
 
-- **`acquire()`**: 現在無効（Phase 1）。常に `None` を返し、新規確保を強制。
-- **`release()`**: テンソルの **コンテンツ**（内部 Candle テンソル、Arc）はドロップしますが、`OpaqueTensor` 構造体メモリは意図的に **リーク** します。
+### 2.5 if-let / match パターンマッチ分解
 
-このアプローチにより：
-1. 繰り返しの確保/解放サイクルによる **RSS 膨張を防止**
-2. メモリ回収に関する **Metal ドライバの問題を回避**
-3. プロセス終了時に **OS がメモリを回収**
+```text
+インクリメント：if-let / match による列挙型のパターンマッチ分解 (Pattern Destructuring)
+デクリメント：分解で束縛された変数のスコープ（if-let の then ブロック、match アーム本体）を抜けた時
+```
 
-### 3. 統計 API
-監視用の新しい C-ABI 関数：
-- `tl_get_gpu_total_allocated_bytes()`: 累計確保バイト数
-- `tl_get_gpu_free_count()`: 「解放」（リーク）されたテンソル数
-- `tl_get_gpu_free_bytes()`: 解放されたテンソルのバイト数
-- `tl_get_gpu_pool_hit_rate()`: プール命中率（現在 0%）
-- `tl_dump_gpu_pool_stats()`: 全統計を stderr にダンプ
+`if-let` や `match` で列挙型の内部値を取り出す場合、取り出された各フィールドに対してインクリメントを行い、それぞれ独立した変数としてスコープに登録します。
+元の列挙型の値自体は、通常の変数スコープルール（§2.1）に従い管理されます。
 
-### 4. 環境変数
-- `TL_GPU_PREALLOCATE_MB=<size>`: 起動時に GPU メモリを事前確保（将来実装）
+### 2.6 クロージャへのキャプチャ
+
+```text
+インクリメント：クロージャへのキャプチャ (Closure Value Capture)
+デクリメント：クロージャ（関数オブジェクト）自体のスコープを抜け、破棄された時
+```
+
+### 2.7 非同期タスクへの保持
+
+```text
+インクリメント：非同期タスク（Poll / Future）への保持 (Storing in Async Task / State Machine)
+デクリメント：非同期タスクが完了し、タスクの戻り値（Poll オブジェクト等）自体がスコープを抜け、破棄された時
+```
 
 ---
 
-## [Japanese] スコープ内テンソル管理 (V4.5)
+## 3. 例外: ムーブセマンティクス (Last-Use Optimization)
 
-### 1. 問題: `Type::Struct("Tensor")` の誤認識
-パーサーが `-> Tensor` 型注釈を `Type::Struct("Tensor", [])` として解析する。しかし Tensor は LLVM IR 上では**不透明ポインタ** (`ptr`) であり、フィールドアクセス可能な構造体ではない。codegen が Tensor を構造体として扱おうとすると、以下のエラーが発生する：
+```text
+条件：変数がその後二度と使われない最後の使用（Last Use）である場合
+→ インクリメントを省略する（所有権の移転 = ゼロコスト）
+→ 元の変数はスコープ脱出時にもデクリメントしない（所有権は既に移転済み）
+```
 
-- **SRET（構造体返し）**: Tensor を返す関数が隠しポインタ引数を誤って使用
-- **GEP**: 不透明ポインタに `build_struct_gep` → `"GEP pointee is not a struct"` エラー
-- **Deep Clone**: `emit_deep_clone` が Tensor ポインタの構造体フィールド走査を試行
-- **ABI アダプタ**: 関数呼び出し後に Tensor ポインタを GEP で構造体にパックしようとして失敗
+**メカニズム**:
+1. **生存区間解析**: コンパイラは変数が最後に使用されるステートメントを特定する。
+2. **コード生成**: 最後の使用時点では、`inc_ref` (retain) 操作を省略する。
+3. **所有権移転**: 所有権は受信側の変数や関数に効率的に転送される。
+4. **クリーンアップなし**: 元の変数はスコープ終了時にデクリメントされない（`CLEANUP_NONE` フラグで管理）。
 
-### 2. 解決策: codegen 境界での型正規化
-パーサーを変更する代わりに、型に基づくディスパッチが行われるすべての codegen 境界で `Struct("Tensor")` → `Type::Tensor(F32, 0)` に正規化する：
+**効果**: `inc_ref` / `dec_ref` のペアを削除し、深い呼び出しチェーンにおけるパフォーマンスを劇的に向上させる。
 
-| 箇所 | ファイル | 修正 |
-|:---|:---|:---|
-| `uses_sret`（プロトタイプ） | `mod.rs` | `Struct("Tensor")` を SRET から除外 |
-| `uses_sret`（関数本体） | `mod.rs` | 同上 |
-| `uses_sret`（静的メソッド呼び出し） | `expr.rs` | 同上 |
-| `uses_sret`（メソッド呼び出し） | `expr.rs` | 同上 |
-| `uses_sret`（関数呼び出し DPS） | `expr.rs` | 同上 |
-| `emit_cleanup_vars_in_scope` | `mod.rs` | `Type::Tensor` で `emit_recursive_free` を呼出 |
-| `emit_deep_clone` | `stmt.rs` | `Type::Tensor` ブランチにリダイレクト |
-| 呼び出し後 ABI アダプタ | `expr.rs` | 構造体ラッピングを型正規化に置換 |
+---
 
-### 3. スコープ内テンソルのライフサイクル
+## 4. 戻り値の最適化 (SRET / DPS)
+
+### 4.1 SRET の判定
+
+以下の条件を満たす型は SRET（Struct Return = Destination Passing Style）で返却される：
+
+| 型 | SRET |
+|:---|:---|
+| `Struct(name, _)` （`name != "Tensor"` かつ `name != "String"`） | **はい** |
+| `Tensor` | いいえ（ポインタ返却） |
+| `String` | いいえ（ポインタ返却） |
+| `Enum`, `Tuple` | いいえ（ポインタ返却） |
+| プリミティブ (`i64`, `f32`, `bool` 等) | いいえ（値返却） |
+
+### 4.2 SRET のメカニズム
 
 ```
-┌─ make_tensor() ──────────────────────────────┐
-│  let t = Tensor::ones([2, 3])                │
-│    → tl_tensor_ones_i64() がポインタを返す    │
-│    → t を現在のスコープに登録                  │
-│                                              │
-│  return t                                    │
-│    → tl_tensor_promote(t) (登録解除+浮遊化)   │
-│    → emit_all_scopes_cleanup (t をスキップ)   │
-│    → ポインタを返す                           │
-└──────────────────────────────────────────────┘
+┌─ Caller ────────────────────────────────────┐
+│  let sret_alloca = alloca(ptr)              │
+│  call callee(sret_alloca, args...)          │
+│  result = load(sret_alloca)                 │
+│  → result をスコープに登録                   │
+└─────────────────────────────────────────────┘
+
+┌─ Callee ────────────────────────────────────┐
+│  // sret_dest = 引数0（隠しポインタ）        │
+│  let result = ... （値を構築）               │
+│  store(result, sret_dest)                   │
+│  unregister(result)  ← スコープから除外      │
+│  emit_all_scopes_cleanup()                  │
+│  return void                                │
+└─────────────────────────────────────────────┘
+```
+
+- **Caller** が `alloca` でポインタを事前確保し、Callee に隠し第1引数として渡す。
+- **Callee** は結果を構築後、`sret_dest` にストアし、自スコープから `unregister` して所有権を Caller に移転する。
+- Callee の `exit_scope` では result を解放しない（`unregister` 済みのため）。
+
+### 4.3 非 SRET の戻り値
+
+テンソルや Enum 等の非 SRET 型は、ポインタを直接返す：
+
+```
+┌─ Callee ────────────────────────────────────┐
+│  let t = Tensor::ones([2, 3])               │
+│    → ランタイムがポインタを返す              │
+│    → t をスコープに登録                      │
+│                                             │
+│  return t                                   │
+│    → unregister(t) (スコープから除外)        │
+│    → emit_all_scopes_cleanup (t をスキップ)  │
+│    → ポインタを返す                          │
+└─────────────────────────────────────────────┘
          │ ptr (浮遊状態)
          ▼
-┌─ main() ─────────────────────────────────────┐
-│  let t = make_tensor()                       │
-│    → 呼び出しがポインタを返す                  │
-│    → tl_tensor_register(t) (呼び出し元で登録)  │
-│    → alloca に格納                            │
-│                                              │
-│  // ... t を使用 ...                          │
-│                                              │
-│  スコープ脱出:                                │
-│    → emit_recursive_free(t, Type::Tensor)    │
-│    → tl_tensor_release_safe(t)               │
-└──────────────────────────────────────────────┘
+┌─ Caller ────────────────────────────────────┐
+│  let t = callee()                           │
+│    → ポインタを受け取り、スコープに登録       │
+└─────────────────────────────────────────────┘
 ```
-
-### 4. 重要な不変条件
-**`Struct("Tensor")` は `build_struct_gep` や `emit_struct_copy` に到達してはならない。** これらの関数はフィールドアクセス可能な具体的な LLVM 構造体型を必要とするが、Tensor はランタイム関数（`tl_tensor_acquire`, `tl_tensor_release_safe`, `tl_tensor_promote`）により排他的に管理される不透明な `ptr` である。
 
 ---
 
-## [Japanese] Arc ベース統一所有権 (V5.0)
+## 5. Deep Copy (True Deep Clone)
 
-### 1. 動機
-V3.3 および以前の戦略では、Autograd テンソルと通常テンソルで異なるメモリ管理を行っていました：
-- **通常テンソル**: `Box::into_raw` で割り当て、`Box::from_raw` で解放
-- **Autograd テンソル**: `release_safe` が No-Op、`backward()` 完了時に全ノード走査で手動クリーンアップ
-- **GradFn が `*mut CpuTensor` 生ポインタで入力を保持**: 所有権が曖昧で dangling pointer のリスク
+変数の代入（`let x = y`）において、`y` が L-value（既存の変数）の場合、**True Deep Copy** が行われます。
 
-これにより、`backward()` や `release_safe` 内での特別な条件分岐が必要で、コードの複雑化およびメモリリークの原因となっていました。
-
-### 2. 解決策: Arc ベース統一
-
-Autograd テンソルも通常テンソルも、**同じ `Arc<UnsafeCell<CpuTensor>>` で管理** します。
+### 5.1 動作
 
 ```rust
-// 型エイリアス
-pub type TensorRef = Arc<UnsafeCell<CpuTensor>>;
-
-// FFI 割り当て
-fn make_tensor(t: CpuTensor) -> *mut OpaqueTensor {
-    let arc = Arc::new(UnsafeCell::new(t));
-    Arc::into_raw(arc) as *mut CpuTensor
-}
-
-// FFI 解放
-fn tl_cpu_tensor_release(t: *mut OpaqueTensor) {
-    unsafe { drop(Arc::from_raw(t as *const UnsafeCell<CpuTensor>)); }
-}
+fn emit_deep_clone(val, ty) -> new_val:
+    match ty:
+        Tensor     → tl_tensor_acquire(val)    // Arc::clone, RC+1
+        Struct     → 新メモリ確保 (malloc + register)
+                     各フィールドを再帰的に emit_deep_clone
+        Enum       → 新メモリ確保 + タグコピー + ペイロードを再帰 Deep Clone
+        String     → tl_string_clone(val)      // 新しい文字列を確保
+        Primitive  → 値コピー（RC 操作なし）
 ```
 
-### 3. Autograd グラフの所有権
+### 5.2 R-value の場合（ムーブ）
 
-GradFn の入力参照は `TensorRef` (`Arc::clone`) で保持されます：
+R-value（関数呼び出しの戻り値、式の評価結果など）の場合は Deep Clone を行わず、テンポラリリストから除外して所有権を直接移転します（§3 のムーブセマンティクスと同等）。
 
-```rust
-// 以前: 生ポインタ（所有権曖昧）
-struct AddBackward { a: *mut CpuTensor, b: *mut CpuTensor, ... }
+---
 
-// V5.0: Arc で共有所有（参照カウントで安全）
-struct AddBackward { a: TensorRef, b: TensorRef, ... }
-```
+## 6. スコープとクリーンアップ
 
-`tensor_ref_from_ptr(ptr)` で FFI ポインタから `Arc::clone` (RC+1) を取得し、`set_grad_fn` に渡します。
+### 6.1 スコープの種類
 
-### 4. backward() の簡素化
-
-V5.0 では `backward()` 完了後のクリーンアップが大幅に簡素化されました：
-
-```diff
- // 以前: 全ノード DFS 走査で手動クリーンアップ
--let mut all_nodes = Vec::new();
--Self::collect_all_graph_nodes(self_ptr, &mut visited, &mut all_nodes);
--for &ptr in &all_nodes { /* 手動 grad_fn クリア */ }
-
- // V5.0: 出力テンソルの grad_fn をクリアするだけ
-+if let Some(ref mut meta) = self.autograd {
-+    meta.grad_fn = None;  // → GradFn Drop → TensorRef Drop → 連鎖解放
-+}
-```
-
-出力テンソルの `grad_fn = None` で GradFn が Drop され、その内部の `TensorRef` が Drop され、中間テンソルの Arc RC が連鎖的に減少し、不要なテンソルが自然に解放されます。
-
-### 5. release_safe の統一
-
-`tl_tensor_release_safe` は Autograd の有無にかかわらず **常に `Arc::from_raw(ptr)` で RC-1** を行います：
-
-| テンソル種別 | release_safe の挙動 | 結果 |
-|:---|:---|:---|
-| 純粋データ (RC=1) | Arc Drop → CpuTensor 解放 | メモリ即座解放 |
-| Autograd ノード (RC>1) | Arc RC-1 | GradFn の TensorRef がまだ保持中、テンソルは生存 |
-| Autograd ノード (RC=1) | Arc Drop → autograd含む全解放 | backward() 後の自然解放 |
-
-### 6. 変更対象ファイル
-
-| ファイル | 変更内容 |
+| スコープ | 範囲 |
 |:---|:---|
-| `tensor.rs` | `TensorRef` 型定義、`backward()` 簡素化、`collect_all_graph_nodes` 削除 |
-| `autograd/mod.rs` | `GradFn::inputs()` → `Vec<TensorRef>` |
-| `autograd/ops.rs` | 全 19 Backward 構造体を `TensorRef` に変更 |
-| `ffi.rs` | `make_tensor`: Box→Arc、全 19 `set_grad_fn`: `tensor_ref_from_ptr` |
-| `memory.rs` | テンソルプール廃止、`release_tensor` で Arc RC-1 |
-| `memory_ffi.rs` | `release_safe`: `clear_data` → `release` (Arc drop) |
+| 関数スコープ | 関数全体。`tl_mem_function_enter` / `tl_mem_function_exit` で囲まれる |
+| ブロックスコープ | `if` / `match` / `loop` / `{ }` の各ブロック。`enter_scope` / `exit_scope` で囲まれる |
+| イテレーションスコープ | `for` / `while` ループの各イテレーション |
 
----
+### 6.2 ループイテレーションスコープ
 
-## [Japanese] main 関数クリーンアップ戦略 (V5.1)
-
-### 1. 問題: SRET Return の RC 蓄積
-
-SRET (Struct Return) パスでは以下のパターンが発生する：
+`for` / `while` ループでは、各イテレーションの終わりにスコープ内の変数とテンポラリがクリーンアップされます：
 
 ```
-emit_struct_copy(sret, source) → フィールド acquire (RC+1)
-source 変数 → CLEANUP_NONE → exit_scope で RC-1 なし
-結果: フィールド RC が +1 蓄積
-```
-
-この蓄積は中間関数では問題にならない（free されないだけ）が、**main 関数の `exit_scope` で `emit_recursive_free` が蓄積 RC の不整合に遭遇し SIGBUS が発生**する。
-
-### 2. なぜ CLEANUP_FULL にできないか
-
-フィールド代入の `CLEANUP_FULL` は、**in-place 更新パターン** で共有ポインタを破壊する：
-
-```rust
-// TL ソースコード
-s.b1 = s.b1.step(lr);
-```
-
-1. `s.b1` を load → `old_b1_ptr`
-2. `old_b1_ptr.step(lr)` 内で `let mut s2 = self` → `tl_ptr_acquire(old_b1_ptr)` → RC+1
-3. `s2` のフィールドを更新 → SRET copy で acquire → return
-4. **CLEANUP_FULL**: `emit_recursive_free(old_b1_ptr)` → RC-1 → if RC=0: **フィールド全 free**
-5. しかし SRET result のフィールドは `old_b1_ptr` のフィールド（更新後）と**同じポインタ** → **ダングリング!**
-
-### 3. 解決策: main 関数の exit(0) — ※ V6.0 で置換済み
-
-> [!NOTE]
-> V5.1 の exit(0) ワークアラウンドは、V6.0 の True Deep Copy により不要となりました。
-
-V4.0 GPU Pool と同原則（「プロセス終了時に OS がメモリ回収」）を適用：
-
-- main 関数のコンパイル時、`exit_scope` の前に `exit(0)` を呼ぶ IR を生成
-- `build_unreachable()` + `return Ok(())` で cleanup IR 生成自体をスキップ
-- 中間関数の RC 蓄積は安全（free されないだけ、アクセスは正常）
-
----
-
-## [Japanese] True Deep Copy (V6.0) — SRET RC 蓄積の根本解決
-
-### 1. 問題の根本原因
-
-V5.1 の SRET RC 蓄積は `emit_deep_clone` が構造体に対して **Reference Semantics** (`tl_ptr_acquire` + 同ポインタ返却) を使用していたことが原因：
-
-```rust
-// V5.1 以前: emit_deep_clone for Struct
-tl_ptr_acquire(self_ptr);  // RC+1
-return self_ptr;           // 同じポインタを返す → s = self は同一メモリ
-```
-
-`let mut s = self` で `s` と `self` が同一メモリを指すため、`s.field = new_val` が `self.field` も上書きし、SRET copy 時にフィールドの共有ポインタ問題が発生。
-
-### 2. 解決策: True Deep Copy
-
-`emit_deep_clone` の `Type::Struct` ブランチを **True Deep Copy** に変更：
-
-```rust
-// V6.0: emit_deep_clone for Struct
-let new_ptr = malloc(size_of::<Struct>());  // 新メモリ確保
-tl_mem_register(new_ptr);                    // MemoryManager 登録
-for field in struct_def.fields {
-    new_ptr.field = emit_deep_clone(old_ptr.field, field_ty);
-    // Tensor → tl_tensor_acquire (Arc::clone, RC+1)
-    // 構造体 → 再帰 True Deep Copy
-    // プリミティブ → 値コピー
+for i in 0..n {
+    // enter_scope()
+    let tmp = some_expr()    ← スコープに登録
+    ...
+    // イテレーション末:
+    //   emit_cleanup_vars_in_scope()  ← tmp をデクリメント
+    //   tl_mem_exit_scope()
+    //   tl_mem_enter_scope()          ← 次のイテレーション用
 }
-return new_ptr;  // 完全に独立した新ポインタ
 ```
 
-### 3. 効果
+### 6.3 再代入時の古い値
 
-| 項目 | V5.1 以前 | V6.0 |
-|:---|:---|:---|
-| `let mut s = self` | 同一メモリ | **独立メモリ** |
-| フィールド更新の副作用 | self.field も上書き | self に影響なし |
-| SRET copy の RC | 蓄積 (+1 per return) | **整合 (acquire/release 対称)** |
-| 2-layer GPT (d=64) | bus error | **正常動作** |
-| exit(0) ワークアラウンド | 必要 | **不要** |
+変数に新しい値が代入されると、古い値は「暗黙の一時変数」として現在のスコープに登録されます。
+古い値のデクリメントはスコープ脱出時に一括して行われます。
 
+### 6.4 emit_recursive_free
+
+管理対象型のデクリメントは `emit_recursive_free` によって再帰的に行われます：
+
+- **構造体**: コンテナの `dec_ref` → RC が 0 になった場合、全フィールドを再帰的に free → コンテナ自体を `free`
+- **テンソル**: `tl_tensor_release_safe` → Arc の `dec_ref` → RC が 0 になった場合、CpuTensor を解放
+- **Enum**: タグに応じたバリアントのフィールドを再帰的に free → コンテナ自体を `free`
+- **Vec**: 全要素を再帰的に free → 内部バッファを free → コンテナを free
+
+---
+
+## 7. ZST (ゼロサイズ型) 戦略
+
+### 7.1 問題
+
+`struct Empty {}` 等のゼロサイズ型（ZST）は 0 バイトのメモリを占有します。
+`malloc(0)` の挙動はプラットフォーム依存で未定義です。
+
+### 7.2 解決策: "ZST = NULL"
+
+- **コンパイラ**: フィールドがない構造体の初期化時に **NULL ポインタ** (`i8* null`) を返す。`malloc` は完全にスキップ。
+- **ランタイム**: `inc_ref`, `dec_ref`, `register`, `release` は `ptr == NULL` を検知すると即座にリターン（No-Op）。
+
+### 7.3 理由
+
+- **パフォーマンス**: 割り当てコストも追跡コストもゼロ。
+- **安全性**: 有効なヒープポインタが NULL になることはない。
+- **単純性**: グローバルシングルトンや 1 バイト割り当てのような複雑な仕組みが不要。
+
+---
+
+## 8. GPU メモリ管理
+
+GPU テンソルのメモリ管理は、Persistent GPU Pool 戦略に基づいて別途管理されています。
+詳細は Knowledge Item「TL Compiler Unified Technical Reference」の GPU Backend Architecture セクションを参照してください。
+
+概要：
+- GPU メモリは OS に解放しない（Persistent Pool）
+- テンソルのディスクリプタ（`OpaqueTensor`）をプールで再利用
+- プロセス終了時に OS がメモリを回収
+
+---
+
+## 9. ARC ランタイム API
+
+### 9.1 グローバル・サイドテーブル
+
+TL は **Global Side-Table** 方式で参照カウントを管理します。オブジェクトのヘッダにカウントを埋め込まず、グローバルな `HashMap<usize, usize>` でポインタアドレスごとのカウントを追跡します。
+
+```rust
+static REF_COUNTS: LazyLock<Mutex<HashMap<usize, usize>>> = ...;
+```
+
+### 9.2 コア FFI 関数
+
+| 関数 | 動作 |
+|:---|:---|
+| `tl_ptr_inc_ref(ptr)` | RC+1（未登録の場合は 2 で初期化） |
+| `tl_ptr_dec_ref(ptr) -> bool` | RC-1（0 になったら `true` を返す） |
+| `tl_ptr_acquire(ptr) -> ptr` | `inc_ref` + ポインタ返却 |
+| `tl_ptr_release(ptr)` | `dec_ref` → 0 なら `libc::free` |
+| `tl_mem_register(ptr)` | スコープマネージャにポインタを登録 |
+| `tl_mem_unregister(ptr)` | スコープマネージャからポインタを除外 |
+| `tl_mem_enter_scope()` | 新しいスコープを開始 |
+| `tl_mem_exit_scope()` | 現在のスコープを終了し、登録済みポインタを解放 |
+| `tl_mem_function_enter(slots)` | 関数フレームを確保 |
+| `tl_mem_function_exit()` | 関数フレームを解放 |
