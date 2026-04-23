@@ -243,6 +243,27 @@ for i in 0..n {
 - **Enum**: タグに応じたバリアントのフィールドを再帰的に free → コンテナ自体を `free`
 - **Vec**: 全要素を再帰的に free → 内部バッファを free → コンテナを free
 
+### 6.5 Tensor / GradTensor の解放免除
+
+**一度取得した Tensor および GradTensor は、codegen のスコープクリーンアップ（`emit_cleanup_vars_in_scope`）では一切解放しない。**
+
+Tensor / GradTensor は `Arc<UnsafeCell<CpuTensor>>` で管理されており、ランタイム側の Arc 参照カウントによって自然に Drop されます。codegen 側で `tl_tensor_release_safe` を呼ぶのは、**`emit_recursive_free` による再帰的解放パス**のみに限定されます。
+
+#### 理由
+
+1. **Struct フィールドの安全性**: `forward(model, X)` のように構造体を関数に渡す場合、関数内のスコープクリーンアップで Struct のフィールド（Tensor / GradTensor）が解放されると、呼び出し元の Struct のフィールドが use-after-free になる。
+2. **Arc の自律性**: Tensor は Arc ベースであるため、`Arc::clone`（`tl_tensor_acquire`）と `Arc::from_raw → drop`（`tl_tensor_release_safe`）のペアだけでライフサイクルが完結する。codegen が重複してスコープ管理を行うと、二重解放が発生する。
+3. **GradTensor の特殊性**: GradTensor は autograd グラフへの参照を内包しており、不用意な解放はグラフの破壊を引き起こす。
+
+#### ルール
+
+| 操作 | Tensor / GradTensor の扱い |
+|:---|:---|
+| `emit_cleanup_vars_in_scope` (else if ブランチ) | **含めない** — 解放しない |
+| `add_temp_with_mode` (テンポラリ追跡) | **含めない** — 追跡しない |
+| `emit_recursive_free` | **専用ブランチで処理** — 親 Struct/Vec 等の再帰解放時のみ |
+| 関数の戻り値 | `unregister` で管理。Caller がスコープに登録 |
+
 ---
 
 ## 7. ZST (ゼロサイズ型) 戦略
