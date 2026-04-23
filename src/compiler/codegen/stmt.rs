@@ -804,7 +804,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
                 self.builder.position_at_end(merge_block);
             }
-            Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::GradTensor(_, _) => {
+            Type::Tensor(_, _) | Type::TensorShaped(_, _) => {
                 if !val.is_pointer_value() {
                     return Err(TlError::from(CodegenErrorKind::Internal(format!("Tensor value is not pointer: {:?}", val))));
                 }
@@ -876,6 +876,37 @@ impl<'ctx> CodeGenerator<'ctx> {
                 self.builder
                     .build_unconditional_branch(merge_block)
                     .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+                self.builder.position_at_end(merge_block);
+            }
+            Type::GradTensor(_, _) => {
+                // GradTensor は Tensor と独立した型として処理する。
+                // 内部的には Arc 管理のテンソルだが、autograd グラフを含むため
+                // 将来的に固有のクリーンアップロジックが必要になる可能性がある。
+                if !val.is_pointer_value() {
+                    return Err(TlError::from(CodegenErrorKind::Internal(format!("GradTensor value is not pointer: {:?}", val))));
+                }
+                let ptr = val.into_pointer_value();
+
+                let current_block = self.current_block()?;
+                let func = current_block.get_parent().ok_or_else(|| TlError::from(CodegenErrorKind::Internal("block has no parent function".to_string())))?;
+                let free_block = self.context.append_basic_block(func, "free_grad_tensor");
+                let merge_block = self.context.append_basic_block(func, "after_grad_free");
+
+                let is_null = self.builder.build_is_null(ptr, "is_null_grad").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+                self.builder.build_conditional_branch(is_null, merge_block, free_block).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+
+                self.builder.position_at_end(free_block);
+
+                // GradTensor は常に tl_tensor_release_safe で解放（qtensor ではない）
+                let free_fn = self.module.get_function("tl_tensor_release_safe").or_else(|| {
+                    let void_ty = self.context.void_type();
+                    let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                    let ft = void_ty.fn_type(&[ptr_ty.into()], false);
+                    Some(self.module.add_function("tl_tensor_release_safe", ft, None))
+                }).ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_tensor_release_safe not found".to_string())))?;
+
+                self.builder.build_call(free_fn, &[val.into()], "").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+                self.builder.build_unconditional_branch(merge_block).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                 self.builder.position_at_end(merge_block);
             }
             Type::Struct(name, generic_args) => {
@@ -1086,17 +1117,6 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
 
             Type::String(_) => {
-                  let free_fn = self
-                        .module
-                        .get_function("tl_string_free")
-                        .or_else(|| {
-                             let void_ty = self.context.void_type();
-                             let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
-                             let ft = void_ty.fn_type(&[ptr_ty.into()], false);
-                             Some(self.module.add_function("tl_string_free", ft, None))
-                        })
-                        .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_string_free not found".to_string())))?;
-                  
                   let ptr = val.into_pointer_value();
                   
                   // Runtime null check
@@ -1109,9 +1129,46 @@ impl<'ctx> CodeGenerator<'ctx> {
                   self.builder.build_conditional_branch(is_null, merge_block, free_block).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
                   self.builder.position_at_end(free_block);
-                  // Cast to opaque pointer if needed (though StringStruct* is ptr)
                   let cast_ptr = self.builder.build_pointer_cast(ptr, self.context.ptr_type(inkwell::AddressSpace::default()), "cast_str").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+                  
+                  // ARC Lifecycle: tl_ptr_dec_ref で RC チェック。RC=0 の場合のみ tl_string_free を呼ぶ。
+                  // これにより Vec<String> 等で共有されている String の早期解放を防止。
+                  let dec_ref_fn = self.module.get_function("tl_ptr_dec_ref").or_else(|| {
+                      let i32_ty = self.context.i32_type();
+                      let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                      let ft = i32_ty.fn_type(&[ptr_ty.into()], false);
+                      Some(self.module.add_function("tl_ptr_dec_ref", ft, None))
+                  }).ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_ptr_dec_ref not found".to_string())))?;
+                  
+                  let rc_result = self.builder.build_call(dec_ref_fn, &[cast_ptr.into()], "dec_ref_result")
+                      .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+                  let should_free = match rc_result.try_as_basic_value() {
+                      inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+                      _ => self.context.i32_type().const_zero(),
+                  };
+                  
+                  // RC=0 の場合のみ tl_string_free を呼ぶ
+                  let do_free_block = self.context.append_basic_block(func, "do_string_free");
+                  let skip_free_block = self.context.append_basic_block(func, "skip_string_free");
+                  
+                  let is_zero = self.builder.build_int_compare(
+                      inkwell::IntPredicate::NE, should_free, self.context.i32_type().const_zero(), "should_free_str"
+                  ).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+                  self.builder.build_conditional_branch(is_zero, do_free_block, skip_free_block).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+                  
+                  // 実際の解放
+                  self.builder.position_at_end(do_free_block);
+                  let free_fn = self.module.get_function("tl_string_free").or_else(|| {
+                      let void_ty = self.context.void_type();
+                      let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                      let ft = void_ty.fn_type(&[ptr_ty.into()], false);
+                      Some(self.module.add_function("tl_string_free", ft, None))
+                  }).ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_string_free not found".to_string())))?;
                   self.builder.build_call(free_fn, &[cast_ptr.into()], "").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+                  self.builder.build_unconditional_branch(merge_block).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+                  
+                  // RC > 0: スキップ
+                  self.builder.position_at_end(skip_free_block);
                   self.builder.build_unconditional_branch(merge_block).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
                   self.builder.position_at_end(merge_block);

@@ -34,9 +34,26 @@ pub extern "C" fn tl_string_new(s: *const c_char) -> *mut StringStruct {
 
 /// @ffi_sig (String*) -> void
 /// StringStruct を解放
+/// 注意: codegen 側で tl_ptr_dec_ref によるRCチェックを行い、
+/// RC=0 の場合のみこの関数を呼ぶこと。
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_string_free(s: *mut StringStruct) {
     if !s.is_null() {
+        // デバッグビルド時: RC チェック警告
+        // tl_string_free は RC=0 の場合のみ呼ばれるべき。
+        // RC > 0 で呼ばれた場合は、codegen 側の RC チェックが不正。
+        #[cfg(debug_assertions)]
+        {
+            if let Some(rc) = crate::memory_ffi::get_ref_count(s as *const std::ffi::c_void) {
+                if rc > 0 {
+                    eprintln!(
+                        "[WARNING] tl_string_free called with RC={} (ptr={:#x}). \
+                         Expected RC=0. Possible double-free or missing dec_ref.",
+                        rc, s as usize
+                    );
+                }
+            }
+        }
         unsafe {
             if !(*s).ptr.is_null() {
                 let _ = CString::from_raw((*s).ptr);

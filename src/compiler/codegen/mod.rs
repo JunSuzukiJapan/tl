@@ -314,9 +314,12 @@ impl<'ctx> CodeGenerator<'ctx> {
     }
 
     pub(crate) fn add_temp_with_mode(&mut self, val: BasicValueEnum<'ctx>, ty: Type, mode: u8) {
-        // Only track types that need freeing
+        // ARC Lifecycle §1.2: すべての管理対象型を追跡
+        // 注意: GradTensor と String はテンポラリ追跡で二重解放のリスクがあるため
+        // スコープクリーンアップ (emit_cleanup_vars_in_scope) のみで管理する
         match &ty {
-            Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::Struct(_, _) | Type::Tuple(_) | Type::Enum(_, _) => {
+            Type::Tensor(_, _) | Type::TensorShaped(_, _)
+            | Type::Struct(_, _) | Type::Tuple(_) | Type::Enum(_, _) => {
                  self.temporaries.last_mut().expect("No temporary context").push((val, ty, mode));
             }
             _ => {}
@@ -547,15 +550,15 @@ impl<'ctx> CodeGenerator<'ctx> {
                     let ptr = val_enum.into_pointer_value();
                     let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
                     if let Ok(loaded) = self.builder.build_load(load_type, ptr, "arg_to_dec") {
-                        if let Some(release_fn) = self.module.get_function("tl_ptr_release").or_else(|| {
-                            let void_ty = self.context.void_type();
+                        if let Some(dec_ref_fn) = self.module.get_function("tl_ptr_dec_ref").or_else(|| {
+                            let i32_ty = self.context.i32_type();
                             let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
-                            let ft = void_ty.fn_type(&[ptr_ty.into()], false);
-                            Some(self.module.add_function("tl_ptr_release", ft, None))
+                            let ft = i32_ty.fn_type(&[ptr_ty.into()], false);
+                            Some(self.module.add_function("tl_ptr_dec_ref", ft, None))
                         }) {
                             let void_ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
                             if let Ok(cast_ptr) = self.builder.build_pointer_cast(loaded.into_pointer_value(), void_ptr_type, "cast_dec_arg") {
-                                let _ = self.builder.build_call(release_fn, &[cast_ptr.into()], "");
+                                let _ = self.builder.build_call(dec_ref_fn, &[cast_ptr.into()], "");
                             }
                         }
                     }
@@ -566,7 +569,16 @@ impl<'ctx> CodeGenerator<'ctx> {
                     if let Type::Struct(name, _) = &ty {
                     // Opaque Handles check (formerly UserDefined logic)
                     match name.as_str() {
-                        "String" => {} // Should be Type::String("String".to_string()) usually
+                        "String" => {
+                            // ARC Lifecycle §6.4: Type::Struct("String") として到達した場合も
+                            // tl_ptr_dec_ref + tl_string_free で解放する（RC チェック付き）
+                            let ptr = val_enum.into_pointer_value();
+                            let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                            if let Ok(str_val) = self.builder.build_load(load_type, ptr, "string_to_free") {
+                                let string_ty = Type::String("String".to_string());
+                                let _ = self.emit_recursive_free(str_val, &string_ty, cleanup_mode);
+                            }
+                        }
                         "File" | "Path" => {}
                         "Env" | "Http" => {}
                         "Tokenizer" | "KVCache" => {}

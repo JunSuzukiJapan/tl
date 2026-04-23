@@ -208,6 +208,21 @@ pub extern "C" fn tl_tensor_finalize(_t: *mut crate::OpaqueTensor) {
 static REF_COUNTS: std::sync::LazyLock<Mutex<HashMap<usize, usize>>> =
     std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 
+/// デバッグ用: ポインタの現在の RC 値を取得する
+/// RC 未登録の場合は None を返す
+#[cfg(debug_assertions)]
+pub(crate) fn get_ref_count(ptr: *const std::ffi::c_void) -> Option<usize> {
+    if ptr.is_null() {
+        return None;
+    }
+    let key = ptr as usize;
+    if let Ok(counts) = REF_COUNTS.lock() {
+        counts.get(&key).copied()
+    } else {
+        None
+    }
+}
+
 /// @ffi_sig (Struct*|String*) -> void
 /// 参照カウント増加。構造体・String どちらにも使われる。
 /// 安全ガード: REF_COUNTS に未登録のポインタ（alloca 等のスタックアドレス）は無視する。
