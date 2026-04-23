@@ -593,8 +593,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                             }
                         }
                     }
-                } else if matches!(ty, Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::Tuple(_)) {
-                        // Tuple and Vec also need loading from Alloca
+                } else if matches!(ty, Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::Tuple(_) | Type::Enum(_, _)) {
+                    // ARC Lifecycle §6.4: すべての管理対象型をスコープ脱出時に解放
                     let ptr = val_enum.into_pointer_value();
                     let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
                     if let Ok(val) =

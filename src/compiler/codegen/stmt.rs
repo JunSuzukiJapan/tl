@@ -1014,14 +1014,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
 
                 // B. Enum Cleanup Fallback
-                if let Some(enum_def) = enum_def_opt {
+                if let Some(_enum_def) = enum_def_opt {
                     // It's an Enum (e.g. Entry<K,V>) masquerading as Struct.
                     // Recurse using Type::Enum to trigger switch-based field cleanup.
-                    
-                    // DEBUG: Inspect fields to see if they are generic
-                    for variant in &enum_def.variants {
-                        eprintln!("  Variant {}: {:?}", variant.name, variant.kind);
-                    }
 
                     self.emit_recursive_free(val, &Type::Enum(name.clone(), generic_args.clone()), super::CLEANUP_FULL)?;
 
@@ -1049,7 +1044,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                             | Type::TensorShaped(_, _) | Type::GradTensor(_, _)
                             | Type::Struct(_, _)
                             | Type::Enum(_, _)
-                            | Type::Tuple(_) | Type::SpecializedType { .. } => {
+                            | Type::Tuple(_) | Type::String(_) | Type::SpecializedType { .. } => {
                                 let f_ptr = self.builder.build_struct_gep(
                                     *self.struct_types.get(&mangled_name).ok_or_else(|| TlError::from(CodegenErrorKind::Internal(format!("struct type {} not found", &mangled_name))))?, // Safe: checked existence
                                     ptr, i as u32, "field_gep"
@@ -1129,7 +1124,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                  for i in 0..(*size) {
                      let elem_ptr = self.builder.build_struct_gep(llvm_arr_ty, arr_ptr, i as u32, "elem").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                      match &**inner {
-                         Type::Tensor(_, _) | Type::Struct(_, _) | Type::Enum(_, _) | Type::Tuple(_) | Type::SpecializedType { .. } => {
+                         Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::GradTensor(_, _) | Type::Struct(_, _) | Type::Enum(_, _) | Type::Tuple(_) | Type::String(_) | Type::SpecializedType { .. } => {
                              let elem_val = self.builder.build_load(self.context.ptr_type(inkwell::AddressSpace::default()), elem_ptr, "elem_load").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                              self.emit_recursive_free(elem_val, inner, mode)?;
                          }
@@ -1144,7 +1139,8 @@ impl<'ctx> CodeGenerator<'ctx> {
 
             Type::Tuple(elem_types) => {
                  // Check if any element needs freeing
-                 let needs_free = elem_types.iter().any(|t| matches!(t, Type::Tensor(_, _) | Type::Struct(_, _)));
+                 // ARC Lifecycle §6.4: すべての管理対象型（Tensor, Struct, Enum, Tuple, String 等）を解放
+                 let needs_free = elem_types.iter().any(|t| matches!(t, Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::GradTensor(_, _) | Type::Struct(_, _) | Type::Enum(_, _) | Type::Tuple(_) | Type::String(_)));
                  if !needs_free {
                      return Ok(());
                  }
@@ -1180,7 +1176,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                  let struct_ty = self.context.struct_type(&llvm_types, false);
                  
                  for (i, ty) in elem_types.iter().enumerate() {
-                      if matches!(ty, Type::Tensor(_, _) | Type::String(_) | Type::Struct(_, _)) {
+                      if matches!(ty, Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::GradTensor(_, _) | Type::String(_) | Type::Struct(_, _) | Type::Enum(_, _) | Type::Tuple(_)) {
                            let f_ptr = self.builder.build_struct_gep(struct_ty, ptr, i as u32, "tup_elem").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                            let load = self.builder.build_load(self.context.ptr_type(inkwell::AddressSpace::default()), f_ptr, "load").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                            self.emit_recursive_free(load, ty, super::CLEANUP_FULL)?;
