@@ -246,53 +246,54 @@ for i in 0..n {
 ### 6.5 Tensor / GradTensor のメモリ管理
 
 Tensor と GradTensor は、他の管理対象型（Struct, String, Vec 等）とは**根本的に異なるメモリ管理モデル**に従います。
-ただし **参照カウントは Tensor / GradTensor ともにきちんと増減させます**。
 
 #### 中心原則
 
-1. **参照カウントは常に増減させる** — Deep Clone 時に `tl_tensor_acquire`（RC+1）、スコープ脱出時に RC-1。
-2. **Tensor は Arc に委任して解放する** — `tl_tensor_release_safe`（`Arc::from_raw → drop`）で RC-1 し、RC=0 で自然に Drop。
-3. **GradTensor は free しない** — `tl_ptr_dec_ref` で RC-1 のみ行い、`tl_tensor_release_safe` は呼ばない。
-
-#### GradTensor を free しない理由
-
-1. **Struct フィールドの安全性**: `forward(model, X)` のように構造体を関数に渡す場合、関数内のスコープクリーンアップで Struct のフィールド（GradTensor）が free されると、呼び出し元の Struct のフィールドが use-after-free になる。
-2. **autograd グラフの保護**: GradTensor は autograd 計算グラフ（DAG）への参照を内包しており、free するとグラフが破壊される。
-3. **Tensor との非対称性**: Tensor は codegen が直接生成するが、GradTensor は `.requires_grad_()` による型変換で生成され、Struct フィールドとして共有されるケースが多いため、free のタイミングが異なる。
+1. **Tensor と GradTensor は同じ扱いをする** — 参照カウントの増減ルール、スコープ管理、プール返却はすべて同一。
+2. **参照カウントは常に増減させる** — Deep Clone 時に RC+1、スコープ脱出時に RC-1。
+3. **RC=0 になったらプールに返す（メモリ解放は行わない）** — テンソルのメモリは OS に返さず、サイズごとにプールして使い回す。
+4. **GradTensor は grad 部分を追加で考慮する** — autograd 計算グラフへの参照を持つため、グラフのクリーンアップを適切に行う。
 
 #### codegen 側のルール
 
-| 操作 | Tensor | GradTensor |
-|:---|:---|:---|
-| `emit_cleanup_vars_in_scope` | `emit_recursive_free` → `tl_tensor_release_safe` (Arc RC-1) | `tl_ptr_dec_ref` のみ (free しない) |
-| `add_temp_with_mode` | 追跡する | **追跡しない** |
-| `emit_recursive_free` | 専用ブランチ (null チェック → release_safe) | 専用ブランチ (null チェック → release_safe) |
-| 関数の戻り値 | `unregister` で管理。Caller がスコープに登録 | 同左 |
+| 操作 | Tensor / GradTensor |
+|:---|:---|
+| `emit_cleanup_vars_in_scope` | RC-1 を行う。RC=0 の場合はプールに返す（free しない） |
+| `add_temp_with_mode` | 追跡する |
+| `emit_recursive_free` | 専用ブランチで処理（null チェック → RC-1 → プール返却） |
+| 関数の戻り値 | `unregister` で管理。Caller がスコープに登録 |
 
 #### ランタイム側のライフサイクル
 
 ```
 テンソル生成
   tl_tensor_randn / tl_tensor_zeros / tl_tensor_ones 等
-    → Arc::new(UnsafeCell::new(CpuTensor)) → Arc::into_raw → *mut OpaqueTensor
+    → 新規テンソルを生成（プールに同サイズがあればプールから取得）
     → 初期 RC = 1
 
-テンソル共有 (Deep Clone ではなく Arc::clone)
+テンソル共有 (Deep Clone ではなく RC+1)
   tl_tensor_acquire(ptr)
-    → Arc::increment_strong_count → RC + 1
+    → RC + 1
     → 同じポインタを返す（データのコピーは行わない）
 
-Tensor の RC 減算 (スコープ脱出時)
-  tl_tensor_release_safe(ptr)
-    → Arc::from_raw → drop
-    → RC - 1。RC = 0 になれば CpuTensor（autograd グラフ含む）が自然に Drop
-    → RC > 0 なら他の参照が生きているため、メモリは解放されない
+RC 減算 (スコープ脱出時) — Tensor / GradTensor 共通
+  RC - 1
+  RC > 0 → 他の参照が生きているため、何もしない
+  RC = 0 → プールに返す（メモリ解放は行わない）
+    → テンソルは (要素数, dtype, device) のキーでフリーリストに分類される
+    → 次回同サイズのテンソル生成時にプールから再利用される
 
-GradTensor の RC 減算 (スコープ脱出時)
-  tl_ptr_dec_ref(ptr)
-    → Side-Table RC - 1（free しない）
-    → GradTensor の実体は autograd グラフの解放に委ねる
+GradTensor 固有の処理
+  RC = 0 でプールに返す前に、grad 部分のクリーンアップを行う
+    → autograd グラフへの参照を解放する
+    → grad テンソル自体もプールに返す
 ```
+
+#### プールに返す（free しない）理由
+
+1. **パフォーマンス**: テンソルの malloc/free は高コスト。プール再利用により割り当てオーバーヘッドをゼロに近づける。
+2. **GPU RSS 安定化**: Metal/CUDA ドライバは free したメモリを OS に即座に返さない。プール方式により RSS の不要な膨張を防ぐ。
+3. **autograd グラフの安全性**: `.grad()` が返すテンソルは autograd グラフ内のテンソルと参照を共有する場合がある。free すると共有先が use-after-free になるが、プール返却なら安全。
 
 ---
 
