@@ -243,19 +243,22 @@ for i in 0..n {
 - **Enum**: タグに応じたバリアントのフィールドを再帰的に free → コンテナ自体を `free`
 - **Vec**: 全要素を再帰的に free → 内部バッファを free → コンテナを free
 
-### 6.5 Tensor / GradTensor の解放免除
+### 6.5 Tensor / GradTensor のメモリ管理
+
+Tensor と GradTensor は、他の管理対象型（Struct, String, Vec 等）とは**根本的に異なるメモリ管理モデル**に従います。
+
+#### 中心原則: codegen は Tensor を解放しない
 
 **一度取得した Tensor および GradTensor は、codegen のスコープクリーンアップ（`emit_cleanup_vars_in_scope`）では一切解放しない。**
-
-Tensor / GradTensor は `Arc<UnsafeCell<CpuTensor>>` で管理されており、ランタイム側の Arc 参照カウントによって自然に Drop されます。codegen 側で `tl_tensor_release_safe` を呼ぶのは、**`emit_recursive_free` による再帰的解放パス**のみに限定されます。
+テンソルの寿命は **ランタイム側の参照カウント（Arc RC）** によって完全に管理されます。
 
 #### 理由
 
 1. **Struct フィールドの安全性**: `forward(model, X)` のように構造体を関数に渡す場合、関数内のスコープクリーンアップで Struct のフィールド（Tensor / GradTensor）が解放されると、呼び出し元の Struct のフィールドが use-after-free になる。
 2. **Arc の自律性**: Tensor は Arc ベースであるため、`Arc::clone`（`tl_tensor_acquire`）と `Arc::from_raw → drop`（`tl_tensor_release_safe`）のペアだけでライフサイクルが完結する。codegen が重複してスコープ管理を行うと、二重解放が発生する。
-3. **GradTensor の特殊性**: GradTensor は autograd グラフへの参照を内包しており、不用意な解放はグラフの破壊を引き起こす。
+3. **GradTensor の特殊性**: GradTensor は autograd 計算グラフ（DAG）への参照を内包しており、不用意な解放はグラフの破壊を引き起こす。
 
-#### ルール
+#### codegen 側のルール
 
 | 操作 | Tensor / GradTensor の扱い |
 |:---|:---|
@@ -263,6 +266,26 @@ Tensor / GradTensor は `Arc<UnsafeCell<CpuTensor>>` で管理されており、
 | `add_temp_with_mode` (テンポラリ追跡) | **含めない** — 追跡しない |
 | `emit_recursive_free` | **専用ブランチで処理** — 親 Struct/Vec 等の再帰解放時のみ |
 | 関数の戻り値 | `unregister` で管理。Caller がスコープに登録 |
+
+#### ランタイム側のライフサイクル
+
+```
+テンソル生成
+  tl_tensor_randn / tl_tensor_zeros / tl_tensor_ones 等
+    → Arc::new(UnsafeCell::new(CpuTensor)) → Arc::into_raw → *mut OpaqueTensor
+    → 初期 RC = 1
+
+テンソル共有 (Deep Clone ではなく Arc::clone)
+  tl_tensor_acquire(ptr)
+    → Arc::increment_strong_count → RC + 1
+    → 同じポインタを返す（データのコピーは行わない）
+
+テンソル解放 (RC 減算)
+  tl_tensor_release_safe(ptr)
+    → Arc::from_raw → drop
+    → RC - 1。RC = 0 になれば CpuTensor（autograd グラフ含む）が自然に Drop
+    → RC > 0 なら他の参照が生きているため、メモリは解放されない
+```
 
 ---
 
@@ -286,15 +309,80 @@ Tensor / GradTensor は `Arc<UnsafeCell<CpuTensor>>` で管理されており、
 
 ---
 
-## 8. GPU メモリ管理
+## 8. テンソルプール管理 (GPU Persistent Pool)
 
-GPU テンソルのメモリ管理は、Persistent GPU Pool 戦略に基づいて別途管理されています。
-詳細は Knowledge Item「TL Compiler Unified Technical Reference」の GPU Backend Architecture セクションを参照してください。
+### 8.1 概要
 
-概要：
-- GPU メモリは OS に解放しない（Persistent Pool）
-- テンソルのディスクリプタ（`OpaqueTensor`）をプールで再利用
-- プロセス終了時に OS がメモリを回収
+GPU テンソルは **一度確保したメモリを OS に返さず、サイズごとにプールして使い回す** 戦略（Persistent Pool）で管理されます。これにより Metal/CUDA ドライバの RSS（Resident Set Size）膨張問題を回避します。
+
+CPU テンソルにはプールは使用されず、Arc の参照カウントのみで管理されます。
+
+### 8.2 プールのキー設計
+
+テンソルは `(要素数, dtype_id, device_id)` のタプルをキーとしてフリーリストに分類されます：
+
+```rust
+// tensor_pool.rs
+free_lists: HashMap<(usize, u8, u8), Vec<*mut OpaqueTensor>>
+```
+
+| dtype_id | 型 | バイト/要素 |
+|:---|:---|:---|
+| 0 | F32 | 4 |
+| 1 | F64 | 8 |
+| 2 | I32 | 4 |
+| 3 | I64 | 8 |
+| 4 | U8 | 1 |
+| 5 | F16 | 2 |
+| 6 | BF16 | 2 |
+
+### 8.3 ライフサイクル
+
+```
+テンソル生成:
+  1. pool_acquire(要素数, dtype, device) でフリーリストを検索
+     HIT  → 既存ディスクリプタを取得 → drop_in_place で中身クリア → 再利用
+     MISS → 新規 malloc + register_new_allocation
+  2. ランタイムがデータを書き込み、ポインタを返す
+
+テンソル不要:
+  1. pool_release(ptr, 要素数, dtype, device)
+  2. active セットから削除
+  3. フリーリストに追加（OS には返さない）
+  4. 次回同サイズの acquire で再利用される
+
+プロセス終了:
+  OS がプロセスの全メモリを回収
+```
+
+### 8.4 CPU と GPU の比較
+
+| | CPU | GPU (Metal / CUDA) |
+|:---|:---|:---|
+| テンソル表現 | `Arc<UnsafeCell<CpuTensor<f32>>>` | `*mut OpaqueTensor` (プール管理) |
+| 寿命管理 | Arc RC のみ (RC=0 で Drop) | Persistent Pool (解放しない) |
+| 再利用 | なし（毎回新規 alloc） | サイズ別フリーリストから再利用 |
+| スコープ管理 | No-op (V6 で廃止) | No-op |
+| RSS 特性 | ~40MB で安定 | ワークロード依存で安定化 |
+
+### 8.5 Autograd グラフピンニング
+
+Autograd の計算グラフは、逆伝播のためにテンソルへの参照を保持します。この参照により `Arc::strong_count > 1` となり、テンソルのメモリが解放されません。
+
+- **CPU**: Arc RC が自然に管理するため問題にならない
+- **GPU**: Candle バックエンドのバッファが「ピンニング」され、プールに戻せない場合がある
+- **対策**: `tl_tensor_detach` で明示的にグラフから切り離す。`tl_clear_grads()` がループ末尾に自動挿入される
+
+### 8.6 モニタリング API
+
+| 関数 | 動作 |
+|:---|:---|
+| `tl_get_gpu_total_allocated_bytes()` | 累計確保バイト数 |
+| `tl_get_gpu_free_count()` | フリーリスト内テンソル数 |
+| `tl_get_gpu_pool_hit_rate()` | プール命中率 |
+| `tl_dump_gpu_pool_stats()` | 統計の詳細ダンプ |
+
+デバッグ: 環境変数 `TL_POOL_DEBUG=1` で acquire/release の詳細ログを stderr に出力
 
 ---
 
