@@ -606,13 +606,35 @@ impl<'ctx> CodeGenerator<'ctx> {
                         }
                     }
                 } else if matches!(ty, Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::Tuple(_) | Type::Enum(_, _)) {
-                    // ARC Lifecycle §6.4: すべての管理対象型をスコープ脱出時に解放
+                    // ARC Lifecycle §6.4: Tensor/Tuple/Enum はスコープ脱出時に emit_recursive_free で解放
                     let ptr = val_enum.into_pointer_value();
                     let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
                     if let Ok(val) =
                         self.builder.build_load(load_type, ptr, "val_to_free")
                     {
                         let _ = self.emit_recursive_free(val, &ty, cleanup_mode);
+                    }
+                } else if matches!(ty, Type::GradTensor(_, _)) {
+                    // ARC Lifecycle §6.5: GradTensor は free せず、参照カウントの dec_ref のみ行う。
+                    // emit_recursive_free (tl_tensor_release_safe = Arc::from_raw → drop) は呼ばない。
+                    // Struct フィールド経由で autograd グラフが共有されているため、
+                    // 不用意な free は二重解放やグラフ破壊を引き起こす。
+                    let ptr = val_enum.into_pointer_value();
+                    let load_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                    if let Ok(val) = self.builder.build_load(load_type, ptr, "grad_tensor_to_dec") {
+                        if val.is_pointer_value() {
+                            if let Some(dec_ref_fn) = self.module.get_function("tl_ptr_dec_ref").or_else(|| {
+                                let i32_ty = self.context.i32_type();
+                                let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                                let ft = i32_ty.fn_type(&[ptr_ty.into()], false);
+                                Some(self.module.add_function("tl_ptr_dec_ref", ft, None))
+                            }) {
+                                let void_ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                                if let Ok(cast_ptr) = self.builder.build_pointer_cast(val.into_pointer_value(), void_ptr_type, "cast_grad_dec") {
+                                    let _ = self.builder.build_call(dec_ref_fn, &[cast_ptr.into()], "");
+                                }
+                            }
+                        }
                     }
                 }
             }
