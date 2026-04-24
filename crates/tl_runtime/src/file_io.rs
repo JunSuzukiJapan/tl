@@ -435,6 +435,35 @@ pub extern "C" fn tl_file_write_binary(
     }
 }
 
+/// パスを指定して Vec<u8> の内容をバイナリで書き出す
+/// codegen の File::write_binary(path, data) -> Bool に対応
+#[unsafe(no_mangle)]
+pub extern "C" fn tl_file_write_binary_all(
+    path: *const c_char,
+    vec: *mut TlVecU8,
+) -> bool {
+    if path.is_null() || vec.is_null() {
+        return false;
+    }
+    let path_str = unsafe { CStr::from_ptr(path).to_string_lossy() };
+    let path_buf = expand_path(&path_str);
+
+    unsafe {
+        if (*vec).ptr.is_null() || (*vec).len <= 0 {
+            // 空データでもファイルは作成する
+            return std::fs::write(&path_buf, &[]).is_ok();
+        }
+        let data = std::slice::from_raw_parts((*vec).ptr, (*vec).len as usize);
+        match std::fs::write(&path_buf, data) {
+            Ok(_) => true,
+            Err(e) => {
+                eprintln!("Error writing binary file {:?}: {}", path_buf, e);
+                false
+            }
+        }
+    }
+}
+
 /// 環境変数取得
 #[unsafe(no_mangle)]
 /// @ffi_sig (i8*) -> String*

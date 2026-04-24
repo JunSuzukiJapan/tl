@@ -2708,6 +2708,9 @@ pub fn declare_runtime_functions<'ctx>(
     if let Some(f) = module.get_function("tl_file_write_binary") {
         execution_engine.add_global_mapping(&f, runtime::stdlib::tl_file_write_binary as *const () as usize);
     }
+    if let Some(f) = module.get_function("tl_file_write_binary_all") {
+        execution_engine.add_global_mapping(&f, runtime::stdlib::tl_file_write_binary_all as *const () as usize);
+    }
 
     // Image loading mappings
     if let Some(f) = module.get_function("tl_image_load_grayscale") {
@@ -3461,6 +3464,12 @@ pub fn declare_runtime_functions<'ctx>(
         .bool_type()
         .fn_type(&[i8_ptr.into(), ptr_type.into()], false);
     module.add_function("tl_file_write_binary", file_write_binary_type, None);
+
+    // tl_file_write_binary_all(path: *const i8, vec: *mut TlVecU8) -> bool
+    let file_write_binary_all_type = context
+        .bool_type()
+        .fn_type(&[i8_ptr.into(), ptr_type.into()], false);
+    module.add_function("tl_file_write_binary_all", file_write_binary_all_type, None);
 
     // --- Image loading functions ---
 

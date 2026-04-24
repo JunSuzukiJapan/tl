@@ -89,6 +89,14 @@ pub fn register_io_types(manager: &mut TypeManager) {
         Type::Struct("Vec".to_string(), vec![string_type.clone()])
     );
 
+    // File::write_binary(path: String, data: Vec<u8>) -> Bool
+    file.register_evaluated_static_method(
+        "write_binary",
+        compile_file_write_binary,
+        vec![string_type.clone(), Type::Struct("Vec".to_string(), vec![Type::U8])],
+        Type::Bool
+    );
+
     // File.read_string() -> String
     file.register_evaluated_instance_method(
         "read_string", 
@@ -859,4 +867,46 @@ pub fn compile_path_extension<'ctx>(
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if !args.is_empty() { return Err(CodegenErrorKind::Internal("Path.extension takes no arguments".to_string()).into()); }
     compile_path_instance_method(codegen, instance_val, "tl_path_extension", "path_ext_str")
+}
+
+/// File::write_binary(path: String, data: Vec<u8>) -> Bool
+pub fn compile_file_write_binary<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+    _target: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
+    if args.len() != 2 {
+        return Err(CodegenErrorKind::Internal("File::write_binary requires 2 arguments (path, data)".to_string()).into());
+    }
+
+    // Extract char* from path String struct
+    let (path_val, path_ty) = &args[0];
+    let path_ptr_val = if matches!(path_ty, Type::String(_)) {
+        let struct_ty = Type::String("String".to_string());
+        let v = codegen.load_struct_i64_field(*path_val, &struct_ty, "ptr")?;
+        v.into_int_value()
+    } else {
+        return Err(TlError::from(CodegenErrorKind::Internal(format!("Expected String argument, got {:?}", path_ty))));
+    };
+    let path_ptr = codegen.builder.build_int_to_ptr(
+        path_ptr_val,
+        codegen.context.ptr_type(inkwell::AddressSpace::default()),
+        "path_ptr"
+    ).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+
+    // Get Vec<u8> pointer (2nd argument)
+    let (data_val, _data_ty) = &args[1];
+
+    let fn_val = codegen.module.get_function("tl_file_write_binary_all")
+        .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_file_write_binary_all not found".to_string())))?;
+    let call = codegen.builder.build_call(
+        fn_val,
+        &[path_ptr.into(), (*data_val).into()],
+        "file_write_binary_all"
+    ).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+    let result = match call.try_as_basic_value() {
+        inkwell::values::ValueKind::Basic(v) => v,
+        _ => return Err(CodegenErrorKind::Internal("Invalid return from File::write_binary".to_string()).into()),
+    };
+    Ok((result, Type::Bool))
 }

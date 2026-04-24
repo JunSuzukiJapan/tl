@@ -2708,10 +2708,10 @@ impl SemanticAnalyzer {
                     _             => None,
                 }
             }
-            "download" => {
+            "download" | "write_binary" => {
                 if args.len() != 2 {
                     return Some(self.err(SemanticError::ArgumentCountMismatch {
-                        name: "File::download".into(), expected: 2, found: args.len(),
+                        name: format!("File::{}", method), expected: 2, found: args.len(),
                     }, None));
                 }
                 Some(Ok(Type::Bool))
