@@ -243,7 +243,7 @@ fn main() {
     }
 
     let lr = 0.0005;
-    let epochs = 2500;
+    let epochs = 500;
 
     print("Paper Training: 2-layer GPT, d_model=256, Adam, lr=0.0005, epochs=1500");
 

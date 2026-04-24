@@ -193,7 +193,7 @@ PIPELINES: Dict[str, PipelineConfig] = {
         model_files=["reverse_model.safetensors"],
         cwd="examples/tasks/reverse",
         quick_overrides={
-            "let epochs = 600;": "let epochs = 10;",
+            "let epochs = 100;": "let epochs = 10;",
         },
     ),
     "addition": PipelineConfig(
@@ -202,7 +202,7 @@ PIPELINES: Dict[str, PipelineConfig] = {
         model_files=["model_add.safetensors"],
         cwd="examples/tasks/addition",
         quick_overrides={
-            "let epochs = 500;": "let epochs = 10;",
+            "let epochs = 100;": "let epochs = 10;",
         },
     ),
     "paper": PipelineConfig(
@@ -211,7 +211,7 @@ PIPELINES: Dict[str, PipelineConfig] = {
         model_files=["model_paper.safetensors"],
         cwd="examples/tasks/paper",
         quick_overrides={
-            "let epochs = 2500;": "let epochs = 10;",
+            "let epochs = 500;": "let epochs = 10;",
         },
     ),
     "recall": PipelineConfig(
@@ -220,7 +220,7 @@ PIPELINES: Dict[str, PipelineConfig] = {
         model_files=["recall_weights.safetensors"],
         cwd="examples/tasks/recall",
         quick_overrides={
-            "for i in range(0, 2500)": "for i in range(0, 100)",
+            "for epoch in range(0, 100)": "for epoch in range(0, 5)",
         },
     ),
     "mnist": PipelineConfig(

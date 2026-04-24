@@ -514,15 +514,22 @@ impl MetalTensor {
             }
         }
 
-        // 4. 全ノードの grad_fn をクリア (V5.0 連鎖解放)
-        //    GPU コマンドの完了を待機してからクリア
+        // 4. 全ノードの grad_fn をクリア (安全版)
+        //    grad_fn = None で GradFn 内の TensorRef が drop されると、
+        //    中間テンソルの Arc refcount が 0 になり、テンソルが解放される。
+        //    これにより topo_order 内の後続ポインタがダングリングポインタになる。
+        //    対策: 全テンソルへの TensorRef を事前確保し、クリア中の生存を保証する。
         crate::command_stream::sync_stream();
+        let _guards: Vec<TensorRef> = topo_order.iter()
+            .map(|&ptr| unsafe { tensor_ref_from_ptr(ptr) })
+            .collect();
         for &ptr in topo_order.iter() {
             let tensor = unsafe { &mut *ptr };
             if let Some(ref mut meta) = tensor.autograd {
                 meta.grad_fn = None;
             }
         }
+        drop(_guards);
 
         Ok(())
     }

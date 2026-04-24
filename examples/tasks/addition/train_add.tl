@@ -278,7 +278,7 @@ fn main() {
     let mut state = TrainState(1, GPT::new(vocab_size, d_model));
     
     let lr = 0.001;
-    let epochs = 500;
+    let epochs = 100;
 
     print("Training 1-digit addition on RANDOM inputs (2-layer GPT, Adam, d_model=128)");
 
