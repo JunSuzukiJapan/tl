@@ -289,11 +289,22 @@ GradTensor 固有の処理
     → grad テンソル自体もプールに返す
 ```
 
+#### ⚠️ GradTensor 管理の重要な制約
+
+1. **`enable_grad()` の戻り値は `Void` でなければならない**
+   - `enable_grad()` は in-place の void FFI。戻り値を `GradTensor` 型にすると、codegen が self ポインタを `_discard` 変数に格納し、スコープ cleanup で元のテンソルに `tl_tensor_release_safe` が呼ばれてデータが破壊される。
+
+2. **`get_grad()` はデータの独立コピーを返さなければならない**
+   - GPU (Metal) では `get_grad()` が返すテンソルの Buffer と、元テンソルの `autograd.grad.buffer` が同じ Arc を共有すると、GradTensor の cleanup 時に Buffer の参照カウントが不整合を起こす。
+   - CPU では `shallow_clone()` でデータ Vec がクローンされるため問題にならないが、Metal では `Arc<Buffer>` の共有が直接メモリ寿命に影響する。
+   - Metal の `get_grad()` は `clone_data()` で GPU バッファを Blit コピーし、独立した Buffer を持つテンソルを返す。
+
 #### プールに返す（free しない）理由
 
 1. **パフォーマンス**: テンソルの malloc/free は高コスト。プール再利用により割り当てオーバーヘッドをゼロに近づける。
 2. **GPU RSS 安定化**: Metal/CUDA ドライバは free したメモリを OS に即座に返さない。プール方式により RSS の不要な膨張を防ぐ。
 3. **autograd グラフの安全性**: `.grad()` が返すテンソルは autograd グラフ内のテンソルと参照を共有する場合がある。free すると共有先が use-after-free になるが、プール返却なら安全。
+
 
 ---
 

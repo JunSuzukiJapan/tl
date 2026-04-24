@@ -24,11 +24,11 @@ pub fn compile_backward<'ctx>(
     ))
 }
 
-/// enable_grad() -> GradTensor (void FFI, returns obj as GradTensor type)
+/// enable_grad() -> Void (in-place void FFI)
 pub fn compile_enable_grad<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     obj: BasicValueEnum<'ctx>,
-    obj_ty: Type,
+    _obj_ty: Type,
     _args: Vec<(BasicValueEnum<'ctx>, Type)>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     let fn_val = codegen
@@ -40,12 +40,11 @@ pub fn compile_enable_grad<'ctx>(
         .builder
         .build_call(fn_val, &[obj.into()], "enable_grad")
         .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
-    // Return the same pointer, but with GradTensor type
-    let grad_ty = match &obj_ty {
-        Type::Tensor(inner, rank) => Type::GradTensor(inner.clone(), *rank),
-        Type::GradTensor(_, _) => obj_ty.clone(),
-        _ => obj_ty.clone(),
-    };
-    Ok((obj, grad_ty))
+    // §6.5: void メソッドは Void を返す。GradTensor を返すと、
+    // スコープ cleanup で self ポインタが release され、データが破壊される。
+    Ok((
+        codegen.context.i64_type().const_int(0, false).into(),
+        Type::Void,
+    ))
 }
 

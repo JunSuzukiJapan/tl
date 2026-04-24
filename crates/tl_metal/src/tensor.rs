@@ -414,12 +414,17 @@ impl MetalTensor {
     pub fn get_grad(&self) -> Option<MetalTensor> {
         self.autograd.as_ref().and_then(|a| {
             a.grad.as_ref().map(|g| {
-                // detach: バッファ共有だが autograd メタデータなし
-                MetalTensor::from_buffer_shared(
-                    std::sync::Arc::clone(g.buffer_arc()),
-                    g.shape().to_vec(),
-                    g.dtype(),
-                )
+                // §6.5: GradTensor は Tensor と同じライフサイクルで管理される。
+                // Buffer 共有 (Arc::clone) だと、GradTensor の cleanup 時に
+                // 元テンソルの grad Buffer が premature に解放される。
+                // clone_data() で独立した GPU バッファを持つコピーを返す。
+                g.clone_data().unwrap_or_else(|_| {
+                    MetalTensor::from_buffer_shared(
+                        std::sync::Arc::clone(g.buffer_arc()),
+                        g.shape().to_vec(),
+                        g.dtype(),
+                    )
+                })
             })
         })
     }

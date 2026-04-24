@@ -185,7 +185,7 @@ pub extern "C" fn tl_tensor_release_safe(t: *mut crate::OpaqueTensor) {
     }
     RELEASE_SAFE_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     if crate::device_ffi::is_cpu() {
-        // CPU: release_tensor 経由（メモリ統計 + ログ対応）
+        // CPU: release_tensor 経由（プール返却 + メモリ統計対応）
         tl_cpu::memory::release_tensor(t as *mut tl_cpu::CpuTensor<f32>);
     } else {
         unsafe {

@@ -154,8 +154,8 @@ fn get_rss_bytes() -> usize {
 
 // ========== スコープ管理 (V6: 廃止 → No-op) ==========
 // V5 では CPU 固有の SCOPE_STACK で全テンソルを追跡していたが、
-// Metal/CUDA と統一するため廃止。テンソル寿命は Arc RC のみで管理。
-// codegen の emit_cleanup_vars_in_scope → tl_tensor_release_safe が唯一の解放パス。
+// Metal/CUDA と統一するため廃止。テンソル寿命は RC のみで管理。
+// codegen の emit_cleanup_vars_in_scope → release_tensor が唯一の解放パス。
 
 pub fn enter_scope() {
     // No-op: Metal/CUDA と統一
@@ -173,27 +173,75 @@ pub fn promote_tensor(_t: *mut CpuTensor<f32>) {
     // No-op: Metal/CUDA と統一
 }
 
-// Diagnostics
-pub fn get_pool_size() -> usize {
-    0
+// ========== CPU テンソルプール (§6.5: RC=0 でプールに返す) ==========
+// テンソルのメモリは OS に返さず、サイズごとにプールして使い回す。
+// キー: (要素数, dtype_id) でフリーリストを管理。
+
+use std::sync::{LazyLock, Mutex};
+use std::collections::HashMap;
+
+/// raw pointer を含むプールを static に配置するための Send/Sync ラッパー。
+/// プール内のポインタは Mutex で排他アクセスされるため安全。
+struct TensorPool(HashMap<(usize, u8), Vec<usize>>); // usize はポインタのアドレス
+unsafe impl Send for TensorPool {}
+
+/// CPU テンソルプール: (要素数, dtype_id) → フリーリスト（アドレスとして usize で保持）
+static CPU_TENSOR_POOL: LazyLock<Mutex<TensorPool>> =
+    LazyLock::new(|| Mutex::new(TensorPool(HashMap::new())));
+
+/// プールにテンソルを返却する。
+/// 呼び出し前に autograd のクリーンアップが済んでいること。
+fn pool_return(ptr: *mut CpuTensor<f32>, elem_count: usize, dtype_id: u8) {
+    if let Ok(mut pool) = CPU_TENSOR_POOL.lock() {
+        let key = (elem_count, dtype_id);
+        pool.0.entry(key).or_insert_with(Vec::new).push(ptr as usize);
+    }
 }
 
-/// Arc ベースでテンソルを解放する (RC-1)。
-/// RC が 0 になれば CpuTensor（autograd グラフ含む）が自然に Drop される。
-/// Metal/CUDA の release_if_live と同等の処理。
+/// プールから同サイズのテンソルを取得する（HIT/MISS）。
+/// HIT の場合、Arc RC=1 の raw pointer を返す。データは古いまま。
+pub fn pool_acquire(elem_count: usize, dtype_id: u8) -> Option<*mut CpuTensor<f32>> {
+    if let Ok(mut pool) = CPU_TENSOR_POOL.lock() {
+        let key = (elem_count, dtype_id);
+        if let Some(list) = pool.0.get_mut(&key) {
+            return list.pop().map(|addr| addr as *mut CpuTensor<f32>);
+        }
+    }
+    None
+}
+
+// Diagnostics
+pub fn get_pool_size() -> usize {
+    if let Ok(pool) = CPU_TENSOR_POOL.lock() {
+        pool.0.values().map(|v| v.len()).sum()
+    } else {
+        0
+    }
+}
+
+/// §6.5: Tensor/GradTensor のメモリ管理
+/// RC-1 を行い、RC=0 でプールに返す（メモリ解放は行わない）。
+/// GradTensor の場合も同じパスで処理される。
 pub fn release_tensor(t: *mut CpuTensor<f32>) {
     if t.is_null() { return; }
     unsafe {
         let arc_ref = Arc::from_raw(t as *const UnsafeCell<CpuTensor<f32>>);
+        let rc = Arc::strong_count(&arc_ref);
         if is_mem_log_enabled() {
-            let rc = Arc::strong_count(&arc_ref);
-            eprintln!("[RELEASE] Ptr: {:p} (RC={}, {})", t, rc, if rc == 1 { "DROP" } else { "RC-1" });
+            let cell = &*(t as *const UnsafeCell<CpuTensor<f32>>);
+            let tensor = &*cell.get();
+            eprintln!("[RELEASE] Ptr: {:p} RC={} data_len={} shape={:?} {}", t, rc, tensor.data.len(), tensor.shape, if rc == 1 { "→POOL" } else { "→RC-1" });
         }
-        if Arc::strong_count(&arc_ref) == 1 {
+        if rc == 1 {
             count_tensor_release();
-            // track_free は CpuTensor::Drop で呼ばれるため、ここでは呼ばない。
+            let cell = &*(t as *const UnsafeCell<CpuTensor<f32>>);
+            let tensor = &*cell.get();
+            let elem_count = tensor.elem_count();
+            let dtype_id = tensor.dtype as u8;
+            let _ = Arc::into_raw(arc_ref);
+            pool_return(t, elem_count, dtype_id);
+        } else {
+            drop(arc_ref);
         }
-        drop(arc_ref);
     }
 }
-
