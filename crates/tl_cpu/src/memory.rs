@@ -235,9 +235,13 @@ pub fn release_tensor(t: *mut CpuTensor<f32>) {
         if rc == 1 {
             count_tensor_release();
             let cell = &*(t as *const UnsafeCell<CpuTensor<f32>>);
-            let tensor = &*cell.get();
+            let tensor = &mut *cell.get();
             let elem_count = tensor.elem_count();
             let dtype_id = tensor.dtype as u8;
+            // プールに返す前に autograd をクリア。
+            // GradFn 内の TensorRef (Arc) を即座に解放し、
+            // 中間計算グラフへの不要な参照を断つ。
+            tensor.autograd = None;
             let _ = Arc::into_raw(arc_ref);
             pool_return(t, elem_count, dtype_id);
         } else {

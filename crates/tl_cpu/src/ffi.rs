@@ -2686,6 +2686,30 @@ pub extern "C" fn tl_cpu_tensor_apply_rope(
 
 #[track_caller]
 fn make_tensor(t: CpuTensor<f32>) -> *mut OpaqueTensor {
+    let elem_count = t.elem_count();
+    let dtype_id = t.dtype as u8;
+
+    // プールから同サイズのテンソルを取得 (HIT → 再利用)
+    if let Some(pooled_ptr) = crate::memory::pool_acquire(elem_count, dtype_id) {
+        // プール内のテンソルは Arc::into_raw で保持されている (RC=1)。
+        // UnsafeCell の中身を新しい CpuTensor で上書きする。
+        // 古い CpuTensor は ptr::write の前に drop して Vec メモリを解放する。
+        unsafe {
+            let cell = &*(pooled_ptr as *const std::cell::UnsafeCell<CpuTensor<f32>>);
+            // 古いデータを drop (Vec<f32> 等のメモリを OS に返却)
+            std::ptr::drop_in_place(cell.get());
+            // 新しいデータを書き込み (t の所有権をここでムーブ)
+            std::ptr::write(cell.get(), t);
+        }
+        if crate::memory::is_mem_log_enabled() {
+            let loc = std::panic::Location::caller();
+            eprintln!("[ALLOC:POOL_HIT] Ptr: {:p} at {}:{}", pooled_ptr, loc.file(), loc.line());
+        }
+        crate::memory::count_tensor_alloc();
+        return pooled_ptr as *mut OpaqueTensor;
+    }
+
+    // プール MISS: 新規 Arc を作成
     // track_alloc: テンソルのデータバッファ容量を追跡 (Drop の track_free と対称)
     let f32_bytes = t.data.capacity() * std::mem::size_of::<f32>();
     if f32_bytes > 0 {
@@ -2701,7 +2725,7 @@ fn make_tensor(t: CpuTensor<f32>) -> *mut OpaqueTensor {
     let ptr = Arc::into_raw(arc) as *mut CpuTensor<f32>;
     let loc = std::panic::Location::caller();
     if crate::memory::is_mem_log_enabled() {
-        eprintln!("[ALLOC] Ptr: {:p} at {}:{}", ptr, loc.file(), loc.line());
+        eprintln!("[ALLOC:NEW] Ptr: {:p} at {}:{}", ptr, loc.file(), loc.line());
     }
     crate::memory::register_tensor(ptr);
     crate::memory::count_tensor_alloc();
