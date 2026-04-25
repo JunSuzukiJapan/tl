@@ -361,8 +361,6 @@ EXPECTED_FAILURES = {
     "negation_cycle.tl",
     "negation_multi_neg_layers_cycle.tl",
     "negation_unbound.tl",
-    # メモリ管理のストレステスト（セグフォルトが期待される）
-    "test_segfault.tl",
 }
 
 def should_skip(filepath: Path, include_training: bool = False) -> Tuple[bool, str]:
