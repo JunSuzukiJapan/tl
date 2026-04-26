@@ -25,10 +25,6 @@ impl SpecializationRegistry {
     /// 特殊化を登録。既に登録済みなら false を返す
     pub fn register(&mut self, base_name: &str, type_args: &[Type]) -> bool {
         let mangled = mangle_type_name(base_name, type_args);
-        println!("[REG] {}", mangled);
-        if mangled.contains("Tuple[K][V]") {
-            panic!("Vec_Tuple_K_V_Registered!!");
-        }
         if self.mangled_names.contains(&mangled) {
             return false; // 既に登録済み
         }

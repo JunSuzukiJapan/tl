@@ -270,7 +270,14 @@ fn compile_env_get<'ctx>(
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 { return Err(CodegenErrorKind::Internal("Env::get requires 1 argument".to_string()).into()); }
     let fn_val = codegen.module.get_function("tl_env_get").ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_env_get not found".to_string())))?;
-    let call = codegen.builder.build_call(fn_val, &[args[0].0.into()], "env_get").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+    let (key_val, key_ty) = &args[0];
+    let ptr_int = if matches!(key_ty, Type::String(_)) {
+        codegen.load_struct_i64_field(*key_val, &Type::String("String".to_string()), "ptr")?.into_int_value()
+    } else {
+        return Err(CodegenErrorKind::Internal("Env::get key must be String".to_string()).into());
+    };
+    let key_ptr = codegen.builder.build_int_to_ptr(ptr_int, codegen.context.ptr_type(inkwell::AddressSpace::default()), "key_ptr").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+    let call = codegen.builder.build_call(fn_val, &[key_ptr.into()], "env_get").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     let res = match call.try_as_basic_value() {
         inkwell::values::ValueKind::Basic(v) => v,
         _ => return Err(CodegenErrorKind::Internal("Invalid return from Env::get".to_string()).into()),
@@ -355,9 +362,16 @@ pub fn compile_http_get<'ctx>(
     args: Vec<(BasicValueEnum<'ctx>, Type)>,
     _target: Option<&Type>,
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
-     if args.len() != 1 { return Err(CodegenErrorKind::Internal("Http::get requires 1 argument".to_string()).into()); }
+    if args.len() != 1 { return Err(CodegenErrorKind::Internal("Http::get requires 1 argument".to_string()).into()); }
     let fn_val = codegen.module.get_function("tl_http_get").ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_http_get not found".to_string())))?;
-    let call = codegen.builder.build_call(fn_val, &[args[0].0.into()], "http_get").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+    let (url_val, url_ty) = &args[0];
+    let ptr_int = if matches!(url_ty, Type::String(_)) {
+        codegen.load_struct_i64_field(*url_val, &Type::String("String".to_string()), "ptr")?.into_int_value()
+    } else {
+        return Err(CodegenErrorKind::Internal("Http::get url must be String".to_string()).into());
+    };
+    let url_ptr = codegen.builder.build_int_to_ptr(ptr_int, codegen.context.ptr_type(inkwell::AddressSpace::default()), "url_ptr").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+    let call = codegen.builder.build_call(fn_val, &[url_ptr.into()], "http_get").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     let res = match call.try_as_basic_value() {
         inkwell::values::ValueKind::Basic(v) => v,
         _ => return Err(CodegenErrorKind::Internal("Invalid return from Http::get".to_string()).into()),
@@ -378,17 +392,11 @@ pub fn compile_path_exists<'ctx>(
     let (path_val, path_ty) = &args[0]; // String (i8*)
     
     let path_ptr_val = if matches!(path_ty, Type::String(_)) {
-        if !path_val.is_pointer_value() {
-            return Err(TlError::from(CodegenErrorKind::Internal(format!("File::open path must be a pointer, got {:?}", path_val))));
-        }
-        if !path_val.is_pointer_value() {
-            return Err(TlError::from(CodegenErrorKind::Internal(format!("File::open path must be a pointer, got {:?}", path_val))));
-        }
-        let ptr = path_val.into_pointer_value();
-        // Just cast pointer to int to pass through
-        codegen.builder.build_ptr_to_int(ptr, codegen.context.i64_type(), "ptr_int").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?
+        let struct_ty = Type::String("String".to_string());
+        let v = codegen.load_struct_i64_field(*path_val, &struct_ty, "ptr")?;
+        v.into_int_value()
     } else {
-         return Err(TlError::from(CodegenErrorKind::Internal("Path::exists argument must be String".to_string())));
+        return Err(TlError::from(CodegenErrorKind::Internal("Path::exists argument must be String".to_string())));
     };
     let path_ptr = codegen.builder.build_int_to_ptr(
         path_ptr_val,
@@ -686,7 +694,9 @@ pub fn compile_file_write_string<'ctx>(
     if args.len() != 1 {
         return Err(TlError::from(CodegenErrorKind::Internal("File::write_string requires 1 argument".to_string())));
     }
-    let (content_val, _) = args[0];
+    // tl_file_write_string(f: *mut c_void, s: *mut StringStruct) -> bool
+    // Pass the String struct pointer directly (not the char data pointer inside it)
+    let content_val = args[0].0;
     let fn_val = codegen.module.get_function("tl_file_write_string").ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_file_write_string not found".to_string())))?;
     codegen.builder.build_call(
         fn_val,
