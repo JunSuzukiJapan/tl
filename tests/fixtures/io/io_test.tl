@@ -1,4 +1,3 @@
-// SKIP: File::read_binary Vec<u8> codegen not implemented
 fn assert(cond: bool, msg: String) {
     if !cond {
         print("Assertion Failed: " + msg);
@@ -75,7 +74,14 @@ fn test_file_io() {
     assert(read_new == new_content, "Instance write_string content mismatch");
     
     // Binary Read
-    let bin = File::read_binary(path);
+    let bin_result = File::read_binary(path);
+    let bin = match bin_result {
+        Result::Ok(v) => v,
+        Result::Err(e) => {
+            print("Binary read failed: " + e);
+            return;
+        }
+    };
     let size_val = bin.len();
     let size_str = String::from_int(size_val);
     print("Binary size: " + size_str);
