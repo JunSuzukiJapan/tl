@@ -11,9 +11,9 @@
 | 優先度 | 形式 | ブランチ | 状態 | 発見したバグ |
 |:---|:---|:---|:---|:---|
 | 1 | **GGUF** | `feature/gguf-builtin` | ✅ マージ済み | Vec要素メモリ管理、SRET動作 |
-| 2 | **SafeTensors** | `feature/safetensors-builtin` | ✅ 実装完了（マージ待ち） | アロケータ不整合、String ARC未登録 |
-| 3 | **NumPy .npy** | `feature/npy-builtin` | ✅ 実装完了（マージ待ち） | なし（バグ発見なし） |
-| 4 | **NumPy .npz** | `feature/npz-builtin` | ⬜ 未着手 (Phase 3) | — |
+| 2 | **SafeTensors** | `feature/safetensors-builtin` | ✅ マージ済み | アロケータ不整合、String ARC未登録 |
+| 3 | **NumPy .npy** | `feature/npy-builtin` | ✅ マージ済み | なし（バグ発見なし） |
+| 4 | **NumPy .npz** | `feature/npz-builtin` | ✅ 実装完了（マージ待ち） | impl内Vec型推論バグ、XOR/OR未実装 |
 
 ---
 
@@ -34,6 +34,21 @@
 ### 設計変更: Deep Clone の廃止
 
 `MEMORY_MANAGEMENT_STRATEGY.md` §5 "Deep Copy" セクションを削除。§2 の ARC ライフサイクルペアが正しく実装されていれば不要であり、バグの温床になると判断。
+
+---
+
+## NPZ で発見したバグ・不足機能
+
+### バグ3: impl ブロック内での Vec<構造体>.get().unwrap() の型推論
+
+`impl NpzFile` 内のメソッドで `Vec<NpzEntry>.get(i).unwrap()` の返り値型が `Void` に推論され、フィールドアクセス (`entry.name`) で `Field access on non-struct type Void` エラーが発生。
+
+**回避策**: impl メソッドをフリー関数に変更。
+**根本修正**: コンパイラの型推論エンジン要調査。
+
+### 不足機能1: ビット演算 `^` (XOR) と `|` (OR)
+
+`&`, `<<`, `>>` は正常動作するが、`^` と `|` が未実装。CRC-32計算（PKZIPで必要）が実装できない。
 
 ---
 
