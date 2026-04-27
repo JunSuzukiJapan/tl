@@ -217,6 +217,17 @@ pub fn load_all_builtins(codegen: &mut CodeGenerator) {
         }
     }
 
+    // NumPy .npz
+    for data in non_generic::npz::load_npz_data() {
+        codegen.type_manager.register_builtin(data.clone());
+        for def in data.extra_structs { codegen.struct_defs.insert(def.name.clone(), def); }
+        if let Some(def) = data.struct_def.clone() { codegen.struct_defs.insert(def.name.clone(), def); }
+        if !data.impl_blocks.is_empty() {
+            let name = data.impl_blocks[0].target_type.get_base_name();
+            codegen.generic_impls.entry(name).or_default().extend(data.impl_blocks);
+        }
+    }
+
     // Thread is now fully generic and natively evaluated in expr.rs
     // Register LLM Structs (from source)
     let llm_data = llm::load_llm_data();
