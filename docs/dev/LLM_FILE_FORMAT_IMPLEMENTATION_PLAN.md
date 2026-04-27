@@ -12,7 +12,7 @@
 |:---|:---|:---|:---|:---|
 | 1 | **GGUF** | `feature/gguf-builtin` | ✅ マージ済み | Vec要素メモリ管理、SRET動作 |
 | 2 | **SafeTensors** | `feature/safetensors-builtin` | ✅ 実装完了（マージ待ち） | アロケータ不整合、String ARC未登録 |
-| 3 | **NumPy .npy** | `feature/npy-builtin` | ⬜ 未着手 | — |
+| 3 | **NumPy .npy** | `feature/npy-builtin` | ✅ 実装完了（マージ待ち） | なし（バグ発見なし） |
 | 4 | **NumPy .npz** | `feature/npz-builtin` | ⬜ 未着手 (Phase 3) | — |
 
 ---
