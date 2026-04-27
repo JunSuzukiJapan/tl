@@ -241,7 +241,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             // Check if field_expr is a direct variable access - if so, mark it as moved
             let is_moveable_type = matches!(
                 _ty,
-                Type::Tensor(_, _) | Type::Struct(_, _) | Type::Tuple(_) | Type::Enum(_, _)
+                Type::Tensor(_, _) | Type::Struct(_, _) | Type::Tuple(_) | Type::Enum(_, _) | Type::String(_)
             );
             
             if !moved && is_moveable_type {

@@ -1835,21 +1835,21 @@ impl<'ctx> CodeGenerator<'ctx> {
                         | ExprKind::Block(_)
                 ) || is_last_use_move;
 
-                let should_deep_clone = match &val_ty {
-                    Type::Tensor(_, _) | Type::TensorShaped(_, _) | Type::GradTensor(_, _) => !is_rvalue, // Clone only if L-value
-                    Type::Struct(_, _) | Type::Enum(_, _) | Type::Tuple(_) | Type::SpecializedType { .. } => {
-                        // Structs/UserDefined/Enum/Vec/Tuple: Pointer copy vs Deep Clone
-                        // If R-value, we own the pointer. Move.
-                        !is_rvalue
+                // ARC Lifecycle Enforcement:
+                // Instead of Deep Cloning structs/tensors, we use ARC.
+                // If it's an L-value (Borrow), we increment the reference count to claim shared ownership.
+                // If it's an R-value (Owned Temporary), we simply move it (transfer ownership) without incrementing.
+                if !is_rvalue && super::is_arc_managed_type(&val_ty) {
+                    if let Some(inc_fn) = self.module.get_function("tl_ptr_inc_ref") {
+                        if val_ir.is_pointer_value() {
+                            let void_ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                            let cast_ptr = self.builder.build_pointer_cast(val_ir.into_pointer_value(), void_ptr_ty, "inc_ref").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+                            self.builder.build_call(inc_fn, &[cast_ptr.into()], "").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+                        }
                     }
-                    _ => false,
-                };
-
-                if should_deep_clone {
-                    val_ir = self.emit_deep_clone(val_ir, &val_ty)?;
                 } else if is_rvalue {
                     // Move Semantics:
-                    // If it's an R-value (temporary), we skip deep_clone (ownership transfer).
+                    // If it's an R-value (temporary), we skip inc_ref (ownership transfer).
                     // BUT we must remove it from the temporary list so it's not freed 
                     // when the temporary scope ends. The variable now owns it.
                     self.try_consume_temp(val_ir);
@@ -2089,6 +2089,32 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let lvalue_res = self.compile_lvalue_addr(lhs);
                 
                 let (mut val_ir, val_ty) = self.compile_expr(value)?;
+
+                // ARC Lifecycle Enforcement for Assignments
+                let is_rvalue = matches!(
+                    &value.inner,
+                    ExprKind::FnCall(_, _)
+                        | ExprKind::MethodCall(_, _, _)
+                        | ExprKind::StaticMethodCall(_, _, _)
+                        | ExprKind::BinOp(_, _, _)
+                        | ExprKind::UnOp(_, _)
+                        | ExprKind::TensorLiteral(_)
+                        | ExprKind::IfExpr(_, _, _)
+                        | ExprKind::Block(_)
+                );
+
+                if !is_rvalue && super::is_arc_managed_type(&val_ty) {
+                    if let Some(inc_fn) = self.module.get_function("tl_ptr_inc_ref") {
+                        if val_ir.is_pointer_value() {
+                            let void_ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                            let cast_ptr = self.builder.build_pointer_cast(val_ir.into_pointer_value(), void_ptr_ty, "inc_ref_assign").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+                            self.builder.build_call(inc_fn, &[cast_ptr.into()], "");
+                        }
+                    }
+                } else if is_rvalue {
+                    self.try_consume_temp(val_ir);
+                }
+
 
                 // Implicit TraitObject Upcast for Assign
                 if let Ok((_, ref check_lhs_type, _, _)) = lvalue_res {
@@ -3751,272 +3777,55 @@ impl<'ctx> CodeGenerator<'ctx> {
                 Ok(cast_new_ptr.into())
             }
             Type::String(_) => {
-                // String Deep Clone using tl_string_clone
-                let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
-                let string_clone_fn = self.module.get_function("tl_string_clone")
-                    .or_else(|| {
-                        // Declare if missing: ptr @tl_string_clone(ptr)
-                        let fn_type = ptr_ty.fn_type(&[ptr_ty.into()], false);
-                        Some(self.module.add_function("tl_string_clone", fn_type, None))
-                    })
-                    .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_string_clone not found".to_string())))?;
-                
-                let val_ptr = val.into_pointer_value();
-                let clone_call = self.builder.build_call(string_clone_fn, &[val_ptr.into()], "str_clone")
-                    .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
-                match clone_call.try_as_basic_value() {
-                    inkwell::values::ValueKind::Basic(v) => Ok(v),
-                    _ => Err(CodegenErrorKind::Internal("tl_string_clone returned void".to_string()).into()),
-                }
-            }
-            Type::Enum(name, generics) => {
-                let mangled_name = if generics.is_empty() {
-                    name.clone()
-                } else {
-                    self.mangle_type_name(name, generics)
-                };
-
-                let mut enum_def = self
-                    .enum_defs
-                    .get(&mangled_name)
-                    .ok_or_else(|| TlError::from(CodegenErrorKind::Internal(format!("Enum {} definition not found ({})", name, mangled_name))))?
-                    .clone();
-                
-                // If still generic, monomorphize with default type
-                if !enum_def.generics.is_empty() {
-                    let default_generics = vec![Type::I64; enum_def.generics.len()];
-                    let default_mangled = self.mangle_type_name(name, &default_generics);
-                    if let Some(specialized) = self.enum_defs.get(&default_mangled) {
-                        enum_def = specialized.clone();
-                    } else {
-                        self.monomorphize_enum(name, &default_generics).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
-                        enum_def = self.enum_defs.get(&default_mangled)
-                            .ok_or_else(|| TlError::from(CodegenErrorKind::Internal(format!("Failed to monomorphize {} -> {}", name, default_mangled))))?
-                            .clone();
-                    }
-                }
-                
-                self.emit_enum_deep_clone(val, &enum_def)
-            }
-            Type::Struct(name, generics) => {
-                let mangled_name = if generics.is_empty() {
-                    name.clone()
-                } else {
-                    self.mangle_type_name(name, generics)
-                };
-
-                // Check if it is an Enum
-                if let Some(mut enum_def) = self.enum_defs.get(&mangled_name).cloned() {
-                    // If still generic, monomorphize with default type (same as Type::Enum branch)
-                    if !enum_def.generics.is_empty() {
-                        let default_generics = vec![Type::I64; enum_def.generics.len()];
-                        let default_mangled = self.mangle_type_name(name, &default_generics);
-                        if let Some(specialized) = self.enum_defs.get(&default_mangled) {
-                            enum_def = specialized.clone();
-                        } else {
-                            self.monomorphize_enum(name, &default_generics).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
-                            enum_def = self.enum_defs.get(&default_mangled)
-                                .ok_or_else(|| TlError::from(CodegenErrorKind::Internal(format!("Failed to monomorphize {} -> {}", name, default_mangled))))?
-                                .clone();
-                        }
-                    }
-                    return self.emit_enum_deep_clone(val, &enum_def);
-                }
-                
-                // Handle Tensor struct (opaque pointer, not a real struct)
-                if name == "Tensor" {
-                    return self.emit_deep_clone(val, &Type::Tensor(Box::new(Type::F32), 0));
-                }
-
-                // Handle String struct
-                if name == "String" {
-                    return self.emit_deep_clone(val, &Type::String(name.clone()));
-                }
-
-                // Built-in opaque types
-                // Env/Http: ステートレスなシングルトンのためポインタをそのまま返す
-                if name == "Env" || name == "Http" {
-                    return Ok(val);
-                }
-
-                // Check if it is a ZST (Value Type)
                 if !val.is_pointer_value() {
                     return Ok(val);
                 }
-
-                // V6.0: True Deep Copy — source と dest が完全に独立したメモリを持つ
-                // これにより `let mut s = self` でフィールド更新が互いに影響しない
-                // (V5.1 の SRET RC 蓄積問題の根本解決)
-                let simple_name = mangled_name.as_str();
-
-                if simple_name == "K" || simple_name == "V" {
-                    panic!("EMIT_DEEP_CLONE_CALLED_ON_{}!!", simple_name);
+                if let Some(inc_fn) = self.module.get_function("tl_ptr_inc_ref") {
+                    let void_ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                    let cast_ptr = self.builder.build_pointer_cast(val.into_pointer_value(), void_ptr_ty, "inc_ref_string").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+                    self.builder.build_call(inc_fn, &[cast_ptr.into()], "");
                 }
-
-                let struct_def = self
-                    .struct_defs
-                    .get(simple_name)
-                    .ok_or_else(|| TlError::from(CodegenErrorKind::Internal(format!("Struct {} definition not found for deep clone! ty={:?}", simple_name, ty))))?
-                    .clone();
-                let st_llvm_ty = *self
-                    .struct_types
-                    .get(simple_name)
-                    .ok_or_else(|| TlError::from(CodegenErrorKind::Internal(format!("LLVM Struct type {} not found for deep clone", simple_name))))?;
-
-                // 1. Allocate new struct memory
-                let size = st_llvm_ty
-                    .size_of()
-                    .ok_or_else(|| TlError::from(CodegenErrorKind::Internal(format!("Cannot get size of struct {}", name))))?;
-                let size_i64 = if size.get_type() == self.context.i32_type() {
-                    self.builder.build_int_z_extend(size, self.context.i64_type(), "size_i64").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?
-                } else {
-                    size
-                };
-                let malloc_fn = self.module.get_function("malloc").ok_or_else(|| TlError::from(CodegenErrorKind::Internal("malloc not found".to_string())))?;
-                let new_struct_ptr = match self.builder
-                    .build_call(malloc_fn, &[size_i64.into()], &format!("deep_clone_{}", name))
-                    .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?
-                    .try_as_basic_value() {
-                        inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
-                        _ => return Err(CodegenErrorKind::Internal("malloc returned void".to_string()).into()),
-                    };
-
-                // 2. MOVED: Do not implicitly register with MemoryManager.
-                // Deep cloned structs are usually meant to be fields of other structures, 
-                // so their owner structure decides when to free them. If a caller wants to
-                // bind this clone to a local variable, the caller must register it.
-                // (This fixes the double-free / use-after-free issue)
-
-                // 3. Deep copy each field
-                let src_ptr = val.into_pointer_value();
-                for (i, (field_name, field_ty)) in struct_def.fields.iter().enumerate() {
-                    let src_field_ptr = self
-                        .builder
-                        .build_struct_gep(st_llvm_ty, src_ptr, i as u32, &format!("src_{}", field_name))
-                        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
-                    let dst_field_ptr = self
-                        .builder
-                        .build_struct_gep(st_llvm_ty, new_struct_ptr, i as u32, &format!("dst_{}", field_name))
-                        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
-
-                    let store_val = match field_ty {
-                        Type::Array(inner_ty, size) => {
-                            self.emit_deep_clone_array_inline(src_field_ptr, dst_field_ptr, inner_ty, *size)?;
-                            continue;
-                        }
-                        Type::Tensor(_, _)
-                        | Type::TensorShaped(_, _)
-                        | Type::GradTensor(_, _)
-                        | Type::Struct(_, _)
-                        | Type::Enum(_, _)
-                        | Type::Tuple(_)
-                        | Type::String(_) => {
-                            let ptr_ty: inkwell::types::BasicTypeEnum = self.context.ptr_type(inkwell::AddressSpace::default()).into();
-                            let loaded = self
-                                .builder
-                                .build_load(ptr_ty, src_field_ptr, "f_val")
-                                .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
-                            self.emit_deep_clone(loaded, field_ty)?
-                        }
-                        _ => {
-                            let llvm_ty: inkwell::types::BasicTypeEnum = match field_ty {
-                                Type::F32 => self.context.f32_type().into(),
-                                Type::F64 => self.context.f64_type().into(),
-                                Type::I64 | Type::Usize | Type::Entity => self.context.i64_type().into(),
-                                Type::I32 | Type::Char(_) => self.context.i32_type().into(),
-                                Type::U8 => self.context.i8_type().into(),
-                                Type::Bool => self.context.bool_type().into(),
-                                _ => self.context.i64_type().into(),
-                            };
-                            self.builder
-                                .build_load(llvm_ty, src_field_ptr, "prim_val")
-                                .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?
-                        }
-                    };
-
-                    self.builder
-                        .build_store(dst_field_ptr, store_val)
-                        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+                Ok(val)
+            }
+            Type::Enum(name, generics) => {
+                if !val.is_pointer_value() {
+                    return Ok(val);
                 }
-
-                // 4. Return new independent struct pointer
-                Ok(new_struct_ptr.into())
+                if let Some(inc_fn) = self.module.get_function("tl_ptr_inc_ref") {
+                    let void_ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                    let cast_ptr = self.builder.build_pointer_cast(val.into_pointer_value(), void_ptr_ty, "inc_ref_enum").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+                    self.builder.build_call(inc_fn, &[cast_ptr.into()], "");
+                }
+                Ok(val)
+            }
+            Type::Struct(name, generics) => {
+                if !val.is_pointer_value() {
+                    return Ok(val);
+                }
+                
+                // Built-in opaque types (Env/Http are stateless singletons, no RC needed)
+                if name == "Env" || name == "Http" {
+                    return Ok(val);
+                }
+                
+                // Treat Tensor, String, Vec, and user structs all as ARC-managed pointers
+                if let Some(inc_fn) = self.module.get_function("tl_ptr_inc_ref") {
+                    let void_ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                    let cast_ptr = self.builder.build_pointer_cast(val.into_pointer_value(), void_ptr_ty, "inc_ref_struct").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+                    self.builder.build_call(inc_fn, &[cast_ptr.into()], "");
+                }
+                Ok(val)
             }
             Type::Tuple(ts) => {
-                // 1. Allocate tuple struct
-                let mut llvm_types = Vec::new();
-                for t in ts {
-                    llvm_types.push(self.get_llvm_type(t)?);
+                if !val.is_pointer_value() {
+                    return Ok(val);
                 }
-                let tuple_struct_type = self.context.struct_type(&llvm_types, false);
-
-                let size = tuple_struct_type
-                    .size_of()
-                    .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("Cannot get size of tuple".to_string())))?;
-                // Ensure size is i64
-                let size = if size.get_type() == self.context.i32_type() {
-                    self.builder.build_int_z_extend(size, self.context.i64_type(), "size_i64").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?
-                } else {
-                    size
-                };
-
-                let malloc_fn = self
-                    .module
-                    .get_function("malloc")
-                    .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("malloc not found".to_string())))?;
-                let new_tuple_ptr_val = self
-                    .builder
-                    .build_call(malloc_fn, &[size.into()], "tuple_malloc")
-                    .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
-                let raw_ptr = match new_tuple_ptr_val.try_as_basic_value() {
-                    inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
-                    _ => return Err(CodegenErrorKind::Internal("malloc returned invalid value".to_string()).into()),
-                };
-
-                let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
-                let tuple_ptr = self
-                    .builder
-                    .build_pointer_cast(raw_ptr, ptr_type, "tuple_ptr")
-                    .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
-
-                // 2. Deep clone elements
-                let src_ptr = val.into_pointer_value(); // Source tuple pointer
-                let src_cast = self
-                    .builder
-                    .build_pointer_cast(src_ptr, ptr_type, "src_tuple_cast")
-                    .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
-
-                for (i, ty) in ts.iter().enumerate() {
-                    let field_gep = self
-                        .builder
-                        .build_struct_gep(tuple_struct_type, src_cast, i as u32, "src_field_gep")
-                        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
-                    let dst_gep = self
-                        .builder
-                        .build_struct_gep(tuple_struct_type, tuple_ptr, i as u32, "dst_field_gep")
-                        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
-
-                    if let Type::Array(inner_ty, size) = ty {
-                        self.emit_deep_clone_array_inline(field_gep, dst_gep, inner_ty, *size)?;
-                        continue;
-                    }
-
-                    let field_llvm_ty = self.get_llvm_type(ty)?;
-                    let field_val = self
-                        .builder
-                        .build_load(field_llvm_ty, field_gep, "src_field_val")
-                        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
-
-                    // RECURSIVE DEEP CLONE
-                    let cloned_val = self.emit_deep_clone(field_val, ty)?;
-
-                    // Store into dst
-                    self.builder
-                        .build_store(dst_gep, cloned_val)
-                        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+                if let Some(inc_fn) = self.module.get_function("tl_ptr_inc_ref") {
+                    let void_ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+                    let cast_ptr = self.builder.build_pointer_cast(val.into_pointer_value(), void_ptr_ty, "inc_ref_tuple").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+                    self.builder.build_call(inc_fn, &[cast_ptr.into()], "");
                 }
-
-                Ok(tuple_ptr.into())
+                Ok(val)
             }
 
             _ => Ok(val), // Primitives copy by value

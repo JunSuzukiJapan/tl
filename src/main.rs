@@ -587,6 +587,7 @@ fn load_builtins() -> Result<tl_lang::compiler::ast::Module> {
         "non_generic/instant.tl",
         "non_generic/datetime.tl",
         "non_generic/net.tl",
+        "non_generic/safetensors.tl",
     ];
 
     let mut combined = tl_lang::compiler::ast::Module::new();

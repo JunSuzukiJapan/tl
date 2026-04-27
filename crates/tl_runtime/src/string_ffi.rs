@@ -28,6 +28,8 @@ pub extern "C" fn tl_string_new(s: *const c_char) -> *mut StringStruct {
         let struct_ptr = std::alloc::alloc(layout) as *mut StringStruct;
         (*struct_ptr).ptr = ptr;
         (*struct_ptr).len = len;
+        // ARC テーブルに登録 (RC=1)
+        crate::memory_ffi::tl_mem_register_struct(struct_ptr as *mut std::ffi::c_void);
         struct_ptr
     }
 }
@@ -93,6 +95,7 @@ pub extern "C" fn tl_string_concat(a: *mut StringStruct, b: *mut StringStruct) -
         let struct_ptr = std::alloc::alloc(layout) as *mut StringStruct;
         (*struct_ptr).ptr = ptr;
         (*struct_ptr).len = len;
+        crate::memory_ffi::tl_mem_register_struct(struct_ptr as *mut std::ffi::c_void);
         struct_ptr
     }
 }
@@ -120,6 +123,7 @@ pub extern "C" fn tl_string_clone(s: *mut StringStruct) -> *mut StringStruct {
         let struct_ptr = std::alloc::alloc(layout) as *mut StringStruct;
         (*struct_ptr).ptr = ptr;
         (*struct_ptr).len = len;
+        crate::memory_ffi::tl_mem_register_struct(struct_ptr as *mut std::ffi::c_void);
         struct_ptr
     }
 }
@@ -181,6 +185,7 @@ pub extern "C" fn tl_string_from_int(i: i64) -> *mut StringStruct {
         let struct_ptr = std::alloc::alloc(layout) as *mut StringStruct;
         (*struct_ptr).ptr = ptr;
         (*struct_ptr).len = len;
+        crate::memory_ffi::tl_mem_register_struct(struct_ptr as *mut std::ffi::c_void);
         struct_ptr
     }
 }
@@ -215,6 +220,7 @@ pub extern "C" fn tl_string_from_char(c: i64) -> *mut StringStruct {
         let struct_ptr = std::alloc::alloc(layout) as *mut StringStruct;
         (*struct_ptr).ptr = ptr;
         (*struct_ptr).len = len;
+        crate::memory_ffi::tl_mem_register_struct(struct_ptr as *mut std::ffi::c_void);
         struct_ptr
     }
 }
@@ -260,6 +266,8 @@ pub unsafe fn make_string_struct(s: String) -> *mut StringStruct {
         let struct_ptr = std::alloc::alloc(layout) as *mut StringStruct;
         (*struct_ptr).ptr = ptr;
         (*struct_ptr).len = len;
+        // ARC テーブルに登録 (RC=1)
+        crate::memory_ffi::tl_mem_register_struct(struct_ptr as *mut std::ffi::c_void);
         struct_ptr
     }
 }
@@ -589,20 +597,22 @@ pub extern "C" fn tl_string_to_bytes(s: *mut StringStruct) -> *mut VecStruct {
             (*vec_ptr).ptr = std::ptr::null_mut();
             (*vec_ptr).len = 0;
             (*vec_ptr).cap = 0;
+            crate::memory_ffi::tl_mem_register_struct(vec_ptr as *mut std::ffi::c_void);
             return vec_ptr;
         }
 
-        let slice = std::slice::from_raw_parts((*s).ptr as *const u8, (*s).len as usize);
-        let mut vec = slice.to_vec();
+        let len = (*s).len as usize;
+        // TL の Vec::push は C の realloc を使うため、バッファも C の malloc で確保する。
+        // Rust の Vec::to_vec() (jemalloc) で確保すると、realloc 時にアロケータ不整合でクラッシュする。
+        let buf = libc::malloc(len) as *mut u8;
+        if !buf.is_null() {
+            std::ptr::copy_nonoverlapping((*s).ptr as *const u8, buf, len);
+        }
         
-        let len = vec.len() as i64;
-        let cap = vec.capacity() as i64;
-        let ptr = vec.as_mut_ptr();
-        std::mem::forget(vec);
-        
-        (*vec_ptr).ptr = ptr as *mut _;
-        (*vec_ptr).len = len;
-        (*vec_ptr).cap = cap;
+        (*vec_ptr).ptr = buf as *mut _;
+        (*vec_ptr).len = len as i64;
+        (*vec_ptr).cap = len as i64;
+        crate::memory_ffi::tl_mem_register_struct(vec_ptr as *mut std::ffi::c_void);
         vec_ptr
     }
 }

@@ -128,6 +128,14 @@ pub extern "C" fn tl_mem_register_struct_named(
     if let Ok(mut counts) = REF_COUNTS.lock() {
         counts.insert(key, 1);
     }
+    if std::env::var("TL_ARC_DEBUG").is_ok() {
+        let name_str = if !_name.is_null() {
+            unsafe { std::ffi::CStr::from_ptr(_name).to_string_lossy().into_owned() }
+        } else {
+            "unknown".to_string()
+        };
+        eprintln!("[ARC] register ptr={:#x} name={} RC=1", key, name_str);
+    }
 }
 
 /// @ffi_sig (void*) -> void
@@ -235,6 +243,13 @@ pub extern "C" fn tl_ptr_inc_ref(ptr: *mut c_void) {
     if let Ok(mut counts) = REF_COUNTS.lock() {
         if let Some(entry) = counts.get_mut(&key) {
             *entry += 1;
+            if std::env::var("TL_ARC_DEBUG").is_ok() {
+                eprintln!("[ARC] inc_ref ptr={:#x} RC={}", key, *entry);
+            }
+        } else {
+            if std::env::var("TL_ARC_DEBUG").is_ok() {
+                eprintln!("[ARC] inc_ref ptr={:#x} UNREGISTERED (no-op)", key);
+            }
         }
     }
 }
@@ -265,6 +280,9 @@ pub extern "C" fn tl_ptr_dec_ref(ptr: *mut c_void) -> i32 {
         if let Some(count) = counts.get_mut(&key) {
             if *count > 0 {
                 *count -= 1;
+                if std::env::var("TL_ARC_DEBUG").is_ok() {
+                    eprintln!("[ARC] dec_ref ptr={:#x} RC={}{}", key, *count, if *count == 0 { " → WILL FREE" } else { "" });
+                }
                 if *count == 0 {
                     counts.remove(&key);
                     DEC_REF_FREED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -273,6 +291,9 @@ pub extern "C" fn tl_ptr_dec_ref(ptr: *mut c_void) -> i32 {
             }
         } else {
             DEC_REF_SKIP.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if std::env::var("TL_ARC_DEBUG").is_ok() {
+                eprintln!("[ARC] dec_ref ptr={:#x} UNREGISTERED (skip)", key);
+            }
         }
     }
     0
