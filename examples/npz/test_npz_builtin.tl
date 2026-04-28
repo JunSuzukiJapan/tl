@@ -17,11 +17,22 @@ fn main() {
                 i = i + 1;
             }
 
+            // Test get_entry (now as impl method)
+            let w = npz.get_entry("weights.npy");
+            match w {
+                Option::Some(e) => {
+                    println("Found weights.npy: {} bytes", e.data.len());
+                }
+                Option::None => {
+                    println("weights.npy not found");
+                }
+            }
+
             // Get as NpyFile
             let weights_opt = npz_get_npy(npz, "weights");
             match weights_opt {
-                Option::Some(w) => {
-                    println("weights: shape={}, dtype={}, elements={}", w.shape_str(), w.dtype_name(), w.element_count());
+                Option::Some(wn) => {
+                    println("weights: shape={}, dtype={}, elements={}", wn.shape_str(), wn.dtype_name(), wn.element_count());
                 }
                 Option::None => {
                     println("weights not found");

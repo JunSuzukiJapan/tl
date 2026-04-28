@@ -137,26 +137,26 @@ impl NpzFile {
     fn entry_count(self) -> i64 {
         self.entries.len()
     }
-}
 
-fn npz_get_entry(npz: NpzFile, name: String) -> Option<NpzEntry> {
-    let mut i = 0;
-    let entries = npz.entries;
-    while i < entries.len() {
-        let entry = entries.get(i).unwrap();
-        if entry.name == name {
-            let some: Option<NpzEntry> = Option::Some(entry);
-            return some;
+    fn get_entry(self, name: String) -> Option<NpzEntry> {
+        let mut i = 0;
+        let entries = self.entries;
+        while i < entries.len() {
+            let entry = entries.get(i).unwrap();
+            if entry.name == name {
+                let some: Option<NpzEntry> = Option::Some(entry);
+                return some;
+            }
+            i = i + 1;
         }
-        i = i + 1;
+        let none: Option<NpzEntry> = Option::None;
+        none
     }
-    let none: Option<NpzEntry> = Option::None;
-    none
 }
 
 fn npz_get_npy(npz: NpzFile, name: String) -> Option<NpyFile> {
     // Try exact name first
-    let entry_opt = npz_get_entry(npz, name);
+    let entry_opt = npz.get_entry(name);
     match entry_opt {
         Option::Some(entry) => {
             let npy_result = npz_parse_npy_from_bytes(entry.data);
@@ -177,7 +177,7 @@ fn npz_get_npy(npz: NpzFile, name: String) -> Option<NpyFile> {
             sb.append(name);
             sb.append(".npy");
             let lookup2 = sb.build();
-            let entry_opt2 = npz_get_entry(npz, lookup2);
+            let entry_opt2 = npz.get_entry(lookup2);
             match entry_opt2 {
                 Option::Some(entry2) => {
                     let npy_result2 = npz_parse_npy_from_bytes(entry2.data);

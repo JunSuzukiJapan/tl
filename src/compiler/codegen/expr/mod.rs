@@ -6114,14 +6114,18 @@ impl<'ctx> CodeGenerator<'ctx> {
                 Type::Struct(_, args) | Type::Enum(_, args) => args.clone(),
                 _ => vec![],
             };
+
             (base, parsed_generics)
         } else {
+
             (type_name.clone(), vec![])
         };
 
         let mangled_name = format!("tl_{}_{}", simple_struct_name, method);
         // Fallback to lowercase
         let stdlib_name = format!("tl_{}_{}", simple_struct_name.to_lowercase(), method);
+
+
 
         let (func_val, final_name) = if let Some(f) = self.module.get_function(&mangled_name) {
             (f, mangled_name)
@@ -6140,6 +6144,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         } else {
              self.get_return_type_from_signature(func_val)
         };
+
         
         // FIX: For generic runtime functions (like tl_vec_ptr_get), the return type may have 
         // generic placeholders (e.g., Option<T>) that need to be substituted with actual generics.
@@ -6199,11 +6204,20 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         // SRET Check: Use the actual LLVM function signature for consistency.
         // compile_fn_proto names the first parameter "sret" when SRET is used.
-        let uses_sret = func_val.count_params() > 0
+        let sret_by_name = func_val.count_params() > 0
             && func_val.get_first_param()
                 .map(|p| p.get_name().to_str().unwrap_or("") == "sret")
                 .unwrap_or(false);
+        // FIX: Also detect SRET when the LLVM function returns void but TL expects a struct.
+        // This happens when generic methods (like Option<T>.unwrap()) are specialized for T=SomeStruct
+        // and the specialized function uses SRET convention but the first parameter is not named "sret".
+        let sret_by_type = !sret_by_name
+            && matches!(&ret_ty, Type::Struct(_, _))
+            && func_val.get_type().get_return_type().is_none(); // void return in LLVM
+        let uses_sret = sret_by_name || sret_by_type;
         let mut sret_ptr = None;
+
+
 
         if uses_sret {
              // OLD: Stack Allocation (alloca) -> Causes Stack Corruption
@@ -6279,7 +6293,6 @@ impl<'ctx> CodeGenerator<'ctx> {
             .build_call(func_val, &compiled_args_vals, "method_call")
             .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
 
-        // Return handling
         // Return handling
         if let Some(ptr) = sret_ptr {
              let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
