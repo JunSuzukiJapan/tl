@@ -29,7 +29,7 @@ fn main() {
             }
 
             // Get as NpyFile
-            let weights_opt = npz_get_npy(npz, "weights");
+            let weights_opt = _npz_get_npy(npz, "weights");
             match weights_opt {
                 Option::Some(wn) => {
                     println("weights: shape={}, dtype={}, elements={}", wn.shape_str(), wn.dtype_name(), wn.element_count());
@@ -39,7 +39,7 @@ fn main() {
                 }
             }
 
-            let biases_opt = npz_get_npy(npz, "biases");
+            let biases_opt = _npz_get_npy(npz, "biases");
             match biases_opt {
                 Option::Some(b) => {
                     println("biases: shape={}, dtype={}, elements={}", b.shape_str(), b.dtype_name(), b.element_count());
@@ -50,7 +50,7 @@ fn main() {
             }
 
             // Test save (roundtrip)
-            let save_res = save_npz(npz, "examples/npz/test_out.npz");
+            let save_res = npz.save("examples/npz/test_out.npz");
             match save_res {
                 Result::Ok(ok) => {
                     println("Successfully saved test_out.npz: {}", ok);
@@ -59,7 +59,7 @@ fn main() {
                         Result::Ok(npz2) => {
                             println("Roundtrip verification:");
                             println("  Entry count: {}", npz2.entry_count());
-                            let w2 = npz_get_npy(npz2, "weights");
+                            let w2 = _npz_get_npy(npz2, "weights");
                             match w2 {
                                 Option::Some(w3) => {
                                     println("  weights: shape={}, elements={}", w3.shape_str(), w3.element_count());

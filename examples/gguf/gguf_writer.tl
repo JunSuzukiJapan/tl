@@ -45,7 +45,12 @@ fn write_u32_le(buf: Vec<u8>, val: i64) -> Vec<u8> {
     b
 }
 
-// write_u64_le は組み込み関数として提供済み
+fn write_u64_le(buf: Vec<u8>, val: i64) -> Vec<u8> {
+    let lo = val % 4294967296;
+    let hi = val / 4294967296;
+    let b = write_u32_le(buf, lo);
+    write_u32_le(b, hi)
+}
 
 // GGUF文字列を書き込む (u64 len + bytes)
 fn write_gguf_string(buf: Vec<u8>, s: String) -> Vec<u8> {

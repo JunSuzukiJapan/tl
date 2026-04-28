@@ -16,7 +16,7 @@ fn main() {
             }
             
             // Test get
-            let weight_opt = get_safetensor(stf, "weight");
+            let weight_opt = stf.get("weight");
             match weight_opt {
                 Option::Some(w) => {
                     println("Got weight tensor");
@@ -26,7 +26,7 @@ fn main() {
                 }
             }
             
-            let save_res = save_safetensors(stf, "examples/safetensors/test_out.safetensors");
+            let save_res = stf.save("examples/safetensors/test_out.safetensors");
             match save_res {
                 Result::Ok(ok) => {
                     println("Successfully saved test_out.safetensors: {}", ok);

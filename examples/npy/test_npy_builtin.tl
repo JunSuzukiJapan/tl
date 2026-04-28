@@ -15,7 +15,7 @@ fn main() {
             println("Dtype: {}", npy.dtype_name());
             
             // Test save (roundtrip)
-            let save_res = save_npy(npy, "examples/npy/test_out.npy");
+            let save_res = npy.save("examples/npy/test_out.npy");
             match save_res {
                 Result::Ok(ok) => {
                     println("Successfully saved test_out.npy: {}", ok);
