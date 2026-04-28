@@ -115,6 +115,9 @@ pub enum Token {
     Identifier(String),
 
     // Literals
+    #[regex("0[xX][0-9a-fA-F]+", |lex| i64::from_str_radix(&lex.slice()[2..], 16).ok())]
+    #[regex("0[bB][01]+", |lex| i64::from_str_radix(&lex.slice()[2..], 2).ok())]
+    #[regex("0[oO][0-7]+", |lex| i64::from_str_radix(&lex.slice()[2..], 8).ok())]
     #[regex("-?[0-9]+", |lex| lex.slice().parse().ok())]
     IntLiteral(i64),
 
