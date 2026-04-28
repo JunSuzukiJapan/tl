@@ -39,12 +39,13 @@
 
 ## NPZ で発見したバグ・不足機能
 
-### バグ3: impl ブロック内での Vec<構造体>.get().unwrap() の型推論
+### バグ3: impl ブロック内での Vec<構造体>.get().unwrap() の型推論 (修正済み)
 
 `impl NpzFile` 内のメソッドで `Vec<NpzEntry>.get(i).unwrap()` の返り値型が `Void` に推論され、フィールドアクセス (`entry.name`) で `Field access on non-struct type Void` エラーが発生。
 
-**回避策**: impl メソッドをフリー関数に変更。
-**根本修正**: コンパイラの型推論エンジン要調査。
+**根本原因**: `Option<T>.unwrap()` が `T=構造体` に特殊化された場合、LLVMの関数はSRET規約を使うが、呼び出し側のSRET検出が最初のパラメータ名だけに依存していた。特殊化関数ではパラメータ名が設定されないため、SRET未検出→void戻り値→Type::Voidとなっていた。
+
+**修正**: `ret_ty == Struct && LLVM returns void` の条件でもSRETを検出するように改善。
 
 ### 不足機能1: ビット演算 `^` (XOR) と `|` (OR)
 
