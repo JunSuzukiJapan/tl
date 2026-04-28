@@ -39,12 +39,7 @@ fn read_u64_le(data: Vec<u8>, offset: i64) -> i64 {
     lo + hi * 4294967296
 }
 
-fn write_u64_le(buf: Vec<u8>, val: i64) -> Vec<u8> {
-    let lo = val % 4294967296;
-    let hi = val / 4294967296;
-    let b = write_u32_le(buf, lo);
-    write_u32_le(b, hi)
-}
+// write_u64_le は組み込み関数として提供済み
 
 // --- テスト 1: Vec<u8> 基本操作 ---
 fn test_vec_u8_basic() {
