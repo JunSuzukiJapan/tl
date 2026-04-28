@@ -4802,7 +4802,17 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         self.builder.position_at_end(merge_block);
 
-        if result_type == Type::Void || incoming_vals.is_empty() {
+        if incoming_vals.is_empty() {
+            // All arms terminated (e.g., via return statements).
+            // merge_block is unreachable — insert unreachable terminator
+            // to prevent LLVM IR validation errors from mismatched return types.
+            self.builder.build_unreachable()
+                .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+            Ok((
+                self.context.i64_type().const_int(0, false).into(),
+                Type::Never,
+            ))
+        } else if result_type == Type::Void {
             Ok((
                 self.context.i64_type().const_int(0, false).into(),
                 Type::Void,

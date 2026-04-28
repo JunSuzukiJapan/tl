@@ -1528,7 +1528,16 @@ impl<'ctx> CodeGenerator<'ctx> {
                         // Check if it's an expression that should be returned
                         if let StmtKind::Expr(expr) = &stmt.inner {
                             let (val, ty) = self.compile_expr(expr)?;
-                            
+
+                            // If the expression already terminated the block (e.g., a match
+                            // where all arms return), skip implicit return generation to
+                            // avoid emitting dead code with mismatched return types.
+                            let already_terminated = self.builder.get_insert_block()
+                                .map(|b| b.get_terminator().is_some())
+                                .unwrap_or(false);
+                            if already_terminated {
+                                continue;
+                            }
                             // FIX: Logic parity with compile_function implicit return
                             // FIX: Logic parity with compile_function implicit return
                             if let ExprKind::Variable(name) = &expr.inner {
@@ -2080,6 +2089,16 @@ impl<'ctx> CodeGenerator<'ctx> {
                 // Check if it's an expression that should be returned
                 if let StmtKind::Expr(expr) = &stmt.inner {
                     let (mut val, mut ty) = self.compile_expr(expr)?;
+
+                    // If the expression already terminated the block (e.g., a match
+                    // where all arms return), skip implicit return generation.
+                    let already_terminated = self.builder.get_insert_block()
+                        .map(|b| b.get_terminator().is_some())
+                        .unwrap_or(false);
+                    if already_terminated {
+                        self.current_fn_return_type = old_ret_type;
+                        return Ok(());
+                    }
 
                     // Implicit TraitObject Upcast for implicit Return
                     let current_ret_is_trait = if let Some(Type::TraitObject(trait_name)) = &self.current_fn_return_type {

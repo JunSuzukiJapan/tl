@@ -52,6 +52,59 @@ impl NpzFile {
         String::from_utf8(bytes)
     }
 
+    // --- Internal helper: parse npy from bytes ---
+
+    fn parse_npy_from_bytes(data: Vec<u8>) -> Result<NpyFile, String> {
+        if data.len() < 10 {
+            let err: Result<NpyFile, String> = Result::Err("Data too short for .npy");
+            return err;
+        }
+        let m0 = data.get(0).unwrap() as i64;
+        if m0 != 147 {
+            let err: Result<NpyFile, String> = Result::Err("Invalid .npy magic");
+            return err;
+        }
+
+        let major = data.get(6).unwrap() as i64;
+        let minor = data.get(7).unwrap() as i64;
+
+        let mut header_len = 0;
+        let mut data_offset = 0;
+        if major == 1 {
+            header_len = NpyFile::read_u16_le(data, 8);
+            data_offset = 10 + header_len;
+        } else {
+            header_len = NpyFile::read_u32_le(data, 8);
+            data_offset = 12 + header_len;
+        }
+
+        let header_start = if major == 1 { 10 } else { 12 };
+        let mut header_bytes: Vec<u8> = Vec::new();
+        let mut i = 0;
+        while i < header_len {
+            header_bytes.push(data.get(header_start + i).unwrap());
+            i = i + 1;
+        }
+
+        let mut header = NpyFile::parse_header(header_bytes);
+        header.major_version = major;
+        header.minor_version = minor;
+
+        let mut npy_data: Vec<u8> = Vec::new();
+        let mut j = data_offset;
+        while j < data.len() {
+            npy_data.push(data.get(j).unwrap());
+            j = j + 1;
+        }
+
+        let npy = NpyFile {
+            header: header,
+            data: npy_data
+        };
+        let ok: Result<NpyFile, String> = Result::Ok(npy);
+        ok
+    }
+
     // --- Public API ---
 
     fn load(path: String) -> Result<NpzFile, String> {
@@ -128,6 +181,53 @@ impl NpzFile {
         }
         let none: Option<NpzEntry> = Option::None;
         none
+    }
+
+    fn get_npy(self, name: String) -> Option<NpyFile> {
+        // Try exact name first
+        let entry_opt = self.get_entry(name);
+        match entry_opt {
+            Option::Some(entry) => {
+                let npy_result = NpzFile::parse_npy_from_bytes(entry.data);
+                match npy_result {
+                    Result::Ok(npy) => {
+                        let some: Option<NpyFile> = Option::Some(npy);
+                        return some;
+                    }
+                    Result::Err(err) => {
+                        let none: Option<NpyFile> = Option::None;
+                        return none;
+                    }
+                }
+            }
+            Option::None => {
+                // Try appending .npy
+                let mut sb = StringBuilder::new();
+                sb.append(name);
+                sb.append(".npy");
+                let lookup2 = sb.build();
+                let entry_opt2 = self.get_entry(lookup2);
+                match entry_opt2 {
+                    Option::Some(entry2) => {
+                        let npy_result2 = NpzFile::parse_npy_from_bytes(entry2.data);
+                        match npy_result2 {
+                            Result::Ok(npy2) => {
+                                let some2: Option<NpyFile> = Option::Some(npy2);
+                                return some2;
+                            }
+                            Result::Err(err2) => {
+                                let none2: Option<NpyFile> = Option::None;
+                                return none2;
+                            }
+                        }
+                    }
+                    Option::None => {
+                        let none3: Option<NpyFile> = Option::None;
+                        return none3;
+                    }
+                }
+            }
+        }
     }
 
     fn save(self, path: String) -> Result<bool, String> {
@@ -229,106 +329,5 @@ impl NpzFile {
         }
         let err: Result<bool, String> = Result::Err("Failed to write file");
         err
-    }
-}
-
-// get_npy と parse_npy_from_bytes は impl 外のフリー関数として残す
-// (TLコンパイラの制約: Option<NpyFile> を返す NpzFile impl メソッドの IR 検証エラー)
-// 名前衝突リスクが低い _npz_ プレフィックス付き
-
-fn _npz_parse_npy_from_bytes(data: Vec<u8>) -> Result<NpyFile, String> {
-    if data.len() < 10 {
-        let err: Result<NpyFile, String> = Result::Err("Data too short for .npy");
-        return err;
-    }
-    let m0 = data.get(0).unwrap() as i64;
-    if m0 != 147 {
-        let err: Result<NpyFile, String> = Result::Err("Invalid .npy magic");
-        return err;
-    }
-
-    let major = data.get(6).unwrap() as i64;
-    let minor = data.get(7).unwrap() as i64;
-
-    let mut header_len = 0;
-    let mut data_offset = 0;
-    if major == 1 {
-        header_len = NpyFile::read_u16_le(data, 8);
-        data_offset = 10 + header_len;
-    } else {
-        header_len = NpyFile::read_u32_le(data, 8);
-        data_offset = 12 + header_len;
-    }
-
-    let header_start = if major == 1 { 10 } else { 12 };
-    let mut header_bytes: Vec<u8> = Vec::new();
-    let mut i = 0;
-    while i < header_len {
-        header_bytes.push(data.get(header_start + i).unwrap());
-        i = i + 1;
-    }
-
-    let mut header = NpyFile::parse_header(header_bytes);
-    header.major_version = major;
-    header.minor_version = minor;
-
-    let mut npy_data: Vec<u8> = Vec::new();
-    let mut j = data_offset;
-    while j < data.len() {
-        npy_data.push(data.get(j).unwrap());
-        j = j + 1;
-    }
-
-    let npy = NpyFile {
-        header: header,
-        data: npy_data
-    };
-    let ok: Result<NpyFile, String> = Result::Ok(npy);
-    ok
-}
-
-fn _npz_get_npy(npz: NpzFile, name: String) -> Option<NpyFile> {
-    let entry_opt = npz.get_entry(name);
-    match entry_opt {
-        Option::Some(entry) => {
-            let npy_result = _npz_parse_npy_from_bytes(entry.data);
-            match npy_result {
-                Result::Ok(npy) => {
-                    let some: Option<NpyFile> = Option::Some(npy);
-                    return some;
-                }
-                Result::Err(err) => {
-                    let none: Option<NpyFile> = Option::None;
-                    return none;
-                }
-            }
-        }
-        Option::None => {
-            // Try appending .npy
-            let mut sb = StringBuilder::new();
-            sb.append(name);
-            sb.append(".npy");
-            let lookup2 = sb.build();
-            let entry_opt2 = npz.get_entry(lookup2);
-            match entry_opt2 {
-                Option::Some(entry2) => {
-                    let npy_result2 = _npz_parse_npy_from_bytes(entry2.data);
-                    match npy_result2 {
-                        Result::Ok(npy2) => {
-                            let some2: Option<NpyFile> = Option::Some(npy2);
-                            return some2;
-                        }
-                        Result::Err(err2) => {
-                            let none2: Option<NpyFile> = Option::None;
-                            return none2;
-                        }
-                    }
-                }
-                Option::None => {
-                    let none3: Option<NpyFile> = Option::None;
-                    return none3;
-                }
-            }
-        }
     }
 }
