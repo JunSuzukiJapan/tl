@@ -13,7 +13,7 @@
 | 1 | **GGUF** | `feature/gguf-builtin` | ✅ マージ済み | Vec要素メモリ管理、SRET動作 |
 | 2 | **SafeTensors** | `feature/safetensors-builtin` | ✅ マージ済み | アロケータ不整合、String ARC未登録 |
 | 3 | **NumPy .npy** | `feature/npy-builtin` | ✅ マージ済み | なし（バグ発見なし） |
-| 4 | **NumPy .npz** | `feature/npz-builtin` | ✅ 実装完了（マージ待ち） | impl内Vec型推論バグ、XOR/OR未実装 |
+| 4 | **NumPy .npz** | `feature/npz-builtin` | ✅ マージ済み | impl内SRET検出バグ(修正済み)、XOR/OR未実装 |
 
 ---
 
@@ -55,129 +55,29 @@
 
 ## 残りの作業
 
-### ステップ1: SafeTensors ブランチのマージ
+### ~~ステップ1: SafeTensors ブランチのマージ~~ ✅ 完了
 
-```bash
-git checkout main
-git merge feature/safetensors-builtin
-git push
-```
+### ~~ステップ2: NumPy .npy 実装~~ ✅ 完了
 
-### ステップ2: NumPy .npy 実装 (`feature/npy-builtin`)
+### ~~ステップ3: NumPy .npz 実装~~ ✅ 完了
 
-#### フォーマット仕様
+### ステップ4: ビット演算 `^` (XOR) と `|` (OR) の実装
 
-```
-[6 bytes]  magic: \x93NUMPY
-[1 byte]   major version (1 or 2)
-[1 byte]   minor version
-[2 bytes]  header_len: u16 LE  (v1) / [4 bytes] u32 LE (v2)
-[N bytes]  header: Python dict文字列 (ASCII)
-[D bytes]  data: Cオーダーの連続配列
-```
+NPZ実装で発見した不足機能。CRC-32計算（PKZIP仕様で必要）を実装するために必要。
 
-ヘッダーの例:
-```python
-{'descr': '<f4', 'fortran_order': False, 'shape': (4, 3), }
-```
+#### 対象
 
-#### 公開API設計
+- `^` (XOR): レキサー、パーサー、コードジェン (LLVM `build_xor`)
+- `|` (OR): レキサー、パーサー、コードジェン (LLVM `build_or`)
+
+#### 検証
 
 ```tl
-struct NpyHeader {
-    major_version: i64,
-    minor_version: i64,
-    descr: String,       // 型記述: "<f4", "<f8", "<i4" etc.
-    fortran_order: bool,
-    shape: Vec<i64>
-}
-
-struct NpyFile {
-    header: NpyHeader,
-    data: Vec<u8>
-}
-
-impl NpyFile {
-    fn load(path: String) -> Result<NpyFile, String>;
-    fn save(self, path: String) -> Result<bool, String>;
-    fn element_count(self) -> i64;
-    fn dtype_name(self) -> String;
+fn main() {
+    println("0xFF ^ 0x55 = {}", 255 ^ 85);  // 170
+    println("0x0F | 0xF0 = {}", 15 | 240);  // 255
 }
 ```
-
-#### 実装ファイル
-
-```
-src/compiler/codegen/builtin_types/non_generic/
-├── npy.tl   ← TLコードで型定義とロジック
-└── npy.rs   ← BuiltinLoader ローダー
-
-examples/npy/
-├── test.npy               ← テスト用データ
-└── test_npy_builtin.tl    ← 組み込み型APIテスト
-```
-
-#### テスト用 .npy ファイルの生成
-
-```python
-import numpy as np
-a = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=np.float32)
-np.save("examples/npy/test.npy", a)
-```
-
-#### 想定される発見事項
-
-| カテゴリ | 内容 |
-|:---|:---|
-| バグ候補 | `bool` フィールドを持つ構造体の初期化とSRET返却 |
-| バグ候補 | ASCII文字列から数値への変換のループ処理 |
-| バグ候補 | パディング計算 (64バイト境界アライン) のオフバイワン |
-| 不足機能 | `String::find(pattern: String) -> Option<i64>` の存在確認 |
-
-#### Python dict パース戦略
-
-完全なPythonパーサーは作らず、.npy 固有の構造のみを対象とする簡易パーサーをTLで実装:
-
-```tl
-// 'descr': '<f4' → "<f4"
-// 'fortran_order': False → false
-// 'shape': (4, 3) → Vec<i64> [4, 3]
-fn parse_npy_header(data: Vec<u8>, offset: i64, size: i64) -> NpyHeader {
-    // シングルクォートで囲まれた文字列を検索
-    // キーワードマッチで各フィールドを抽出
-}
-```
-
-### ステップ3: NumPy .npz 実装 (`feature/npz-builtin`) [Phase 3]
-
-PKZIPヘッダーを手動パース。`compression_method == 0` (STORED) のみサポート。
-
-#### 公開API設計
-
-```tl
-struct NpzFile {
-    entries: Vec<NpzEntry>
-}
-
-struct NpzEntry {
-    name: String,
-    data: Vec<u8>
-}
-
-impl NpzFile {
-    fn load(path: String) -> Result<NpzFile, String>;  // STOREDのみ
-    fn get(self, name: String) -> Option<NpyFile>;     // エントリをNpyFileとして解析
-    fn entry_count(self) -> i64;
-}
-```
-
-#### 想定される発見事項
-
-| カテゴリ | 内容 |
-|:---|:---|
-| バグ候補 | ビット演算 `&`, `|`, `<<`, `>>` の動作確認 |
-| バグ候補 | u32範囲の値を i64 で扱う際のオーバーフロー挙動 |
-| 不足機能 | ビット演算子の未実装またはバグ |
 
 ---
 
