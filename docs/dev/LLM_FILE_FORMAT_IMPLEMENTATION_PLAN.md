@@ -13,7 +13,7 @@
 | 1 | **GGUF** | `feature/gguf-builtin` | ✅ マージ済み | Vec要素メモリ管理、SRET動作 |
 | 2 | **SafeTensors** | `feature/safetensors-builtin` | ✅ マージ済み | アロケータ不整合、String ARC未登録 |
 | 3 | **NumPy .npy** | `feature/npy-builtin` | ✅ マージ済み | なし（バグ発見なし） |
-| 4 | **NumPy .npz** | `feature/npz-builtin` | ✅ マージ済み | impl内SRET検出バグ(修正済み)、XOR/OR未実装 |
+| 4 | **NumPy .npz** | `feature/npz-builtin` | ✅ マージ済み | impl内SRET検出バグ(修正済み)、16進リテラル未実装(修正済み) |
 
 ---
 
