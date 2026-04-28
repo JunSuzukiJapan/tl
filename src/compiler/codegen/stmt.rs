@@ -1762,7 +1762,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     }
                 }
 
-                let (mut val_ir, mut val_ty) = if let Some((r, t)) = dps_result {
+                let (val_ir, mut val_ty) = if let Some((r, t)) = dps_result {
                     (r, t)
                 } else {
                     // Standard expression compilation
@@ -2108,7 +2108,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         if val_ir.is_pointer_value() {
                             let void_ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
                             let cast_ptr = self.builder.build_pointer_cast(val_ir.into_pointer_value(), void_ptr_ty, "inc_ref_assign").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
-                            self.builder.build_call(inc_fn, &[cast_ptr.into()], "");
+                            let _ = self.builder.build_call(inc_fn, &[cast_ptr.into()], "");
                         }
                     }
                 } else if is_rvalue {
@@ -3783,22 +3783,22 @@ impl<'ctx> CodeGenerator<'ctx> {
                 if let Some(inc_fn) = self.module.get_function("tl_ptr_inc_ref") {
                     let void_ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
                     let cast_ptr = self.builder.build_pointer_cast(val.into_pointer_value(), void_ptr_ty, "inc_ref_string").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
-                    self.builder.build_call(inc_fn, &[cast_ptr.into()], "");
+                    let _ = self.builder.build_call(inc_fn, &[cast_ptr.into()], "");
                 }
                 Ok(val)
             }
-            Type::Enum(name, generics) => {
+            Type::Enum(_name, _generics) => {
                 if !val.is_pointer_value() {
                     return Ok(val);
                 }
                 if let Some(inc_fn) = self.module.get_function("tl_ptr_inc_ref") {
                     let void_ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
                     let cast_ptr = self.builder.build_pointer_cast(val.into_pointer_value(), void_ptr_ty, "inc_ref_enum").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
-                    self.builder.build_call(inc_fn, &[cast_ptr.into()], "");
+                    let _ = self.builder.build_call(inc_fn, &[cast_ptr.into()], "");
                 }
                 Ok(val)
             }
-            Type::Struct(name, generics) => {
+            Type::Struct(name, _generics) => {
                 if !val.is_pointer_value() {
                     return Ok(val);
                 }
@@ -3812,18 +3812,18 @@ impl<'ctx> CodeGenerator<'ctx> {
                 if let Some(inc_fn) = self.module.get_function("tl_ptr_inc_ref") {
                     let void_ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
                     let cast_ptr = self.builder.build_pointer_cast(val.into_pointer_value(), void_ptr_ty, "inc_ref_struct").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
-                    self.builder.build_call(inc_fn, &[cast_ptr.into()], "");
+                    let _ = self.builder.build_call(inc_fn, &[cast_ptr.into()], "");
                 }
                 Ok(val)
             }
-            Type::Tuple(ts) => {
+            Type::Tuple(_ts) => {
                 if !val.is_pointer_value() {
                     return Ok(val);
                 }
                 if let Some(inc_fn) = self.module.get_function("tl_ptr_inc_ref") {
                     let void_ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
                     let cast_ptr = self.builder.build_pointer_cast(val.into_pointer_value(), void_ptr_ty, "inc_ref_tuple").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
-                    self.builder.build_call(inc_fn, &[cast_ptr.into()], "");
+                    let _ = self.builder.build_call(inc_fn, &[cast_ptr.into()], "");
                 }
                 Ok(val)
             }
@@ -3832,6 +3832,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
     }
 
+    #[allow(dead_code)]
     fn emit_enum_deep_clone(
         &mut self,
         val: BasicValueEnum<'ctx>,
