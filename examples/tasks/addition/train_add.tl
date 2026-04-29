@@ -277,15 +277,15 @@ fn main() {
     let d_model = 128; 
     let mut state = TrainState(1, GPT::new(vocab_size, d_model));
     
-    let epochs = 200;
+    let epochs = 500;
 
     print("Training 1-digit addition on RANDOM inputs (2-layer GPT, Adam, d_model=128)");
 
     for epoch in range(0, epochs) {
         print("Epoch:"); print(epoch); 
-        // lr scheduling: 0.001 for first 150 epochs, then 0.0003
+        // lr scheduling: 0.001 for first 350 epochs, then 0.0003
         let mut lr = 0.001;
-        if epoch >= 150 {
+        if epoch >= 350 {
             lr = 0.0003;
         }
         state = train_epoch(state, lr, 320); // 320 steps, grad_accum=8 -> 40 updates/epoch
