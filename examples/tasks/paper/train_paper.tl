@@ -22,7 +22,7 @@ impl Linear {
     }
     fn step(self, step_n: i64, lr: f32) -> Linear {
         let mut s = self;
-        s.W.adam_step(s.W.grad(), s.mW, s.vW, step_n, lr, 0.9, 0.999, 1e-8, 0.01);
+        s.W.adam_step(s.W.grad(), s.mW, s.vW, step_n, lr, 0.9, 0.999, 1e-8, 0.001);
         s.b.adam_step(s.b.grad(), s.mb, s.vb, step_n, lr, 0.9, 0.999, 1e-8, 0.0);
         s
     }
@@ -242,13 +242,17 @@ fn main() {
         }
     }
 
-    let lr = 0.0005;
-    let epochs = 500;
+    let epochs = 1500;
 
     print("Paper Training: 2-layer GPT, d_model=256, Adam, lr=0.0005, epochs=1500");
 
     for epoch in range(0, epochs) {
         print("Epoch:"); print(epoch);
+        // lr scheduling: 0.0005 for first 1000 epochs, then 0.0001
+        let mut lr = 0.0005;
+        if epoch >= 1000 {
+            lr = 0.0001;
+        }
         state = train_epoch(state, lr, 160);
 
         if epoch % 100 == 99 {
