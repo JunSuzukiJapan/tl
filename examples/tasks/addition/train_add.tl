@@ -258,13 +258,13 @@ fn train_epoch(state: TrainState, lr: f32, steps: i64) -> TrainState {
         
         loss.backward();
         
-        if s % 8 == 7 {
+        if s % 64 == 63 {
             st.model = st.model.step(st.global_step, lr);
             Tensor::clear_grads();
             st.global_step = st.global_step + 1;
         }
         
-        if s % 50 == 0 {
+        if s % 128 == 0 {
              print("    Step:"); print(s);
              print("    Loss:"); loss.print();
         }
@@ -277,18 +277,18 @@ fn main() {
     let d_model = 128; 
     let mut state = TrainState(1, GPT::new(vocab_size, d_model));
     
-    let epochs = 500;
+    let epochs = 300;
 
-    print("Training 1-digit addition on RANDOM inputs (2-layer GPT, Adam, d_model=128)");
+    print("Training 1-digit addition (2-layer GPT, Adam, d_model=128, grad_accum=64)");
 
     for epoch in range(0, epochs) {
         print("Epoch:"); print(epoch); 
-        // lr scheduling: 0.001 for first 350 epochs, then 0.0003
-        let mut lr = 0.001;
-        if epoch >= 350 {
-            lr = 0.0003;
+        // lr scheduling: 0.003 for first 200 epochs, then 0.001
+        let mut lr = 0.003;
+        if epoch >= 200 {
+            lr = 0.001;
         }
-        state = train_epoch(state, lr, 320); // 320 steps, grad_accum=8 -> 40 updates/epoch
+        state = train_epoch(state, lr, 640); // 640 steps, grad_accum=64 -> 10 updates/epoch
     }
     
     print("Training Complete!");
