@@ -1,4 +1,4 @@
-// 2桁足し算タスク - 2-Layer GPT (Adam)
+// 1桁足し算タスク - 2-Layer GPT (Adam, Batched Training)
 // ---------------
 // Model Components
 // ---------------
@@ -210,61 +210,76 @@ fn get_random_digit() -> i64 {
     return 9;
 }
 
+// 1サンプル分のデータを生成し、[1, 12] のテンソルと [1, 3] のターゲットを返す
+fn make_sample() -> Tensor<f32, 2> {
+    let i = get_random_digit();
+    let j = get_random_digit();
+    
+    let sum = i + j;
+    let i_d10 = i / 10;
+    let i_d1 = i - (i_d10 * 10);
+    let j_d10 = j / 10;
+    let j_d1 = j - (j_d10 * 10);
+    let s_d100 = sum / 100;
+    let rem = sum - (s_d100 * 100);
+    let s_d10 = rem / 10;
+    let s_d1 = rem - (s_d10 * 10);
+    
+    let v_i_d1 = i_d1 as f32;
+    let v_i_d10 = i_d10 as f32;
+    let v_j_d1 = j_d1 as f32;
+    let v_j_d10 = j_d10 as f32;
+    let v_s_d1 = s_d1 as f32;
+    let v_s_d10 = s_d10 as f32;
+    let v_s_d100 = s_d100 as f32;
+    
+    // 入力12トークン + ターゲット3トークンを1行に詰める (15要素)
+    let row = [
+        v_i_d1, v_i_d10, 10.0, 
+        v_j_d1, v_j_d10, 11.0, 
+        v_s_d1, v_s_d10, v_s_d100, 
+        12.0, 12.0, 12.0,
+        v_s_d1, v_s_d10, v_s_d100
+    ];
+    return row.reshape([1, 15]);
+}
+
 struct TrainState {
     global_step: i64,
     model: GPT
 }
 
-fn train_epoch(state: TrainState, lr: f32, steps: i64) -> TrainState {
+fn train_epoch(state: TrainState, lr: f32, steps: i64, batch_size: i64) -> TrainState {
     let mut st = state;
     for s in range(0, steps) {
-        let i = get_random_digit();
-        let j = get_random_digit();
+        // バッチを構築: [batch_size, 15] のテンソルを Tensor::stack で作成
+        let mut batch = make_sample(); // [1, 15]
+        for b in range(1, batch_size) {
+            let sample = make_sample(); // [1, 15]
+            batch = Tensor::stack(batch, sample, 0); // [b+1, 15]
+        }
         
-        let sum = i + j;
-        let i_d10 = i / 10;
-        let i_d1 = i - (i_d10 * 10);
-        let j_d10 = j / 10;
-        let j_d1 = j - (j_d10 * 10);
-        let s_d100 = sum / 100;
-        let rem = sum - (s_d100 * 100);
-        let s_d10 = rem / 10;
-        let s_d1 = rem - (s_d10 * 10);
+        // 入力とターゲットに分割
+        let X = batch.slice(1, 0, 12, 1); // [batch, 12] — 入力トークン
+        let Y_all = batch.slice(1, 12, 15, 1); // [batch, 3] — ターゲット (d1, d10, d100)
         
-        let v_i_d1 = i_d1 as f32;
-        let v_i_d10 = i_d10 as f32;
-        let v_j_d1 = j_d1 as f32;
-        let v_j_d10 = j_d10 as f32;
-        let v_s_d1 = s_d1 as f32;
-        let v_s_d10 = s_d10 as f32;
-        let v_s_d100 = s_d100 as f32;
+        // Forward
+        let logits = st.model.forward(X); // [batch, 12, 13]
         
-        let data = [
-            v_i_d1, v_i_d10, 10.0, 
-            v_j_d1, v_j_d10, 11.0, 
-            v_s_d1, v_s_d10, v_s_d100, 
-            12.0, 12.0, 12.0
-        ];
+        // 答え位置 (5,6,7) の logits を取得
+        let logits_ans = logits.slice(1, 5, 8, 1); // [batch, 3, 13]
+        let logits_flat = logits_ans.reshape([batch_size * 3, 13]); // [batch*3, 13]
+        let Y_flat = Y_all.reshape([batch_size * 3]); // [batch*3]
         
-        let X = data.reshape([1, 12]);
-        let logits = st.model.forward(X);
-        let logits_flat = logits.reshape([12, 13]);
-
-        // 位置5-7(答えのdigit)のみで損失計算
-        let logits_ans = logits_flat.slice(0, 5, 8, 1);
-        let Y_ans = [v_s_d1, v_s_d10, v_s_d100];
-        let Y_flat = Y_ans.reshape([3]);
-        let loss = logits_ans.cross_entropy(Y_flat);
+        let loss = logits_flat.cross_entropy(Y_flat);
         
         loss.backward();
         
-        if s % 64 == 63 {
-            st.model = st.model.step(st.global_step, lr);
-            Tensor::clear_grads();
-            st.global_step = st.global_step + 1;
-        }
+        st.model = st.model.step(st.global_step, lr);
+        Tensor::clear_grads();
+        st.global_step = st.global_step + 1;
         
-        if s % 128 == 0 {
+        if s % 10 == 0 {
              print("    Step:"); print(s);
              print("    Loss:"); loss.print();
         }
@@ -277,18 +292,20 @@ fn main() {
     let d_model = 128; 
     let mut state = TrainState(1, GPT::new(vocab_size, d_model));
     
-    let epochs = 300;
+    let batch_size = 64;
+    let steps_per_epoch = 50;  // 50 steps * 64 batch = 3200 samples/epoch
+    let epochs = 200;
 
-    print("Training 1-digit addition (2-layer GPT, Adam, d_model=128, grad_accum=64)");
+    print("Training 1-digit addition (2-layer GPT, Adam, d=128, batch=64)");
 
     for epoch in range(0, epochs) {
         print("Epoch:"); print(epoch); 
-        // lr scheduling: 0.003 for first 200 epochs, then 0.001
-        let mut lr = 0.003;
-        if epoch >= 200 {
-            lr = 0.001;
+        // lr scheduling: 0.001 for first 150 epochs, then 0.0003
+        let mut lr = 0.001;
+        if epoch >= 150 {
+            lr = 0.0003;
         }
-        state = train_epoch(state, lr, 640); // 640 steps, grad_accum=64 -> 10 updates/epoch
+        state = train_epoch(state, lr, steps_per_epoch, batch_size);
     }
     
     print("Training Complete!");
