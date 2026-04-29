@@ -1,4 +1,4 @@
-// 1桁足し算タスク - 2-Layer GPT (Adam, grad_accum=8)
+// 1桁足し算タスク - 2-Layer GPT (Adam, loss-sum batch=4)
 // ---------------
 // Model Components
 // ---------------
@@ -11,7 +11,7 @@ struct Linear {
 impl Linear { 
     fn new(i: i64, o: i64) -> Linear { 
         Linear(
-            (Tensor::randn([i, o], true)*0.1).detach(true), // W
+            (Tensor::randn([i, o], true)*0.02).detach(true), // W
             (Tensor::randn([o], true)*0.0).detach(true),    // b
             Tensor::zeros([i, o], false),                   // mW
             Tensor::zeros([i, o], false),                   // vW
@@ -142,7 +142,7 @@ struct Embedding {
 impl Embedding {
     fn new(v: i64, d: i64) -> Embedding {
         Embedding(
-            (Tensor::randn([v, d], true)*0.1).detach(true), // w
+            (Tensor::randn([v, d], true)*0.02).detach(true), // w
             Tensor::zeros([v, d], false),                   // mw
             Tensor::zeros([v, d], false)                    // vw
         )
@@ -210,6 +210,46 @@ fn get_random_digit() -> i64 {
     return 9;
 }
 
+fn compute_loss(model: GPT) -> Tensor<f32, 1> {
+    let i = get_random_digit();
+    let j = get_random_digit();
+    
+    let sum = i + j;
+    let i_d10 = i / 10;
+    let i_d1 = i - (i_d10 * 10);
+    let j_d10 = j / 10;
+    let j_d1 = j - (j_d10 * 10);
+    let s_d100 = sum / 100;
+    let rem = sum - (s_d100 * 100);
+    let s_d10 = rem / 10;
+    let s_d1 = rem - (s_d10 * 10);
+    
+    let v_i_d1 = i_d1 as f32;
+    let v_i_d10 = i_d10 as f32;
+    let v_j_d1 = j_d1 as f32;
+    let v_j_d10 = j_d10 as f32;
+    let v_s_d1 = s_d1 as f32;
+    let v_s_d10 = s_d10 as f32;
+    let v_s_d100 = s_d100 as f32;
+    
+    let data = [
+        v_i_d1, v_i_d10, 10.0, 
+        v_j_d1, v_j_d10, 11.0, 
+        v_s_d1, v_s_d10, v_s_d100, 
+        12.0, 12.0, 12.0
+    ];
+    
+    let X = data.reshape([1, 12]);
+    let logits = model.forward(X);
+    let logits_flat = logits.reshape([12, 13]);
+
+    // next-token prediction: 位置5,6,7のロジットで位置6,7,8のトークンを予測
+    let logits_ans = logits_flat.slice(0, 5, 8, 1);
+    let Y_ans = [v_s_d1, v_s_d10, v_s_d100];
+    let Y_flat = Y_ans.reshape([3]);
+    return logits_ans.cross_entropy(Y_flat);
+}
+
 struct TrainState {
     global_step: i64,
     model: GPT
@@ -218,54 +258,16 @@ struct TrainState {
 fn train_epoch(state: TrainState, lr: f32, steps: i64) -> TrainState {
     let mut st = state;
     for s in range(0, steps) {
-        let i = get_random_digit();
-        let j = get_random_digit();
-        
-        let sum = i + j;
-        let i_d10 = i / 10;
-        let i_d1 = i - (i_d10 * 10);
-        let j_d10 = j / 10;
-        let j_d1 = j - (j_d10 * 10);
-        let s_d100 = sum / 100;
-        let rem = sum - (s_d100 * 100);
-        let s_d10 = rem / 10;
-        let s_d1 = rem - (s_d10 * 10);
-        
-        let v_i_d1 = i_d1 as f32;
-        let v_i_d10 = i_d10 as f32;
-        let v_j_d1 = j_d1 as f32;
-        let v_j_d10 = j_d10 as f32;
-        let v_s_d1 = s_d1 as f32;
-        let v_s_d10 = s_d10 as f32;
-        let v_s_d100 = s_d100 as f32;
-        
-        let data = [
-            v_i_d1, v_i_d10, 10.0, 
-            v_j_d1, v_j_d10, 11.0, 
-            v_s_d1, v_s_d10, v_s_d100, 
-            12.0, 12.0, 12.0
-        ];
-        
-        let X = data.reshape([1, 12]);
-        let logits = st.model.forward(X);
-        let logits_flat = logits.reshape([12, 13]);
-
-        // 位置5-7(答えのdigit)のみで損失計算
-        let logits_ans = logits_flat.slice(0, 5, 8, 1);
-        let Y_ans = [v_s_d1, v_s_d10, v_s_d100];
-        let Y_flat = Y_ans.reshape([3]);
-        let loss = logits_ans.cross_entropy(Y_flat);
+        // 4サンプルのlossを計算グラフ上で加算 → 平均 → backward
+        let loss = (compute_loss(st.model) + compute_loss(st.model) 
+                   + compute_loss(st.model) + compute_loss(st.model)) * 0.25;
         
         loss.backward();
+        st.model = st.model.step(st.global_step, lr);
+        Tensor::clear_grads();
+        st.global_step = st.global_step + 1;
         
-        // grad_accum=8: 8サンプルごとに更新
-        if s % 8 == 7 {
-            st.model = st.model.step(st.global_step, lr);
-            Tensor::clear_grads();
-            st.global_step = st.global_step + 1;
-        }
-        
-        if s % 100 == 0 {
+        if s % 10 == 0 {
              print("    Step:"); print(s);
              print("    Loss:"); loss.print();
         }
@@ -278,24 +280,18 @@ fn main() {
     let d_model = 128; 
     let mut state = TrainState(1, GPT::new(vocab_size, d_model));
     
-    // 800 steps/epoch * 8 grad_accum = 100 updates/epoch
-    // 100 epochs * 800 samples = 80000 total samples
-    let epochs = 100;
+    // 200 epochs * 50 steps * 4 samples = 40000 samples
+    let epochs = 200;
 
-    print("Training 1-digit addition (2-layer GPT, Adam, d=128, grad_accum=8)");
+    print("Training 1-digit addition (2-layer GPT, Adam, d=128, loss-sum batch=4)");
 
     for epoch in range(0, epochs) {
         print("Epoch:"); print(epoch); 
-        // lr scheduling: warmup 5 epochs, then constant, then decay
         let mut lr = 0.0005;
-        if epoch < 5 {
-            // warmup: linearly increase from 0.0001 to 0.0005
-            lr = 0.0001 + (epoch as f32) * 0.0001;
-        }
-        if epoch >= 70 {
+        if epoch >= 150 {
             lr = 0.0001;
         }
-        state = train_epoch(state, lr, 800);
+        state = train_epoch(state, lr, 50);
     }
     
     print("Training Complete!");
