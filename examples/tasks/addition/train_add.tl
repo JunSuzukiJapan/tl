@@ -72,7 +72,7 @@ impl CausalSelfAttention {
         let k = self.k_proj.forward(x); 
         let v = self.v_proj.forward(x); 
         let kt = k.transpose(1, 2);
-        let scores = q.matmul(kt) * 0.125;
+        let scores = q.matmul(kt) * 0.0884; // 1/sqrt(128)
         
         let ones = scores * 0.0 + 1.0;
         let causal_mask = ones.tril(0); 
