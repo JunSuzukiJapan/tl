@@ -2012,20 +2012,11 @@ impl<'ctx> CodeGenerator<'ctx> {
                     if !uses_sret {
                         match &ty {
                             Type::Tensor(_, _) => {
-                                if let Some(acquire_fn) =
-                                    self.module.get_function("tl_tensor_acquire")
-                                {
-                                    let ptr = val.into_pointer_value();
-                                    let void_ptr_type =
-                                        self.context.ptr_type(inkwell::AddressSpace::default());
-                                    let cast_ptr = self
-                                        .builder
-                                        .build_pointer_cast(ptr, void_ptr_type, "cast_aq_ret")
-                                        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
-                                    self.builder
-                                        .build_call(acquire_fn, &[cast_ptr.into()], "")
-                                        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
-                                }
+                                // ARC Lifecycle §2.8: Tensor 戻り値の所有権移転
+                                // 変数は CLEANUP_NONE（1976行目で設定済み）により
+                                // emit_all_scopes_cleanup でスキップされる。
+                                // RC 操作は不要 — 所有権はそのまま Caller に移転する。
+                                // (暗黙の return パスと同一の方式)
                             }
                             Type::Struct(_, _) => {
                                 // Shallow Unregister: コンテナのみ unregister、フィールドは触らない

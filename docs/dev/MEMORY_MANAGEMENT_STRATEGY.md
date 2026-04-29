@@ -88,7 +88,10 @@ fn foo(arg: MyStruct) {
     ...
     // 関数終了: tl_ptr_dec_ref(arg)      ← RC-1（浅い dec_ref のみ）
     //   → フィールドの再帰解放は行わない
-    //   → RC=0 になった場合は、Caller 側の emit_recursive_free で解放される
+    //   → Caller が引数を保持している限り（CLEANUP_FULL）、
+    //     Callee の dec_ref で RC=0 になることはない。
+    //     最終的に Caller のスコープ脱出時の emit_recursive_free で
+    //     RC=0 に到達して解放される。
 }
 ```
 
@@ -169,7 +172,7 @@ self.field = new_value
 
 | 型 | Callee 側の処理 |
 |:---|:---|
-| Tensor | `tl_tensor_acquire`（RC+1）してから返す。Callee のスコープ脱出で RC-1 され、Caller に RC=1 が渡る |
+| Tensor | `CLEANUP_NONE` 設定により、スコープクリーンアップをスキップ。RC 操作なしで Caller に RC=1 が渡る |
 | Struct（非 SRET） | `tl_mem_unregister` でスコープから除外し、ポインタをそのまま返す |
 | Struct（SRET） | Caller が事前確保した隠しポインタに値をストアし、`unregister` してから void を返す |
 | Enum, Tuple, String | `tl_mem_unregister` でスコープから除外し、ポインタをそのまま返す |
@@ -567,7 +570,7 @@ static REF_COUNTS: LazyLock<Mutex<HashMap<usize, usize>>> = ...;
 
 | 関数 | 動作 |
 |:---|:---|
-| `tl_ptr_inc_ref(ptr)` | RC+1（未登録の場合は 2 で初期化） |
+| `tl_ptr_inc_ref(ptr)` | RC+1（未登録ポインタの場合は No-Op） |
 | `tl_ptr_dec_ref(ptr) -> bool` | RC-1（0 になったら `true` を返す） |
 | `tl_ptr_acquire(ptr) -> ptr` | `inc_ref` + ポインタ返却 |
 | `tl_ptr_release(ptr)` | `dec_ref` → 0 なら `libc::free` |
