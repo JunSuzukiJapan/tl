@@ -632,31 +632,76 @@ impl GradFn for LayerNormBackward {
     fn backward(&self, grad_output: &MetalTensor) -> BackendResult<Vec<MetalTensor>> {
         let x = unsafe { &*self.input.get() };
         let shape = x.shape();
-        let _ndim = shape.len();
-        let _last_dim = *shape.last().unwrap_or(&1);
+        let ndim = shape.len();
+        let last_dim = *shape.last().unwrap_or(&1);
         
-        // normalized = (x - mean) / sqrt(var + eps)
-        // 簡易実装: grad_input ≈ grad_output (layer_norm は近似的に identity に近い)
-        let grad_input = grad_output.shallow_clone();
+        // weight を取得（Some なら実データ、None なら ones で代用）
+        let w = if let Some(ref w_ref) = self.weight {
+            unsafe { &*w_ref.get() }.shallow_clone()
+        } else {
+            MetalTensor::ones(&[last_dim], DType::F32)?
+        };
+        
+        // grad_output に weight を掛ける前の勾配
+        let dy = grad_output.mul_impl(&w)?;  // dy = grad_output * weight (broadcast)
+        
+        // x の最終次元に沿った mean と var を計算
+        // mean_x = mean(x, dim=-1)
+        let last_axis = (ndim - 1) as i32;
+        let mean_x = x.mean_impl(last_axis)?;
+        let mean_x_broad = mean_x.unsqueeze_impl(ndim - 1)?.broadcast_to_impl(shape)?;
+        
+        // x_centered = x - mean_x
+        let x_centered = x.sub_impl(&mean_x_broad)?;
+        
+        // var_x = mean(x_centered^2, dim=-1)
+        let x_centered_sq = x_centered.mul_impl(&x_centered)?;
+        let var_x = x_centered_sq.mean_impl(last_axis)?;
+        
+        // std_inv = 1 / sqrt(var + eps)
+        let eps_tensor = MetalTensor::from_slice(&[self.eps], &[1], DType::F32);
+        let var_plus_eps = var_x.add_impl(&eps_tensor)?;
+        let std = var_plus_eps.sqrt_impl()?;
+        let std_inv = MetalTensor::ones(std.shape(), DType::F32)?.div_impl(&std)?;
+        let std_inv_broad = std_inv.unsqueeze_impl(ndim - 1)?.broadcast_to_impl(shape)?;
+        
+        // normalized = x_centered * std_inv
+        let normalized = x_centered.mul_impl(&std_inv_broad)?;
+        
+        // N = last_dim
+        let n = last_dim as f32;
+        
+        // grad_input = std_inv * (dy - mean(dy, -1) - normalized * mean(dy * normalized, -1)) / 1.0
+        // ただし mean は要素数 N で割る
+        let mean_dy = dy.mean_impl(last_axis)?;
+        let mean_dy_broad = mean_dy.unsqueeze_impl(ndim - 1)?.broadcast_to_impl(shape)?;
+        
+        let dy_norm = dy.mul_impl(&normalized)?;
+        let mean_dy_norm = dy_norm.mean_impl(last_axis)?;
+        let mean_dy_norm_broad = mean_dy_norm.unsqueeze_impl(ndim - 1)?.broadcast_to_impl(shape)?;
+        
+        let term1 = dy.sub_impl(&mean_dy_broad)?;
+        let term2 = normalized.mul_impl(&mean_dy_norm_broad)?;
+        let grad_input = term1.sub_impl(&term2)?.mul_impl(&std_inv_broad)?;
         
         let mut grads = vec![grad_input];
         
         if let Some(ref _w_ref) = self.weight {
-            // grad_weight: sum over batch dims of (grad_output * normalized_x)
-            // 簡易近似: sum(grad_output, batch_dims)
+            // grad_weight = sum(grad_output * normalized, over batch dims)
+            let grad_w_raw = grad_output.mul_impl(&normalized)?;
             let go_shape = grad_output.shape();
-            if go_shape.len() >= 2 {
-                // [batch, seq, dim] → sum over [batch, seq] → [dim]
-                let mut g = grad_output.shallow_clone();
-                for _ in 0..(go_shape.len() - 1) {
-                    g = g.sum_impl(0)?;
-                }
-                grads.push(g.clone());  // grad_weight
-                grads.push(g);          // grad_bias (same shape)
-            } else {
-                grads.push(grad_output.shallow_clone());
-                grads.push(grad_output.shallow_clone());
+            let mut g = grad_w_raw;
+            for _ in 0..(go_shape.len() - 1) {
+                g = g.sum_impl(0)?;
             }
+            grads.push(g);
+            
+            // grad_bias = sum(grad_output, over batch dims)
+            let mut gb = grad_output.shallow_clone();
+            for _ in 0..(go_shape.len() - 1) {
+                gb = gb.sum_impl(0)?;
+            }
+            grads.push(gb);
         }
         
         Ok(grads)

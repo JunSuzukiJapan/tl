@@ -1,4 +1,4 @@
-// 2桁足し算タスク - 2-Layer GPT (Adam)
+// 1桁足し算タスク - 2-Layer GPT (Adam, d=64)
 // ---------------
 // Model Components
 // ---------------
@@ -60,7 +60,7 @@ impl CausalSelfAttention {
         let k = self.k_proj.forward(x); 
         let v = self.v_proj.forward(x); 
         let kt = k.transpose(1, 2);
-        let scores = q.matmul(kt) * 0.125;
+        let scores = q.matmul(kt) * 0.125; // 1/sqrt(64)
         
         let ones = scores * 0.0 + 1.0;
         let causal_mask = ones.tril(0); 
@@ -202,7 +202,7 @@ fn inference(model: GPT, i: i64, j: i64) -> i64 {
 
 fn main() {
     print("Loading model...");
-    let mut model = GPT::new(13, 128);
+    let mut model = GPT::new(13, 64);
     Param::load(model, "model_add.safetensors");
     print("Model loaded successfully.");
 

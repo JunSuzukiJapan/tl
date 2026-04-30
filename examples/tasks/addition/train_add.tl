@@ -1,4 +1,4 @@
-// 2桁足し算タスク - 2-Layer GPT (Adam)
+// 1桁足し算タスク - 2-Layer GPT (Adam, grad_accum=64, d=64)
 // ---------------
 // Model Components
 // ---------------
@@ -11,7 +11,7 @@ struct Linear {
 impl Linear { 
     fn new(i: i64, o: i64) -> Linear { 
         Linear(
-            (Tensor::randn([i, o], true)*0.1).detach(true), // W
+            (Tensor::randn([i, o], true)*0.02).detach(true), // W
             (Tensor::randn([o], true)*0.0).detach(true),    // b
             Tensor::zeros([i, o], false),                   // mW
             Tensor::zeros([i, o], false),                   // vW
@@ -72,7 +72,7 @@ impl CausalSelfAttention {
         let k = self.k_proj.forward(x); 
         let v = self.v_proj.forward(x); 
         let kt = k.transpose(1, 2);
-        let scores = q.matmul(kt) * 0.125;
+        let scores = q.matmul(kt) * 0.125; // 1/sqrt(64)
         
         let ones = scores * 0.0 + 1.0;
         let causal_mask = ones.tril(0); 
@@ -142,7 +142,7 @@ struct Embedding {
 impl Embedding {
     fn new(v: i64, d: i64) -> Embedding {
         Embedding(
-            (Tensor::randn([v, d], true)*0.1).detach(true), // w
+            (Tensor::randn([v, d], true)*0.02).detach(true), // w
             Tensor::zeros([v, d], false),                   // mw
             Tensor::zeros([v, d], false)                    // vw
         )
@@ -250,21 +250,24 @@ fn train_epoch(state: TrainState, lr: f32, steps: i64) -> TrainState {
         let logits = st.model.forward(X);
         let logits_flat = logits.reshape([12, 13]);
 
-        // 位置5-7(答えのdigit)のみで損失計算
+        // next-token prediction: 位置5,6,7のロジットで位置6,7,8のトークンを予測
         let logits_ans = logits_flat.slice(0, 5, 8, 1);
         let Y_ans = [v_s_d1, v_s_d10, v_s_d100];
         let Y_flat = Y_ans.reshape([3]);
         let loss = logits_ans.cross_entropy(Y_flat);
         
-        loss.backward();
+        // loss を accum_steps で割って勾配を正規化（PyTorch 標準手法）
+        let loss_scaled = loss * 0.125; // 1.0 / 8.0
+        loss_scaled.backward();
         
-        if s % 16 == 15 {
+        // grad_accum=8: 8ステップごとに更新
+        if s % 8 == 7 {
             st.model = st.model.step(st.global_step, lr);
             Tensor::clear_grads();
             st.global_step = st.global_step + 1;
         }
         
-        if s % 50 == 0 {
+        if s % 100 == 0 {
              print("    Step:"); print(s);
              print("    Loss:"); loss.print();
         }
@@ -274,17 +277,28 @@ fn train_epoch(state: TrainState, lr: f32, steps: i64) -> TrainState {
 
 fn main() {
     let vocab_size = 13;
-    let d_model = 128; 
+    let d_model = 64; 
     let mut state = TrainState(1, GPT::new(vocab_size, d_model));
     
-    let lr = 0.001;
-    let epochs = 100;
+    // 200 epochs * 400 steps = 80000 samples, 10000 updates
+    let epochs = 200;
 
-    print("Training 1-digit addition on RANDOM inputs (2-layer GPT, Adam, d_model=128)");
+    print("Training 1-digit addition (2-layer GPT, Adam, d=64, grad_accum=8)");
 
     for epoch in range(0, epochs) {
         print("Epoch:"); print(epoch); 
-        state = train_epoch(state, lr, 640); // 640 steps (40 updates per epoch)
+        let mut lr = 0.0005;
+        // aggressive decay to prevent spikes
+        if epoch >= 30 {
+            lr = 0.0002;
+        }
+        if epoch >= 80 {
+            lr = 0.0001;
+        }
+        if epoch >= 150 {
+            lr = 0.00005;
+        }
+        state = train_epoch(state, lr, 400);
     }
     
     print("Training Complete!");

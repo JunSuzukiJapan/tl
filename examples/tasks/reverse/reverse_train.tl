@@ -259,7 +259,9 @@ fn train_epoch(state: TrainState, lr: f32, steps: i64) -> TrainState {
         let Y_flat = Y_ans.reshape([4]);
         let loss = logits_ans.cross_entropy(Y_flat);
         
-        loss.backward();
+        // loss を accum_steps で割って勾配を正規化
+        let loss_scaled = loss * 0.125; // 1.0 / 8.0
+        loss_scaled.backward();
         
         if s % 8 == 7 {
             st.model = st.model.step(st.global_step, lr);
@@ -281,13 +283,19 @@ fn main() {
     let d_model = 128; 
     let mut state = TrainState(1, Transformer::new(vocab_size, max_len, d_model));
     
-    let lr = 0.001;
-    let epochs = 100;
+    let epochs = 200;
 
-    print("Training Sequence Reversal with Adam...");
+    print("Training Sequence Reversal with Adam (200 epochs)...");
 
     for epoch in range(0, epochs) {
         print("Epoch:"); print(epoch); 
+        let mut lr = 0.0005;
+        if epoch >= 80 {
+            lr = 0.0002;
+        }
+        if epoch >= 150 {
+            lr = 0.0001;
+        }
         state = train_epoch(state, lr, 160);
     }
     print("Training Complete.");
