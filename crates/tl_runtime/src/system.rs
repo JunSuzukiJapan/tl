@@ -783,8 +783,9 @@ pub extern "C" fn tl_adam_step(
             }
 
             for i in 0..n {
-                m_data[i] = beta1 * m_data[i] + (1.0 - beta1) * g_data[i];
-                v_data[i] = beta2 * v_data[i] + (1.0 - beta2) * g_data[i] * g_data[i];
+                let gi = g_data[i].clamp(-5.0, 5.0);
+                m_data[i] = beta1 * m_data[i] + (1.0 - beta1) * gi;
+                v_data[i] = beta2 * v_data[i] + (1.0 - beta2) * gi * gi;
                 let m_hat = m_data[i] / bc1;
                 let v_hat = v_data[i] / bc2;
                 p_data[i] -= lr * m_hat / (v_hat.sqrt() + eps);
@@ -819,7 +820,7 @@ pub extern "C" fn tl_adam_step(
                 }
 
                 for i in 0..n {
-                    let gi = *g_ptr.add(i);
+                    let gi = (*g_ptr.add(i)).clamp(-5.0, 5.0);
                     *m_ptr.add(i) = beta1 * *m_ptr.add(i) + (1.0 - beta1) * gi;
                     *v_ptr.add(i) = beta2 * *v_ptr.add(i) + (1.0 - beta2) * gi * gi;
                     let m_hat = *m_ptr.add(i) / bc1;

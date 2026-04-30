@@ -1,4 +1,4 @@
-// 1桁足し算タスク - 2-Layer GPT (Adam, grad_accum=8)
+// 1桁足し算タスク - 2-Layer GPT (Adam, grad_accum=64, d=64)
 // ---------------
 // Model Components
 // ---------------
@@ -72,7 +72,7 @@ impl CausalSelfAttention {
         let k = self.k_proj.forward(x); 
         let v = self.v_proj.forward(x); 
         let kt = k.transpose(1, 2);
-        let scores = q.matmul(kt) * 0.0884; // 1/sqrt(128)
+        let scores = q.matmul(kt) * 0.125; // 1/sqrt(64)
         
         let ones = scores * 0.0 + 1.0;
         let causal_mask = ones.tril(0); 
@@ -256,7 +256,9 @@ fn train_epoch(state: TrainState, lr: f32, steps: i64) -> TrainState {
         let Y_flat = Y_ans.reshape([3]);
         let loss = logits_ans.cross_entropy(Y_flat);
         
-        loss.backward();
+        // loss を accum_steps で割って勾配を正規化（PyTorch 標準手法）
+        let loss_scaled = loss * 0.125; // 1.0 / 8.0
+        loss_scaled.backward();
         
         // grad_accum=8: 8ステップごとに更新
         if s % 8 == 7 {
@@ -275,19 +277,26 @@ fn train_epoch(state: TrainState, lr: f32, steps: i64) -> TrainState {
 
 fn main() {
     let vocab_size = 13;
-    let d_model = 128; 
+    let d_model = 64; 
     let mut state = TrainState(1, GPT::new(vocab_size, d_model));
     
-    // 500 epochs * 400 steps = 200000 samples, 25000 updates
-    let epochs = 500;
+    // 200 epochs * 400 steps = 80000 samples, 10000 updates
+    let epochs = 200;
 
-    print("Training 1-digit addition (2-layer GPT, Adam, d=128, grad_accum=8)");
+    print("Training 1-digit addition (2-layer GPT, Adam, d=64, grad_accum=8)");
 
     for epoch in range(0, epochs) {
         print("Epoch:"); print(epoch); 
-        let mut lr = 0.0003;
-        if epoch >= 400 {
+        let mut lr = 0.0005;
+        // aggressive decay to prevent spikes
+        if epoch >= 30 {
+            lr = 0.0002;
+        }
+        if epoch >= 80 {
             lr = 0.0001;
+        }
+        if epoch >= 150 {
+            lr = 0.00005;
         }
         state = train_epoch(state, lr, 400);
     }
