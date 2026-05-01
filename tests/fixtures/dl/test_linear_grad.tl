@@ -1,4 +1,4 @@
-// SKIP: Runtime memory issue causing crash
+// STDOUT: Training complete!
 // Test gradient tracking with Linear layer only (no Embedding)
 
 struct SimpleModel {
