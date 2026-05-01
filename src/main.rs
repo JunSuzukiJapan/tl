@@ -313,36 +313,44 @@ fn run_interpret_mode(
         std::process::exit(1);
     }
 
-    // JIT 実行
+    // fn main の存在確認
+    let has_main = combined_module.functions.iter().any(|f| f.name == "main");
+    let has_logic = !combined_module.relations.is_empty()
+        || !combined_module.rules.is_empty()
+        || !combined_module.queries.is_empty();
+
     use tl_runtime::registry;
     registry::reset_global_context();
 
-    let context = InkwellContext::create();
-    let mut codegen = CodeGenerator::new(&context, "main");
+    if has_main {
+        // JIT 実行
+        let context = InkwellContext::create();
+        let mut codegen = CodeGenerator::new(&context, "main");
 
-    if let Err(e) = codegen.compile_module(&combined_module, "main") {
-        print_tl_error_with_source(&e, &combined_source, None);
+        if let Err(e) = codegen.compile_module(&combined_module, "main") {
+            print_tl_error_with_source(&e, &combined_source, None);
+            std::process::exit(1);
+        }
+
+        if std::env::var("TL_DUMP_IR").is_ok() { codegen.dump_ir(); }
+
+        match codegen.jit_execute("main") {
+            Ok(_) => {}
+            Err(e) => {
+                println!("Execution failed: {}", e);
+                std::process::exit(1);
+            }
+        }
+
+        // Metal GPU 同期 — プロセス終了前にすべての GPU 処理の完了を保証
+        tl_runtime::system::tl_metal_sync();
+    } else if !has_logic {
+        eprintln!("Error: No main function found and no logic program defined");
         std::process::exit(1);
     }
 
-    if std::env::var("TL_DUMP_IR").is_ok() { codegen.dump_ir(); }
-
-    match codegen.jit_execute("main") {
-        Ok(_) => {}
-        Err(e) => {
-            println!("Execution failed: {}", e);
-            std::process::exit(1);
-        }
-    }
-
-    // Metal GPU 同期 — プロセス終了前にすべての GPU 処理の完了を保証
-    tl_runtime::system::tl_metal_sync();
-
     // ロジックプログラムの実行
-    if !combined_module.relations.is_empty()
-        || !combined_module.rules.is_empty()
-        || !combined_module.queries.is_empty()
-    {
+    if has_logic {
         let tensor_context = registry::get_global_context();
         run_logic_program(&combined_module, &tensor_context);
     }

@@ -4,12 +4,12 @@ use crate::string_ffi::StringStruct;
 use std::ffi::{c_char, CStr, CString};
 use std::io::Write;
 
-/// スリープ（ミリ秒）
+/// スリープ（秒、f64）— Rust の std::thread::sleep(Duration::from_secs_f64()) に準拠
 #[unsafe(no_mangle)]
-/// @ffi_sig (i64) -> void
-pub extern "C" fn tl_system_sleep(ms: i64) {
-    if ms > 0 {
-        std::thread::sleep(std::time::Duration::from_millis(ms as u64));
+/// @ffi_sig (f64) -> void
+pub extern "C" fn tl_system_sleep(secs: f64) {
+    if secs > 0.0 {
+        std::thread::sleep(std::time::Duration::from_secs_f64(secs));
     }
 }
 

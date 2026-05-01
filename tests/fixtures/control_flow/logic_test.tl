@@ -1,4 +1,4 @@
-// SKIP: pure Datalog (?- queries without fn main) causes heap corruption — separate issue
+// Pure Datalog test: no fn main, just facts + rules + queries
 edge(1, 2).
 edge(2, 3).
 edge(3, 4).

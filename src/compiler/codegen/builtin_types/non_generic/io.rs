@@ -139,13 +139,15 @@ pub fn register_io_types(manager: &mut TypeManager) {
         vec![string_type.clone()],
         Type::Struct("Path".to_string(), vec![])
     );
-    // Instance methods for Path (signature only for semantics check)
-    path.register_instance_signature("is_dir", vec![], Type::Bool);
-    path.register_instance_signature("is_file", vec![], Type::Bool);
-    path.register_instance_signature("exists", vec![], Type::Bool);
-    path.register_instance_signature("to_string", vec![], string_type.clone());
+    // Instance methods for Path (fully evaluated)
+    path.register_evaluated_instance_method("is_dir", compile_path_is_dir, vec![], Type::Bool);
+    path.register_evaluated_instance_method("is_file", compile_path_is_file, vec![], Type::Bool);
+    path.register_evaluated_instance_method("exists", compile_path_exists_instance, vec![], Type::Bool);
+    path.register_evaluated_instance_method("to_string", compile_path_to_string, vec![], string_type.clone());
+    path.register_evaluated_instance_method("join", compile_path_join, vec![string_type.clone()], Type::Struct("Path".to_string(), vec![]));
+    path.register_evaluated_instance_method("free", compile_path_free, vec![], Type::Void);
 
-    // Evaluated instance methods for Path
+    // Evaluated instance methods for Path (String return)
     path.register_evaluated_instance_method("parent", compile_path_parent, vec![], string_type.clone());
     path.register_evaluated_instance_method("file_name", compile_path_file_name, vec![], string_type.clone());
     path.register_evaluated_instance_method("extension", compile_path_extension, vec![], string_type.clone());
@@ -877,6 +879,102 @@ pub fn compile_path_extension<'ctx>(
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if !args.is_empty() { return Err(CodegenErrorKind::Internal("Path.extension takes no arguments".to_string()).into()); }
     compile_path_instance_method(codegen, instance_val, "tl_path_extension", "path_ext_str")
+}
+
+/// Helper for Path boolean instance methods (is_dir, is_file, exists)
+fn compile_path_bool_method<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    instance_val: BasicValueEnum<'ctx>,
+    ffi_name: &str,
+    res_name: &str,
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
+    let fn_val = codegen.module.get_function(ffi_name).ok_or_else(|| TlError::from(CodegenErrorKind::Internal(format!("{} not found", ffi_name))))?;
+    let call = codegen.builder.build_call(fn_val, &[instance_val.into()], res_name).map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+    let res = match call.try_as_basic_value() {
+        inkwell::values::ValueKind::Basic(v) => v,
+        _ => return Err(CodegenErrorKind::Internal(format!("Invalid return from {}", ffi_name)).into()),
+    };
+    Ok((res, Type::Bool))
+}
+
+pub fn compile_path_is_dir<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    instance_val: BasicValueEnum<'ctx>,
+    _instance_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
+    if !args.is_empty() { return Err(CodegenErrorKind::Internal("Path.is_dir takes no arguments".to_string()).into()); }
+    compile_path_bool_method(codegen, instance_val, "tl_path_is_dir", "path_is_dir")
+}
+
+pub fn compile_path_is_file<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    instance_val: BasicValueEnum<'ctx>,
+    _instance_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
+    if !args.is_empty() { return Err(CodegenErrorKind::Internal("Path.is_file takes no arguments".to_string()).into()); }
+    compile_path_bool_method(codegen, instance_val, "tl_path_is_file", "path_is_file")
+}
+
+pub fn compile_path_exists_instance<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    instance_val: BasicValueEnum<'ctx>,
+    _instance_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
+    if !args.is_empty() { return Err(CodegenErrorKind::Internal("Path.exists takes no arguments".to_string()).into()); }
+    compile_path_bool_method(codegen, instance_val, "tl_path_exists", "path_exists")
+}
+
+pub fn compile_path_to_string<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    instance_val: BasicValueEnum<'ctx>,
+    _instance_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
+    if !args.is_empty() { return Err(CodegenErrorKind::Internal("Path.to_string takes no arguments".to_string()).into()); }
+    compile_path_instance_method(codegen, instance_val, "tl_path_to_string", "path_to_str")
+}
+
+pub fn compile_path_join<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    instance_val: BasicValueEnum<'ctx>,
+    _instance_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
+    if args.len() != 1 { return Err(CodegenErrorKind::Internal("Path.join requires 1 argument".to_string()).into()); }
+    let fn_val = codegen.module.get_function("tl_path_join").ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_path_join not found".to_string())))?;
+    
+    // Extract char* from the String argument
+    let (part_val, part_ty) = &args[0];
+    let part_ptr = if matches!(part_ty, Type::String(_)) {
+        let ptr_int = codegen.load_struct_i64_field(*part_val, &Type::String("String".to_string()), "ptr")?.into_int_value();
+        codegen.builder.build_int_to_ptr(ptr_int, codegen.context.ptr_type(inkwell::AddressSpace::default()), "part_ptr")
+            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?
+    } else {
+        return Err(CodegenErrorKind::Internal("Path.join argument must be String".to_string()).into());
+    };
+    
+    let call = codegen.builder.build_call(fn_val, &[instance_val.into(), part_ptr.into()], "path_join")
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+    let res = match call.try_as_basic_value() {
+        inkwell::values::ValueKind::Basic(v) => v,
+        _ => return Err(CodegenErrorKind::Internal("Invalid return from Path.join".to_string()).into()),
+    };
+    Ok((res, Type::Struct("Path".to_string(), vec![])))
+}
+
+pub fn compile_path_free<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    instance_val: BasicValueEnum<'ctx>,
+    _instance_ty: Type,
+    args: Vec<(BasicValueEnum<'ctx>, Type)>,
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
+    if !args.is_empty() { return Err(CodegenErrorKind::Internal("Path.free takes no arguments".to_string()).into()); }
+    let fn_val = codegen.module.get_function("tl_path_free").ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_path_free not found".to_string())))?;
+    codegen.builder.build_call(fn_val, &[instance_val.into()], "").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+    Ok((codegen.context.i64_type().const_int(0, false).into(), Type::Void))
 }
 
 /// File::write_binary(path: String, data: Vec<u8>) -> Bool

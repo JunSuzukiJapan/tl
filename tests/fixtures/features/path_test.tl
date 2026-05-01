@@ -1,4 +1,4 @@
-// SKIP: Path struct codegen not implemented
+// STDOUT: Path test SUCCESS
 fn main() {
     print("Testing Path...");
     let p = Path::new("src");

@@ -1406,10 +1406,10 @@ pub fn declare_runtime_functions<'ctx>(
     add_fn("tl_read_line", read_line_type);
 
     // System
-    let sys_time_type = f32_type.fn_type(&[], false); // Return f32 timestamp
+    let sys_time_type = i64_type.fn_type(&[], false); // Return i64 unix timestamp (seconds)
     add_fn("tl_system_time", sys_time_type);
 
-    let sys_sleep_type = void_type.fn_type(&[f32_type.into()], false);
+    let sys_sleep_type = void_type.fn_type(&[f64_type.into()], false); // seconds: f64
     add_fn("tl_system_sleep", sys_sleep_type);
 
     let mem_mb_type = f64_type.fn_type(&[], false);
@@ -3153,12 +3153,12 @@ pub fn declare_runtime_functions<'ctx>(
     module.add_function("tl_system_command", system_command_type, None);
 
     // System
-    // tl_system_time() -> f32
-    let system_time_type = context.f32_type().fn_type(&[], false);
+    // tl_system_time() -> i64
+    let system_time_type = context.i64_type().fn_type(&[], false);
     module.add_function("tl_system_time", system_time_type, None);
 
-    // tl_system_sleep(seconds: f32) -> void
-    let system_sleep_type = void_type.fn_type(&[context.f32_type().into()], false);
+    // tl_system_sleep(seconds: f64) -> void
+    let system_sleep_type = void_type.fn_type(&[context.f64_type().into()], false);
     module.add_function("tl_system_sleep", system_sleep_type, None);
 
     // Mappings

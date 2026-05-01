@@ -8,7 +8,7 @@ pub fn register_system_types(manager: &mut TypeManager) {
     let mut system = CodeGenType::new("System");
 
     // 引数を持つメソッドは個別に登録
-    system.register_evaluated_static_method("time",    compile_system_time,    vec![],            Type::F32);
+    system.register_evaluated_static_method("time",    compile_system_time,    vec![],            Type::I64);
     system.register_evaluated_static_method("sleep",    compile_system_sleep,    vec![Type::F32],  Type::Void);
     system.register_evaluated_static_method("sleep_ms", compile_system_sleep_ms, vec![Type::I64],  Type::Void);
     system.register_evaluated_static_method("exit",    compile_system_exit,    vec![Type::I64],   Type::Void);
@@ -98,7 +98,7 @@ fn compile_system_time<'ctx>(
         inkwell::values::ValueKind::Basic(v) => v,
         _ => return Err(CodegenErrorKind::Internal("Invalid return from System::time".to_string()).into()),
     };
-    Ok((res, Type::F32))
+    Ok((res, Type::I64))
 }
 
 fn compile_system_sleep<'ctx>(
@@ -108,11 +108,21 @@ fn compile_system_sleep<'ctx>(
 ) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
     if args.len() != 1 { return Err(CodegenErrorKind::Internal("System::sleep requires 1 argument (seconds)".to_string()).into()); }
     let fn_val = codegen.module.get_function("tl_system_sleep").ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_system_sleep not found".to_string())))?;
-    // Arg should be f32
+    // TL のリテラル 0.5 は F32 として推論されるため、F32→F64 に拡張する
     let arg_val = args[0].0;
-     // If arg is int, cast to float? Semantic analyzer handles this? 
-     // Usually semantic analyzer casts, but let's assume valid input for now.
-    codegen.builder.build_call(fn_val, &[arg_val.into()], "").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+    let f64_val = if arg_val.is_float_value() {
+        let fv = arg_val.into_float_value();
+        if fv.get_type() == codegen.context.f32_type() {
+            codegen.builder.build_float_ext(fv, codegen.context.f64_type(), "sleep_f64")
+                .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?
+                .into()
+        } else {
+            arg_val
+        }
+    } else {
+        arg_val
+    };
+    codegen.builder.build_call(fn_val, &[f64_val.into()], "").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
     
     let void_val = codegen.context.i64_type().const_int(0, false).into();
     Ok((void_val, Type::Void))
