@@ -195,6 +195,64 @@ pub(super) fn compile_varbuilder_get_static<'ctx>(
     Ok((v, result_ty))
 }
 
+#[allow(deprecated)]
+pub(super) fn compile_varbuilder_grad_static<'ctx>(
+    codegen: &mut CodeGenerator<'ctx>,
+    args: &[Expr],
+    _target: Option<&Type>,
+) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
+    if args.len() != 1 {
+        return Err(TlError::from(CodegenErrorKind::Internal(
+            "VarBuilder::grad requires 1 argument (name: String)".to_string(),
+        )));
+    }
+
+    // Arg 0: Name (String) → *const c_char
+    let (name_val, name_ty) = codegen.compile_expr(&args[0])?;
+    let name_ptr = if let Type::String(_) = name_ty {
+        let ptr_to_struct = name_val.into_pointer_value();
+        let i64_ptr_ty = codegen.context.i64_type().ptr_type(inkwell::AddressSpace::default());
+        let ptr_to_first_field = codegen
+            .builder
+            .build_pointer_cast(ptr_to_struct, i64_ptr_ty, "str_ptr_cast")
+            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+        let str_addr_i64 = codegen
+            .builder
+            .build_load(codegen.context.i64_type(), ptr_to_first_field, "str_addr")
+            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?
+            .into_int_value();
+        let i8_ptr_ty = codegen.context.i8_type().ptr_type(inkwell::AddressSpace::default());
+        codegen
+            .builder
+            .build_int_to_ptr(str_addr_i64, i8_ptr_ty, "cstr_ptr")
+            .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?
+    } else {
+        return Err(TlError::from(CodegenErrorKind::Internal(
+            "VarBuilder::grad name must be String".to_string(),
+        )));
+    };
+
+    let f = codegen
+        .module
+        .get_function("tl_varbuilder_grad")
+        .ok_or_else(|| {
+            TlError::from(CodegenErrorKind::Internal(
+                "tl_varbuilder_grad not found".to_string(),
+            ))
+        })?;
+    let call = codegen
+        .builder
+        .build_call(f, &[name_ptr.into()], "vb_grad_res")
+        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
+
+    let v = codegen.check_tensor_result(call, "vb_grad_error")?;
+    // 勾配テンソルは元のテンソルと同じ型 (Tensor<f32, N>) だが rank は不明
+    // 安全のため rank=0 (dynamic) とする
+    let result_ty = Type::Tensor(Box::new(Type::F32), 0);
+    codegen.emit_register_tensor(v, &result_ty)?;
+    Ok((v, result_ty))
+}
+
 pub(super) fn compile_set_device<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,
     args: &[Expr],

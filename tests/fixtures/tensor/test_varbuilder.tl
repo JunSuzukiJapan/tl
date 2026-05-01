@@ -1,4 +1,4 @@
-// SKIP: VarBuilder not fully implemented
+// SKIP: backward multiple calls in training loop causes SIGTRAP (known autograd lifecycle issue)
 // Test VarBuilder-based parameter management for gradient tracking
 // This tests the solution to the struct field gradient tracking problem
 

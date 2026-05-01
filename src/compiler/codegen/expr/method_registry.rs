@@ -223,6 +223,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         // --- VarBuilder Static Methods ---
         let mut varbuilder_static = StaticMethodManager::new();
         varbuilder_static.register_uneval("get", compile_varbuilder_get_static);
+        varbuilder_static.register_uneval("grad", compile_varbuilder_grad_static);
         self.static_methods
             .insert("VarBuilder".to_string(), varbuilder_static);
 

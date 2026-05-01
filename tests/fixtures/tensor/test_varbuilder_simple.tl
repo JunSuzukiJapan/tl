@@ -1,4 +1,4 @@
-// SKIP: VarBuilder not fully implemented
+// STDOUT: Parameters updated!
 // Simple VarBuilder test without String type
 
 fn main() {

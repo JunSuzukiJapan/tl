@@ -77,27 +77,114 @@ pub extern "C" fn tl_set_device(_device_id: i64) {
     // Metal バックエンドでは単一デバイスのため何もしない
 }
 
-/// VarBuilder 関連（スタブ）
+/// VarBuilder: グローバルパラメータレジストリ
+/// 名前→テンソルポインタの HashMap で管理。
+/// get は初回呼び出し時に randn(req_grad=true) で GradTensor を作成し、
+/// 以降は同じポインタを返す。
+use std::collections::HashMap;
+use std::sync::Mutex;
+use std::sync::LazyLock;
+
+/// *mut OpaqueTensor を Send/Sync 対応にするラッパー。
+/// JIT はシングルスレッド実行なので、FFI 境界を越えるポインタ共有は安全。
+#[derive(Clone, Copy)]
+struct TensorPtr(*mut crate::OpaqueTensor);
+unsafe impl Send for TensorPtr {}
+unsafe impl Sync for TensorPtr {}
+
+static VAR_REGISTRY: LazyLock<Mutex<HashMap<String, TensorPtr>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
 #[unsafe(no_mangle)]
-/// @ffi_sig (String*) -> *mut crate::OpaqueTensor
-pub extern "C" fn tl_varbuilder_get(_name: *mut StringStruct) -> *mut crate::OpaqueTensor {
-    eprintln!("Warning: VarBuilder not yet supported in Metal backend");
-    std::ptr::null_mut()
+/// @ffi_sig (*const i8, i64, *const i64) -> *mut OpaqueTensor
+pub extern "C" fn tl_varbuilder_get(
+    name: *const std::ffi::c_char,
+    rank: i64,
+    shape: *const i64,
+) -> *mut crate::OpaqueTensor {
+    if name.is_null() || shape.is_null() || rank <= 0 {
+        eprintln!("[VarBuilder::get] Invalid arguments");
+        return std::ptr::null_mut();
+    }
+
+    let name_str = unsafe { std::ffi::CStr::from_ptr(name) }
+        .to_string_lossy()
+        .to_string();
+
+    // レジストリを確認: 既存のパラメータがあればそのまま返す
+    {
+        let registry = VAR_REGISTRY.lock().unwrap();
+        if let Some(&TensorPtr(ptr)) = registry.get(&name_str) {
+            return ptr;
+        }
+    }
+
+    // 新規作成: randn(shape, req_grad=true) で GradTensor を作成
+    let shape_slice = unsafe { std::slice::from_raw_parts(shape, rank as usize) };
+    let shape_usize: Vec<usize> = shape_slice.iter().map(|&d| d as usize).collect();
+
+    let ptr = crate::device_ffi::tl_device_tensor_randn_debug(
+        rank as usize,
+        shape_usize.as_ptr(),
+        0,     // seed = 0 (random)
+        true,  // req_grad = true → GradTensor
+    ) as *mut crate::OpaqueTensor;
+
+    if ptr.is_null() {
+        eprintln!("[VarBuilder::get] Failed to create tensor for '{}'", name_str);
+        return std::ptr::null_mut();
+    }
+
+    // レジストリに登録
+    {
+        let mut registry = VAR_REGISTRY.lock().unwrap();
+        registry.insert(name_str, TensorPtr(ptr));
+    }
+
+    ptr
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_varbuilder_get_from_tensor(
+    _name: *const std::ffi::c_char,
     _tensor: *mut crate::OpaqueTensor,
 ) -> *mut crate::OpaqueTensor {
-    eprintln!("Warning: VarBuilder not yet supported in Metal backend");
+    // shape テンソルからの取得（未使用パス）
+    eprintln!("Warning: tl_varbuilder_get_from_tensor not yet implemented");
     std::ptr::null_mut()
 }
 
 #[unsafe(no_mangle)]
-/// @ffi_sig (String*) -> *mut crate::OpaqueTensor
-pub extern "C" fn tl_varbuilder_grad(_name: *mut StringStruct) -> *mut crate::OpaqueTensor {
-    eprintln!("Warning: VarBuilder gradients not yet supported in Metal backend");
-    std::ptr::null_mut()
+/// @ffi_sig (*const i8) -> *mut OpaqueTensor
+pub extern "C" fn tl_varbuilder_grad(
+    name: *const std::ffi::c_char,
+) -> *mut crate::OpaqueTensor {
+    if name.is_null() {
+        eprintln!("[VarBuilder::grad] Null name");
+        return std::ptr::null_mut();
+    }
+
+    let name_str = unsafe { std::ffi::CStr::from_ptr(name) }
+        .to_string_lossy()
+        .to_string();
+
+    // レジストリからテンソルを取得
+    let tensor_ptr = {
+        let registry = VAR_REGISTRY.lock().unwrap();
+        registry.get(&name_str).copied()
+    };
+
+    match tensor_ptr {
+        Some(TensorPtr(ptr)) if !ptr.is_null() => {
+            // テンソルの勾配を取得: device_ffi の grad 関数を使う
+            crate::device_ffi::tl_device_tensor_grad(ptr as *mut std::ffi::c_void)
+                as *mut crate::OpaqueTensor
+        }
+        _ => {
+            eprintln!("[VarBuilder::grad] Parameter '{}' not found in registry", name_str);
+            std::ptr::null_mut()
+        }
+    }
 }
 
 /// パラメータ関連（スタブ）
