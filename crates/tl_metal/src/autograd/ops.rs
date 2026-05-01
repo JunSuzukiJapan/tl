@@ -668,9 +668,6 @@ impl GradFn for LayerNormBackward {
         // normalized = x_centered * std_inv
         let normalized = x_centered.mul_impl(&std_inv_broad)?;
         
-        // N = last_dim
-        let n = last_dim as f32;
-        
         // grad_input = std_inv * (dy - mean(dy, -1) - normalized * mean(dy * normalized, -1)) / 1.0
         // ただし mean は要素数 N で割る
         let mean_dy = dy.mean_impl(last_axis)?;
