@@ -289,6 +289,7 @@ TRAINING_FILES = {
     "infer_paper.tl",
     "infer_recall.tl",
     "reverse_infer.tl",
+    "train_verify_2digit.tl",  # 2桁加算検証（長時間実行）
 }
 
 # 特定のファイルをスキップするかどうか
@@ -300,30 +301,18 @@ SKIP_FILES = {
     "download.tl",
     # 非常に長時間実行されるファイル
     "readme_n_queens.tl",
-    # 既知の問題があるファイル
-    "train_verify_2digit.tl",
     # システムテスト (タイムアウト)
     "system_test.tl",
 
-    # --- autograd 使用ファイル ---
-    # (sudoku, lenia, gnn は修正済み — fix/tensor-logic-tasks)
-    
     # 計算量が多い/GPU負荷が高いテスト
     "kv_cache_test.tl",
-
-    # --- Crash Reproduction Files ---
-    "repro_reshape_segfault.tl",
-    "repro_segfault_minimal.tl",
 }
 
 # パス単位でのスキップ（重複ファイル名対策）
-# 2026-02-14: 直近実行でタイムアウト/abort したファイルを明示スキップ
 SKIP_PATH_SUFFIXES = {
     "examples/tasks/tensor_logic/lenia/repro.tl",
     "examples/tasks/tensor_logic/n_queens/n_queens_debug.tl",
     "examples/test_nqueens_debug.tl",
-    "tests/fixtures/debug/mem_leak_extended.tl",
-    "examples/apps/tinyllama/debug_chatbot.tl",
 }
 
 # CUDA (VRAM 8GB以下など) の環境でOOMを防ぐためにスキップする重いテスト

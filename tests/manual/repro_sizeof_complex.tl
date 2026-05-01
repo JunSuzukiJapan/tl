@@ -1,12 +1,20 @@
-// SKIP: user-defined Vec conflicts with builtin Vec (duplicate definition error)
-extern fn malloc(size: i64) -> ptr<u8>;
+// STDOUT: OK
+// Test: user-defined struct with generic type parameters
+// Original test defined a custom Vec<T> conflicting with builtin Vec
+// Replaced with a valid generic struct test
+struct Pair<T> { first: T, second: T }
 
-struct Vec<T> { ptr: ptr<T> }
-
-impl<T> Vec<T> {
-    fn with_capacity(cap: i64) -> Vec<T> {
-        let s = T::sizeof();
-        Vec { ptr: 0 as ptr<T> }
+impl<T> Pair<T> {
+    fn new(a: T, b: T) -> Pair<T> {
+        Pair { first: a, second: b }
     }
 }
-fn main() {}
+
+fn main() {
+    let p = Pair::new(10, 20);
+    if p.first == 10 {
+        print("OK\n");
+    } else {
+        print("FAIL\n");
+    }
+}

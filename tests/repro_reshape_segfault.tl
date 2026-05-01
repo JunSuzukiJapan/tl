@@ -1,4 +1,5 @@
-// Minimal reshape segfault repro
+// STDOUT: DONE
+// Regression test: reshape previously caused segfault
 tensor A: Tensor<f32, 1> = [1.0, 2.0, 3.0, 4.0];
 
 fn main() {

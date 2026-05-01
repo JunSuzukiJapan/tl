@@ -1,4 +1,5 @@
-// Minimal crash repro - step by step
+// STDOUT: ALL DONE
+// Regression test: div/exp/sqrt/reshape/matmul previously caused segfault
 tensor A: Tensor<f32, 1> = [1.0, 2.0, 3.0, 4.0];
 tensor B: Tensor<f32, 1> = [2.0, 2.0, 2.0, 2.0];
 tensor M2: Tensor<f32, 1> = [1.0, 0.0, 0.0, 1.0];

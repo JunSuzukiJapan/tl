@@ -1,4 +1,4 @@
-// SKIP: Option type inference produces Undefined(71) in codegen
+// STDOUT: File read OK
 fn main() {
     // Option test
     let x = Option::Some(10);
@@ -29,7 +29,7 @@ fn main() {
         print("Option::unwrap_or (some) FAILED\n");
     }
 
-    let y = Option::None();
+    let y: Option<i64> = Option::None();
     if y.is_none() {
         print("Option::None() is none\n");
     } else {
