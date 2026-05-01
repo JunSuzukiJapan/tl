@@ -1,4 +1,4 @@
-// SKIP: Known compiler issue - generic type inference
+// Test: generic global extern function
 extern fn my_identity<T>(val: T) -> T;
 
 fn main() {

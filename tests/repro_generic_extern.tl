@@ -1,4 +1,4 @@
-// SKIP: Known compiler issue - generic type inference
+// Test: generic extern function with wrapper struct
 struct Wrapper<T> {
     val: T,
 }

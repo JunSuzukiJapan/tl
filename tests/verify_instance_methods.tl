@@ -1,4 +1,4 @@
-// SKIP: Known compiler issue - generic type inference
+// SKIP: Option type inference produces Undefined(71) in codegen
 fn main() {
     // Option test
     let x = Option::Some(10);

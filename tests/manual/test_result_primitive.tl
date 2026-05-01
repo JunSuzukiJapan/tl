@@ -1,4 +1,4 @@
-// SKIP: Known compiler issue - generic type inference
+// Test: Result<i32, i32> primitive type instantiation
 fn main() {
     print("Testing Result<i32, i32>...\n");
 

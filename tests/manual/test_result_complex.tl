@@ -1,4 +1,4 @@
-// SKIP: Known compiler issue - generic type inference
+// Test: Result<String, String> and Result<Point, String> complex types
 
 struct Point {
     x: i32,

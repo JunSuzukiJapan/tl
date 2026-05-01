@@ -1,4 +1,4 @@
-// SKIP: Known compiler issue - generic type inference
+// SKIP: user-defined Vec conflicts with builtin Vec (duplicate definition error)
 extern fn malloc(size: i64) -> ptr<u8>;
 
 struct Vec<T> { ptr: ptr<T> }
