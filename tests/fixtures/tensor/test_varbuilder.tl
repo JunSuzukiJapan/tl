@@ -1,4 +1,4 @@
-// SKIP: backward multiple calls in training loop causes SIGTRAP (known autograd lifecycle issue)
+// STDOUT: Training complete!
 // Test VarBuilder-based parameter management for gradient tracking
 // This tests the solution to the struct field gradient tracking problem
 
@@ -28,45 +28,30 @@ impl Linear {
 }
 
 fn main() {
-    print("Test: VarBuilder-based gradient tracking");
-    
-    let linear = Linear::new("linear1", 10, 5);
+    let linear = Linear::new("linear1", 4, 3);
     let lr = 0.01;
     
     // Input and target
-    let X = Tensor::randn([4, 10], false);
-    let Y = Tensor::randn([4, 5], false);
-    
-    print("Running 3 training steps...");
+    let X = Tensor::randn([2, 4], false);
+    let Y = Tensor::randn([2, 3], false);
     
     for i in range(0, 3) {
         let logits = linear.forward(X);
-        // MSE loss
         let diff = logits - Y;
         let squared = diff * diff;
         let loss = squared.sumall();
         
-        print("Step:");
-        print(i);
-        print("Loss:");
-        print(loss);
-        
-        // Backward pass
         loss.backward();
         
-        // Update all parameters via VarMap
-        // update_all_params(lr); // Removed
+        // SGD update: p = (p - grad * lr).detach(true)
+        VarBuilder::update_all_params(lr);
     }
     
-    print("Training complete!");
-    print("Checking gradients were computed...");
+    println("Training complete!");
     
-    // Verify gradients exist
+    // Verify gradients exist after training
     let gw = VarBuilder::grad("linear1.weight");
     let gb = VarBuilder::grad("linear1.bias");
-    
-    print("Weight gradient:");
     print(gw);
-    print("Bias gradient:");
     print(gb);
 }

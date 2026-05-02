@@ -2788,6 +2788,14 @@ impl SemanticAnalyzer {
                 Some(Ok(Type::Tensor(Box::new(Type::F32), 0)))
             }
             "update" | "save" => Some(Ok(Type::Void)),
+            "update_all_params" => {
+                if args.len() != 1 {
+                    return Some(self.err(SemanticError::ArgumentCountMismatch {
+                        name: "VarBuilder::update_all_params".into(), expected: 1, found: args.len(),
+                    }, None));
+                }
+                Some(Ok(Type::Void))
+            }
             _ => None,
         }
     }

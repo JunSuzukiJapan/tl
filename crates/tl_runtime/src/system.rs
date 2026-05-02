@@ -111,11 +111,23 @@ pub extern "C" fn tl_varbuilder_get(
         .to_string_lossy()
         .to_string();
 
-    // レジストリを確認: 既存のパラメータがあればそのまま返す
+    // レジストリを確認: 既存のパラメータがあれば Arc を clone して返す
+    // JIT がスコープ終了時に RC-1 するため、レジストリ側の Arc を保護するために
+    // 毎回 clone（RC+1）して返す必要がある
     {
         let registry = VAR_REGISTRY.lock().unwrap();
         if let Some(&TensorPtr(ptr)) = registry.get(&name_str) {
-            return ptr;
+            if !ptr.is_null() {
+                // Arc の RC+1: JIT がスコープ終了で RC-1 しても、レジストリが保持する Arc が生き残る
+                unsafe {
+                    let arc = std::sync::Arc::from_raw(
+                        ptr as *const std::cell::UnsafeCell<crate::OpaqueTensor>
+                    );
+                    let cloned = std::sync::Arc::clone(&arc);
+                    let _ = std::sync::Arc::into_raw(arc); // 元の Arc を戻す（消費しない）
+                    return std::sync::Arc::into_raw(cloned) as *mut crate::OpaqueTensor;
+                }
+            }
         }
     }
 
@@ -135,14 +147,24 @@ pub extern "C" fn tl_varbuilder_get(
         return std::ptr::null_mut();
     }
 
-    // レジストリに登録
-    {
+    // レジストリに登録: Arc を clone してレジストリが所有する分を確保
+    // 新規作成時は Arc RC=1。レジストリ用に clone（RC=2）して、
+    // JIT が RC-1 しても RC=1 が残るようにする
+    unsafe {
+        let arc = std::sync::Arc::from_raw(
+            ptr as *const std::cell::UnsafeCell<crate::OpaqueTensor>
+        );
+        let registry_arc = std::sync::Arc::clone(&arc);
+        let registry_ptr = std::sync::Arc::into_raw(registry_arc) as *mut crate::OpaqueTensor;
+        let _ = std::sync::Arc::into_raw(arc); // 元の Arc を返す（JIT 用）
+
         let mut registry = VAR_REGISTRY.lock().unwrap();
-        registry.insert(name_str, TensorPtr(ptr));
+        registry.insert(name_str, TensorPtr(registry_ptr));
     }
 
     ptr
 }
+
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_varbuilder_get_from_tensor(
@@ -213,9 +235,94 @@ pub extern "C" fn tl_load_all_params(_path: *mut StringStruct) {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tl_update_all_params(lr: f32) {
-    // REGISTRY 廃止: テンソルのパラメータ更新は TL コード側で直接実行
-    let _ = lr;
+    // SGD: 全パラメータを grad * lr で更新し、detach(req_grad=true) でグラフをリセット
+    // これにより次の forward() でも有効な計算グラフが構築できる
+
+    // まずレジストリのスナップショットを取る（ロックを保持したまま更新しないため）
+    let params: Vec<(String, TensorPtr)> = {
+        let registry = VAR_REGISTRY.lock().unwrap();
+        registry.iter().map(|(k, &v)| (k.clone(), v)).collect()
+    };
+
+    let lr_f64 = lr as f64;
+
+    for (name, TensorPtr(ptr)) in params {
+        if ptr.is_null() {
+            continue;
+        }
+
+        // grad = p.grad() → 新規 Arc (RC=1)
+        let grad_ptr = crate::device_ffi::tl_device_tensor_grad(ptr as *mut std::ffi::c_void);
+        if grad_ptr.is_null() {
+            if std::env::var("TL_VARBUILDER_DEBUG").is_ok() {
+                eprintln!("[VarBuilder::step] No grad for '{}', skipping", name);
+            }
+            continue;
+        }
+
+        // update = grad * lr → 新規テンソル (Arc RC=1)
+        let update_ptr = crate::device_ffi::tl_device_tensor_mul_scalar(
+            grad_ptr as *mut std::ffi::c_void,
+            lr_f64,
+        );
+        // grad_ptr は一時テンソル: 解放 (RC 1→0)
+        crate::memory_ffi::tl_tensor_release_safe(grad_ptr as *mut crate::OpaqueTensor);
+
+        if update_ptr.is_null() {
+            eprintln!("[VarBuilder::step] mul_scalar failed for '{}'", name);
+            continue;
+        }
+
+        // new_p_raw = p - update → 新規テンソル (Arc RC=1)
+        let new_p_raw = crate::device_ffi::tl_device_tensor_sub(
+            ptr as *mut std::ffi::c_void,
+            update_ptr as *mut std::ffi::c_void,
+        );
+        // update は一時テンソル: 解放 (RC 1→0)
+        crate::memory_ffi::tl_tensor_release_safe(update_ptr as *mut crate::OpaqueTensor);
+
+        if new_p_raw.is_null() {
+            eprintln!("[VarBuilder::step] sub failed for '{}'", name);
+            continue;
+        }
+
+        // detach: 計算グラフをリセット (req_grad=false のコピーを作る)
+        let detached = crate::device_ffi::tl_device_tensor_detach(new_p_raw, false);
+        // new_p_raw は一時テンソル: 解放 (RC 1→0)
+        crate::memory_ffi::tl_tensor_release_safe(new_p_raw as *mut crate::OpaqueTensor);
+
+        if detached.is_null() {
+            eprintln!("[VarBuilder::step] detach failed for '{}'", name);
+            continue;
+        }
+
+        // req_grad=true にする: Metal の detach は req_grad を無視するため
+        // 明示的に enable_grad を呼ぶ
+        crate::device_ffi::tl_device_tensor_enable_grad(detached);
+
+        // レジストリを新ポインタで更新
+        // insert() の戻り値（旧エントリ）が Some(old) なら、レジストリ側が
+        // 保持していた Arc (RC+1 した分) を release する（§2.8 対称 ARC）
+        let new_ptr = detached as *mut crate::OpaqueTensor;
+        let old_registry_ptr = {
+            let mut registry = VAR_REGISTRY.lock().unwrap();
+            registry.insert(name.clone(), TensorPtr(new_ptr))
+        };
+        if let Some(TensorPtr(old_ptr)) = old_registry_ptr {
+            if !old_ptr.is_null() {
+                // レジストリが保持していた Arc（tl_varbuilder_get 登録時に clone した分）を解放
+                // JIT 側の Arc は JIT スコープが終了時に別途 RC-1 するため、ここでは
+                // レジストリ分のみ解放する（二重解放にならない）
+                crate::memory_ffi::tl_tensor_release_safe(old_ptr as *mut crate::OpaqueTensor);
+            }
+        }
+
+        if std::env::var("TL_VARBUILDER_DEBUG").is_ok() {
+            eprintln!("[VarBuilder::step] updated '{}' ptr={:?}", name, new_ptr);
+        }
+    }
 }
+
 
 #[unsafe(no_mangle)]
 /// @ffi_sig () -> void
