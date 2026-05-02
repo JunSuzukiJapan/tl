@@ -2086,7 +2086,19 @@ pub extern "C" fn tl_cpu_tensor_scale(t: *mut OpaqueTensor, s: f64) -> *mut Opaq
     }
     let tensor = unsafe { &*t };
     match tensor.mul_scalar_impl(s as f32) {
-        Ok(res) => make_tensor(res),
+        Ok(res) => {
+            let ptr = make_tensor(res);
+            if tensor.requires_grad() {
+                use crate::autograd::ops::MulScalarBackward;
+                unsafe {
+                    (&mut *ptr).set_grad_fn(Box::new(MulScalarBackward {
+                        a: tensor_ref_from_ptr(t),
+                        s: s as f32,
+                    }));
+                }
+            }
+            ptr
+        }
         Err(e) => {
             eprintln!("Runtime Error in scale: {}", e);
             std::ptr::null_mut()
