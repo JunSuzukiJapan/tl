@@ -24,28 +24,6 @@ pub fn compile_print<'ctx>(
     ))
 }
 
-/// print_1() / print_2() / print_3() -> Void
-/// These are rank-specific print aliases that all call tl_tensor_print (same behavior).
-pub fn compile_print_n<'ctx>(
-    codegen: &mut CodeGenerator<'ctx>,
-    obj: BasicValueEnum<'ctx>,
-    _obj_ty: Type,
-    _args: Vec<(BasicValueEnum<'ctx>, Type)>,
-) -> Result<(BasicValueEnum<'ctx>, Type), TlError> {
-    let fn_val = codegen
-        .module
-        .get_function("tl_tensor_print")
-        .ok_or_else(|| TlError::from(CodegenErrorKind::Internal("tl_tensor_print not found".to_string())))?;
-    codegen
-        .builder
-        .build_call(fn_val, &[obj.into()], "print_n_call")
-        .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
-    Ok((
-        codegen.context.i64_type().const_int(0, false).into(),
-        Type::Void,
-    ))
-}
-
 /// debug_ptr() -> Void
 pub fn compile_debug_ptr<'ctx>(
     codegen: &mut CodeGenerator<'ctx>,

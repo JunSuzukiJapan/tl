@@ -1,3 +1,6 @@
+// STDOUT: 100
+// STDOUT: 200
+// STDOUT: 10
 struct Counter {
     val: i64,
 }
@@ -12,8 +15,10 @@ impl Counter {
     }
 }
 
-print(100);
-let mut c = Counter { val: 0 };
-print(200);
-c = c.increment(10);
-print(c.get());
+fn main() {
+    print(100);
+    let mut c = Counter { val: 0 };
+    print(200);
+    c = c.increment(10);
+    print(c.get());
+}

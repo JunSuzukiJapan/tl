@@ -1,3 +1,4 @@
+// STDOUT: adam_test OK
 
 struct Linear {
     W: Tensor<f32, 2>,
@@ -24,10 +25,6 @@ struct Adam {
 
 impl Adam {
     fn step(self, model: Linear) {
-        // self.t += 1; // Not supported on i64 yet? Manual:
-        // self.t = self.t + 1; // Assign integers supported? 
-        // If not, just ignore t for now (only needed for bias correction).
-        
         // W update
         let g = model.W.grad();
         
@@ -47,7 +44,6 @@ impl Adam {
         let step_size = self.m_W / denom;
         let update = step_size * self.lr;
         
-        // Explicit Detach Mechanism to reset graph tracking for next iteration
         let w_next = model.W - update;
         let w_leaf = w_next.detach(true);
         model.W = w_leaf;
@@ -75,40 +71,33 @@ impl Adam {
     }
 }
 
-// Main
-let model = Linear_new(2, 1);
+fn main() {
+    let model = Linear_new(2, 1);
 
-// Zeros
-let m_W = Tensor::randn([2, 1], false) * 0.0;
-let v_W = Tensor::randn([2, 1], false) * 0.0;
-let m_b = Tensor::randn([1], false) * 0.0;
-let v_b = Tensor::randn([1], false) * 0.0;
+    let m_W = Tensor::randn([2, 1], false) * 0.0;
+    let v_W = Tensor::randn([2, 1], false) * 0.0;
+    let m_b = Tensor::randn([1], false) * 0.0;
+    let v_b = Tensor::randn([1], false) * 0.0;
 
-let optim = Adam(0.01, 0.9, 0.999, 0.00000001, 1, m_W, v_W, m_b, v_b);
+    let optim = Adam(0.01, 0.9, 0.999, 0.00000001, 1, m_W, v_W, m_b, v_b);
 
-let X = Tensor::randn([16, 2], false);
+    let X = Tensor::randn([16, 2], false);
 
-print(model.W);
+    // 3 iterations of Adam
+    let y_pred = X.matmul(model.W) + model.b;
+    let loss = (y_pred * y_pred).sumall();
+    loss.backward();
+    optim.step(model);
 
-// Iter 1
-let y_pred = X.matmul(model.W) + model.b;
-let loss = (y_pred * y_pred).sumall();
-print(loss);
-loss.backward();
-optim.step(model);
+    let y_pred = X.matmul(model.W) + model.b;
+    let loss = (y_pred * y_pred).sumall();
+    loss.backward();
+    optim.step(model);
 
-// Iter 2
-let y_pred = X.matmul(model.W) + model.b;
-let loss = (y_pred * y_pred).sumall();
-print(loss);
-loss.backward();
-optim.step(model);
+    let y_pred = X.matmul(model.W) + model.b;
+    let loss = (y_pred * y_pred).sumall();
+    loss.backward();
+    optim.step(model);
 
-// Iter 3
-let y_pred = X.matmul(model.W) + model.b;
-let loss = (y_pred * y_pred).sumall();
-print(loss);
-loss.backward();
-optim.step(model);
-
-print(model.W);
+    println("adam_test OK");
+}
