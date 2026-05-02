@@ -1,4 +1,4 @@
-// SKIP: Known refcount leak issue to be fixed later
+// STDOUT: LEAK_TEST_OK
 // STDOUT: LEAK_TEST_OK
 
 fn main() {

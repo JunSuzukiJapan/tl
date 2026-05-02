@@ -2683,11 +2683,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                     if let Some(f) = self.module.get_function("tl_mem_exit_scope") {
                         self.builder.build_call(f, &[], "").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                     }
-                    // 次のイテレーション用に再度 enter_scope
-                    if let Some(f) = self.module.get_function("tl_mem_enter_scope") {
-                        self.builder.build_call(f, &[], "").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
-                    }
                     // ループバック: latch へジャンプ
+                    // 注: body 先頭の enter_scope が次のイテレーションで呼ばれるので
+                    // re-enter は不要
                     self.builder
                         .build_unconditional_branch(loop_latch)
                         .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
@@ -2799,11 +2797,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                     if let Some(f) = self.module.get_function("tl_mem_exit_scope") {
                         self.builder.build_call(f, &[], "").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
                     }
-                    // 次のイテレーション用に再度 enter_scope
-                    if let Some(f) = self.module.get_function("tl_mem_enter_scope") {
-                        self.builder.build_call(f, &[], "").map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
-                    }
                     // ループバック: cond_block へジャンプ
+                    // 注: body 先頭の enter_scope が次のイテレーションで呼ばれるので
+                    // ここで re-enter する必要はない
                     self.builder
                         .build_unconditional_branch(cond_block)
                         .map_err(|e| TlError::from(CodegenErrorKind::Internal(e.to_string())))?;
