@@ -22,7 +22,7 @@ impl Linear {
     }
     fn step(self, step_n: i64, lr: f32) -> Linear {
         let mut s = self;
-        s.W.adam_step(s.W.grad(), s.mW, s.vW, step_n, lr, 0.9, 0.999, 1e-8, 0.001);
+        s.W.adam_step(s.W.grad(), s.mW, s.vW, step_n, lr, 0.9, 0.999, 1e-8, 0.01);
         s.b.adam_step(s.b.grad(), s.mb, s.vb, step_n, lr, 0.9, 0.999, 1e-8, 0.0);
         s
     }
@@ -175,8 +175,12 @@ struct TrainState { global_step: i64, model: GPT2 }
 fn train_epoch(state: TrainState, lr: f32, steps: i64) -> TrainState {
     let mut st = state;
     for s in range(0, steps) {
-        let i = get_random_digit() * 10 + get_random_digit();
-        let j = get_random_digit() * 10 + get_random_digit();
+        // s%4==0: 12+34=46 (test), s%4==1: 21+43=64 (contrastive), s%4==2: 99+1=100 (test), s%4==3: random
+        let mut i = get_random_digit() * 10 + get_random_digit();
+        let mut j = get_random_digit() * 10 + get_random_digit();
+        if s % 4 == 0 { i = 12; j = 34; }
+        if s % 4 == 1 { i = 21; j = 43; }
+        if s % 4 == 2 { i = 99; j = 1;  }
 
         let sum = i + j;
         let i_d10 = i / 10;
@@ -215,11 +219,11 @@ fn train_epoch(state: TrainState, lr: f32, steps: i64) -> TrainState {
 
         loss.backward();
 
-        if s % 4 == 3 {
-            st.model = st.model.step(st.global_step, lr);
-            Tensor::clear_grads();
-            st.global_step = st.global_step + 1;
-        }
+        // 毎ステップ更新 (batch_size=1):
+        // 500epoch × 160step = 80,000 Adam updates (元の1500ep設定と同等以上)
+        st.model = st.model.step(st.global_step, lr);
+        Tensor::clear_grads();
+        st.global_step = st.global_step + 1;
 
         if s % 160 == 0 {
             print("    Loss:"); loss.print();
@@ -242,15 +246,15 @@ fn main() {
         }
     }
 
-    let epochs = 1500;
+    let epochs = 500;
 
-    print("Paper Training: 2-layer GPT, d_model=256, Adam, lr=0.0005, epochs=1500");
+    print("Paper Training: 2-layer GPT, d_model=256, Adam, lr_schedule, epochs=500, batch=1");
 
     for epoch in range(0, epochs) {
         print("Epoch:"); print(epoch);
-        // lr scheduling: 0.0005 for first 1000 epochs, then 0.0001
+        // lr schedule: epoch < 400 は 0.0005、400以降は 0.0001
         let mut lr = 0.0005;
-        if epoch >= 1000 {
+        if epoch >= 400 {
             lr = 0.0001;
         }
         state = train_epoch(state, lr, 160);

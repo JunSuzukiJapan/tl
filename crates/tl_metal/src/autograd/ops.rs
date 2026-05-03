@@ -805,6 +805,25 @@ impl GradFn for TrilBackward {
     }
 }
 
+/// masked_fill の勾配:
+/// masked_fill(input, mask, value) では mask=1 の位置が value に置換される。
+/// backward では mask=0 の位置のみ勾配を通し、mask=1 の位置は勾配ゼロ。
+/// grad_input = grad_output * (1 - mask)
+/// not_mask は構築時に事前計算してキャッシュ（backward ごとの再計算を排除）。
+pub struct MaskedFillBackward {
+    pub input: TensorRef,
+    pub not_mask: MetalTensor,  // 事前計算済み (1 - mask)
+}
+
+impl GradFn for MaskedFillBackward {
+    fn backward(&self, grad_output: &MetalTensor) -> BackendResult<Vec<MetalTensor>> {
+        Ok(vec![grad_output.mul_impl(&self.not_mask)?])
+    }
+    fn inputs(&self) -> Vec<TensorRef> {
+        vec![self.input.clone()]
+    }
+}
+
 unsafe impl Send for AddBackward {}
 unsafe impl Sync for AddBackward {}
 unsafe impl Send for SubBackward {}
@@ -875,6 +894,8 @@ unsafe impl Send for DropoutBackward {}
 unsafe impl Sync for DropoutBackward {}
 unsafe impl Send for TrilBackward {}
 unsafe impl Sync for TrilBackward {}
+unsafe impl Send for MaskedFillBackward {}
+unsafe impl Sync for MaskedFillBackward {}
 unsafe impl Send for SliceBackward {}
 unsafe impl Sync for SliceBackward {}
 
